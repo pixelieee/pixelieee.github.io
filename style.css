@@ -56,3 +56,5 @@ a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{o
 
 /* Keep subsection headings distinct before and after anchor navigation. */
 .reader-text h3,.reader-text h3:target{border-left:3px solid #d5ae39;padding-left:12px;font-weight:700;background:#fcf6e4}
+
+#notes-title{font-size:clamp(38px,5vw,62px);line-height:1.22;letter-spacing:-2px;margin:22px 0}#notes-title .count{letter-spacing:0;vertical-align:baseline}
