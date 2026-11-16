@@ -35,3 +35,17 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline-color:var(--ink
 .reader-text h2:target,.reader-text h3:target{border-left:3px solid #d5ae39;padding-left:12px;background:#fcf6e4}
 .reader-mode .reader-text a{color:#232323;text-decoration-color:#d5ae39}
 .reader-mode blockquote{border-color:#d5ae39}
+
+/* Shared gold interaction palette for every page and note. */
+::selection{background:#f5e7b3;color:#232323}
+a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #d5ae39;outline-offset:3px}
+.search:focus-within{outline-color:#d5ae39}
+.prose a{color:#232323;text-decoration-color:#d5ae39}
+.prose blockquote{border-color:#d5ae39;background:#fff}
+.prose code{background:#f6f7f8}
+.prose pre{background:#262626;color:#f6f7f8}
+.prose pre code{background:none;color:inherit}
+.queue p{color:#64686d}.queue .pill{background:#fff;color:#232323}
+.pill,.tag{color:#232323}
+.prose h2:target,.prose h3:target{border-left:3px solid #d5ae39;padding-left:12px;background:#fcf6e4}
+.nav a:hover,.read:hover,.note h3 a:hover{color:#232323;text-decoration:underline;text-decoration-color:#d5ae39;text-underline-offset:5px}
