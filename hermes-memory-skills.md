@@ -239,7 +239,6 @@
 
 - **整合：** `consolidate` 默认关闭。开启且有候选时，另起 Agent，先给候选及使用统计，再按需读正文。
 
-画面参考：[Hucci 写代码《10分钟学会设计 Agent 架构》](https://www.bilibili.com/video/BV1winH6DEgt/) 03:31 左右。
 
 ## 4. 跨会话：Profile、项目和 Agent 角色各管什么
 
