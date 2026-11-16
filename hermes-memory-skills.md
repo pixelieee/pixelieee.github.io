@@ -4,7 +4,7 @@
 
 **关键区别：** `memory` 工具修改 `MEMORY.md` 和 `USER.md`，`session_search` 工具查找历史消息，Skill 保存可复用的做法。下面以 Hermes Agent v0.22.5 的源码为准。
 
-1. **何时触发？** 当前会话可当场保存；后台默认每 10 个用户轮检查记忆、每 10 个模型步骤检查 Skill。
+1. **何时触发？** 当前会话的模型可主动调用 `memory` 或 `skill_manage` 工具；Background Review 默认每 10 个用户轮检查记忆、每 10 次准备模型请求检查 Skill。
 2. **谁来处理？** 当前会话中的 Agent 可直接写；后台另建临时 `AIAgent`，相同文字只追加一次。
 3. **看哪些消息？** 默认用当前会话仍保留的消息；为后台另选服务商或模型后，才摘要较早的消息。
 4. **什么值得存？** `USER.md` 记用户信息，`MEMORY.md` 记环境与项目约定，Skill 记可复用做法。
@@ -30,6 +30,18 @@
 - 「以后默认用 TypeScript」：当前会话中的 Agent 可以当场写进 `USER.md`。
 
 - 「这次用 TypeScript」：只约束当前任务。
+
+**当前会话怎样主动保存 Memory**
+
+- **不必等用户说“记住”。** 当前会话的模型可以依据 system prompt 和 `memory` 工具说明，判断遇到的事实是否值得保存，再调用工具。例如用户介绍自己的长期职责，模型可将事实写入 `USER.md`；是否调用由模型判断，写入仍遵循前文的审批设置。[`memory` 工具的 WHEN / SKIP](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool.py#L375-L398)
+- **提示从哪里来？** `_tool_guidance_block()` 在 `memory` 工具可用时调用 `build_memory_guidance()`，生成与已启用文件对应的提示；两种内置存储都关闭时返回空字符串，只启用用户资料时只引导写 `target="user"`。这段指导经 `_guidance_parts()` 放进 system prompt 的 `stable` 部分。[工具与开关条件](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/system_prompt.py#L274-L299) · [按存储生成指导](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/prompt_builder.py#L192-L230) · [组装到 stable](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/system_prompt.py#L748-L754)
+- **什么适合主动记？** `build_memory_guidance()` 把具体任务的方法、踩坑，以及用户对这类任务的偏好和纠正优先交给 Skill；Memory 保存跨任务仍适用的用户事实、稳定环境事实和长期约定。写成事实陈述，例如“用户偏好简短回答”，而不是给未来模型下命令。预计一周内就会过时的事实留在会话历史。[Memory 与 Skill 的分工](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/prompt_builder.py#L208-L230)
+
+**空闲、关闭会话时发生什么**
+
+内置 Memory 的 Background Review 在回合收尾检查计数和完成条件。使用本地模型的延后队列时，空闲后执行的是此前已经排队的任务；队列为空就没有任务可取。单纯停止发消息或关闭会话，不会凭这个动作新建一次默认 Background Review。[回合收尾条件](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/turn_finalizer.py#L778-L795) · [只取已排队任务](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/review_idle_queue.py#L126-L142)
+
+配置了外部 memory provider 时，还有单独的生命周期：完成且未中断的回合可通过 `sync_all()` 同步；真正结束会话时，`shutdown_memory_provider()` 调用 `on_session_end(messages)`；切换会话 ID 时，`commit_memory_session()` 也可调用这个接口。具体是否抽取、保存什么由 provider 实现决定。这些接口不等同于修改内置 `MEMORY.md` 的 Background Review。[回合同步](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/run_agent.py#L904-L921) · [会话结束与切换](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/run_agent.py#L871-L890) · [provider 接口](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/memory_provider.py#L183-L184)
 
 **Background Review 的自动触发条件。** 默认累计 **10 个用户轮**检查记忆，或累计 **10 次准备模型请求**检查 Skill。任一计数达标后，程序等当前回合生成最终答复；回合未中断、自动检查也未被禁用，才安排后台任务。本轮是否已写过记忆不参与这个判断。[记忆计数](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/turn_context.py#L758-L767) · [收尾时检查 Skill 计数并调度](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/turn_finalizer.py#L763-L792)
 
@@ -210,6 +222,12 @@
 - **读取：** 用 `skill_view` 工具读正文；传 `file_path` 可读支持文件。[正文与支持文件](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skills_tool.py#L580-L663)
 
 - **修改：** Background Review 先用 `skill_view` 工具读取已有目标，再用 `skill_manage` 工具提交修改。[后台权限](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L365-L559)
+
+**当前会话何时主动写 Skill**
+
+- **新建：** `skill_manage` 工具可用时，系统提示词会加入 `SKILLS_GUIDANCE`。模型整理出可复用的复杂流程时，可以在当前回合调用 `skill_manage` 工具保存，无需用户发起，也无需等 Background Review 的计数达标。复杂或反复试错的任务结束时，`## Skills` 也提示模型可以提议保存成 Skill。[系统提示词注入](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/system_prompt.py#L274-L297) · [`SKILLS_GUIDANCE` 原文](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/prompt_builder.py#L257-L264)
+- **更新：** 当前会话通过 `skill_view` 工具加载的 Skill 如果漏了步骤、命令有误，或需要补充新发现的注意事项，`## Skills` 指示模型在回复前调用 `skill_manage` 工具修订。是否调用由当前会话的模型判断，写入仍遵循 `skills.write_approval`。[系统提示词里的 `## Skills`](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/prompt_builder.py#L1362-L1375)
+- **回合之间：** 使用 Hermes 托管的本地模型时，空闲队列启动的是回合结束时已安排的 Background Review。另有 `curator` 维护已保存的 Skill；开启 `consolidate` 后，它根据候选 Skill 和使用数据做整合，不读取普通会话历史。[空闲队列](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/review_idle_queue.py#L126-L142) · [整合输入](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L881-L897) · [启动整合 Agent](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L1105-L1140)
 
 **`curator` 的运行间隔、归档和整合**
 
