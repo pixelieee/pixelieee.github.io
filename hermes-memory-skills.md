@@ -240,9 +240,9 @@
 - **整合：** `consolidate` 默认关闭。开启且有候选时，另起 Agent，先给候选及使用统计，再按需读正文。
 
 
-![图 4：curator 的 Skill 归档状态图](hermes-curator-state-gold.png)
+![图 4：curator 的 Skill 归档状态图](hermes-curator-state-gold-168h.png)
 
-## 4. Profile、项目与 Agent 团队
+## 4. 记忆与 Skill 的层级
 
 **记忆按 profile 保存；Skill 会按项目和 profile 找不同文件；委派角色本身不会创建一层记忆。** 换目录、开新会话、切换 profile 是三个动作，结果不同。
 
