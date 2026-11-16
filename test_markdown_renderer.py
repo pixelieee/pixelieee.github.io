@@ -9,7 +9,7 @@ class RendererTests(unittest.TestCase):
   self.assertEqual(len(ids),12)
   self.assertEqual(re.findall(r'href="#([^"]+)"',toc),ids)
   self.assertEqual(len(tokens),5)
-  self.assertEqual(body.count('<figure'),3)
+  self.assertEqual(body.count('<figure'),4)
   self.assertNotIn('<h1',body)
  def test_library_nesting_duplicates_and_code(self):
   body,toc,tokens=render('# Title\n\n## 标题\n\n### Sub `code`\n\n## 标题\n\n```\n## not a heading\n```')
