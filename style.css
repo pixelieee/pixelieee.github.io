@@ -58,3 +58,7 @@ a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{o
 .reader-text h3,.reader-text h3:target{border-left:3px solid #d5ae39;padding-left:12px;font-weight:700;background:#fcf6e4}
 
 #notes-title{font-size:clamp(38px,5vw,62px);line-height:1.22;letter-spacing:-2px;margin:22px 0}#notes-title .count{letter-spacing:0;vertical-align:baseline}
+
+.home-outline{margin-bottom:32px}.home-outline>summary{display:none}.home-outline nav>a{font-size:14px;font-weight:650;display:block;padding:7px 0}.home-outline ul{list-style:none;padding:0 0 0 13px;margin:5px 0 12px;border-left:1px solid var(--line)}.home-outline li a{display:block;font-size:13px;line-height:1.65;padding:8px 0}.home-outline a:hover{color:var(--ink);text-decoration:underline;text-decoration-color:#d5ae39;text-underline-offset:4px}#notes,#research{scroll-margin-top:24px}
+@media(max-width:800px){.home-outline{border:1px solid var(--line);border-radius:5px;padding:0 14px}.home-outline>summary{display:list-item;cursor:pointer;min-height:48px;padding:12px 0;font-size:14px;font-weight:650}.home-outline nav{padding-bottom:12px}.home-outline:not([open])>nav{display:none}.home-outline a{min-height:44px}}
+@media(max-width:800px){.grid>.aside{display:block;order:-1;padding-top:20px}.grid>.aside>h3,.grid>.aside>.subject{display:none}.home-outline{margin-bottom:0}}
