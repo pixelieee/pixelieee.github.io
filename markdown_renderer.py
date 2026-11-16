@@ -32,8 +32,6 @@ class ReadingElements(Treeprocessor):
                 img.set('loading','lazy'); a.append(img)
                 caption = ET.SubElement(node,'figcaption')
                 caption.text = img.get('alt','') + ' · 点击查看原图'
-                if src == 'hermes-skills-curator.png':
-                    caption.set('style', 'text-align:center')
         return root
 
 class ReadingExtension(Extension):

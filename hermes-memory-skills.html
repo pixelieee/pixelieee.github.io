@@ -1,6 +1,6 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Background Review 如何触发，memory 与 session_search 工具怎样读写，Skill 怎样跨会话复用与维护。"><meta name="color-scheme" content="light"><title>Hermes Agent：记忆、Skill 与跨会话演进 · pixel notes</title><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css?v=markdown-8"></head>
-<body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="index.html#notes">笔记</a><a href="index.html#research">待研究</a></nav></header><main id="main" class="article-wrap reader-mode"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / Agent 工程</div><h1>Hermes Agent：记忆、Skill 与跨会话演进</h1><div class="meta"><time datetime="2026-11-16">2026-11-16</time><span>约 20 分钟</span><span title="按正文可见文字统计：每个汉字计 1，连续英文字母或数字计 1；含小节标题和图注，不含目录、链接地址与标点。">总字数 5,999</span><span class="tag">源码解读</span></div></header><article class="prose"><aside class="reader-sidebar"><details class="reader-outline" open><summary aria-label="文章目录"><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6h12M8 12h12M8 18h12M3 6h1M3 12h1M3 18h1"/></svg></summary><nav aria-label="文章目录"><div class="toc">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Background Review 如何触发，memory 与 session_search 工具怎样读写，Skill 怎样跨会话复用与维护。"><meta name="color-scheme" content="light"><title>Hermes Agent：记忆、Skill 与跨会话演进 · pixel notes</title><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css?v=markdown-9"></head>
+<body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="index.html#notes">笔记</a><a href="index.html#research">待研究</a></nav></header><main id="main" class="article-wrap reader-mode"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / Agent 工程</div><h1>Hermes Agent：记忆、Skill 与跨会话演进</h1><div class="meta"><time datetime="2026-11-16">2026-11-16</time><span>约 20 分钟</span><span title="按正文可见文字统计：每个汉字计 1，连续英文字母或数字计 1；含小节标题和图注，不含目录、链接地址与标点。">总字数 5,996</span><span class="tag">源码解读</span></div></header><article class="prose"><aside class="reader-sidebar"><details class="reader-outline" open><summary aria-label="文章目录"><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6h12M8 12h12M8 18h12M3 6h1M3 12h1M3 18h1"/></svg></summary><nav aria-label="文章目录"><div class="toc">
 <ul>
 <li><a href="#section-1">TL;DR：Hermes 的 10 个记忆问题</a></li>
 <li><a href="#section-2">1. Background Review 与 memory 工具</a><ul>
@@ -12,9 +12,9 @@
 </li>
 <li><a href="#section-3">2. Persistent Memory 与 Session Search</a></li>
 <li><a href="#section-4">3. Skills：读取、修改和维护</a></li>
-<li><a href="#section-5">4. 跨会话：Profile、项目和 Agent 角色各管什么</a><ul>
-<li><a href="#section-5-1">跨会话的事实和历史</a></li>
-<li><a href="#section-5-2">跨会话的 Skill：读哪份，和改哪份分开</a></li>
+<li><a href="#section-5">4. Profile、项目与 Agent 团队</a><ul>
+<li><a href="#section-5-1">Profile 的记忆文件与会话历史</a></li>
+<li><a href="#section-5-2">Skill 的查找顺序与写入位置</a></li>
 <li><a href="#section-5-3">Agent 团队：角色、profile 和任务工作区各有用途</a></li>
 </ul>
 </li>
@@ -240,7 +240,7 @@
 <p><a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/session_search_tool.py#L330-L385">GitHub 源码：搜索角色与返回字段</a></p>
 <h2 id="section-4" tabindex="-1">3. Skills：读取、修改和维护</h2>
 <p><strong><code>curator</code> 是 Hermes 的 Skill 库维护任务。</strong> 它读取 Skill 的使用记录，把受管理且长期未用的 Skill 标为 <code>stale</code>，符合归档条件时移入 <code>skills/.archive/</code>，之后可以恢复。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L1-L7">任务定义</a> · <a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L209-L260">状态更新与归档</a></p>
-<figure class="note-figure"><a href="hermes-skills-curator.png" rel="noopener" target="_blank"><img alt="图 3：Hermes Skills 与 curator" loading="lazy" src="hermes-skills-curator.png" /></a><figcaption style="text-align:center">图 3：Hermes Skills 与 curator · 点击查看原图</figcaption></figure>
+<figure class="note-figure"><a href="hermes-skills-curator.png" rel="noopener" target="_blank"><img alt="图 3：Hermes Skills 与 curator" loading="lazy" src="hermes-skills-curator.png" /></a><figcaption>图 3：Hermes Skills 与 curator · 点击查看原图</figcaption></figure>
 <p><strong>Skill 是什么？</strong> Hermes 官方叫 <a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/website/docs/user-guide/features/skills.md#skills-system">Skills System</a>。一个 Skill 以 <code>SKILL.md</code> 为入口，写明特定任务可以怎么做，可附脚本、模板或参考资料。这里的例子就是：在验证 Skill 的 <code>Procedure</code> 里加一步「跑完测试先看 diff」。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/website/docs/user-guide/features/skills.md#skillmd-format">SKILL.md 格式与 Procedure 示例</a></p>
 <p><strong>Skill 的发现、读取和修改</strong></p>
 <ul>
@@ -273,9 +273,9 @@
 </li>
 </ul>
 <figure class="note-figure"><a href="hermes-curator-state.png" rel="noopener" target="_blank"><img alt="图 4：curator 的 Skill 归档状态图" loading="lazy" src="hermes-curator-state.png" /></a><figcaption>图 4：curator 的 Skill 归档状态图 · 点击查看原图</figcaption></figure>
-<h2 id="section-5" tabindex="-1">4. 跨会话：Profile、项目和 Agent 角色各管什么</h2>
+<h2 id="section-5" tabindex="-1">4. Profile、项目与 Agent 团队</h2>
 <p><strong>记忆按 profile 保存；Skill 会按项目和 profile 找不同文件；委派角色本身不会创建一层记忆。</strong> 换目录、开新会话、切换 profile 是三个动作，结果不同。</p>
-<h3 id="section-5-1" tabindex="-1">跨会话的事实和历史</h3>
+<h3 id="section-5-1" tabindex="-1">Profile 的记忆文件与会话历史</h3>
 <p><strong><code>HERMES_HOME</code> 决定内置文件的位置</strong></p>
 <ul>
 <li>
@@ -290,7 +290,7 @@
 </ul>
 <p><strong>上次记的事实和上次的原话走两条路。</strong> 同 profile 下，新会话中的 <code>AIAgent</code> 用 <code>load_from_disk()</code> 读出本次启动时已经保存的事实。想找某次完整对话，<code>session_search</code> 工具默认查当前 profile 的 <code>state.db</code>；明确传 <code>profile</code> 时能只读打开另一 profile 的库。profile 划分默认存储，机器上的文件权限和工具授权另算。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/agent_init.py#L1323-L1341">跨会话加载</a> · <a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/session_search_tool.py#L434-L444">显式跨 profile 的只读分支</a> · <a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/session_search_tool.py#L619-L640">默认 state.db</a></p>
 <p><code>memory.provider</code> 是可选扩展。远端服务怎么划分或共享数据，要看该 provider 的 bank、tenant 等实际配置；不能把它们算成 Hermes 内置文件的默认层级。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/memory_provider.py#L85-L103">Provider 接口与生命周期</a></p>
-<h3 id="section-5-2" tabindex="-1">跨会话的 Skill：读哪份，和改哪份分开</h3>
+<h3 id="section-5-2" tabindex="-1">Skill 的查找顺序与写入位置</h3>
 <p><strong><code>get_skill_search_roots()</code> 的查找顺序</strong></p>
 <ul>
 <li>
@@ -315,7 +315,7 @@
 <p><strong>后台修改：</strong> Background Review 必须在本轮读过这次实际要修改的路径。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skill_manager_guards.py#L55-L74">按目标路径做写前检查</a></p>
 </li>
 </ul>
-<p><strong>跨会话演进发生在文件上。</strong> 例如这次把「测试后检查 diff」补进 <code>test-guide/SKILL.md</code>，下一个能发现该 Skill 的会话用 <code>skill_view</code> 工具打开文件时，就读到这一步；它不会随每次启动全文加载。profile 内运行的 <code>curator</code> 维护任务按 <code>.usage.json</code> 的活动记录维护可管理的 Skill，按规则标记 <code>stale</code> 或归档到 <code>.archive/</code>，项目版不会因为在目录里可见就被这条路径自动改写。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skills_tool.py#L592-L663">按需读取 Skill</a> · <a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L209-L268">curator 生命周期</a></p>
+<p><strong>保存到 <code>SKILL.md</code> 的更新，可供后续会话读取。</strong> 例如这次把「测试后检查 diff」补进 <code>test-guide/SKILL.md</code>，下一个能发现该 Skill 的会话用 <code>skill_view</code> 工具打开文件时，就读到这一步；它不会随每次启动全文加载。profile 内运行的 <code>curator</code> 维护任务按 <code>.usage.json</code> 的活动记录维护可管理的 Skill，按规则标记 <code>stale</code> 或归档到 <code>.archive/</code>，项目版不会因为在目录里可见就被这条路径自动改写。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skills_tool.py#L592-L663">按需读取 Skill</a> · <a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L209-L268">curator 生命周期</a></p>
 <h3 id="section-5-3" tabindex="-1">Agent 团队：角色、profile 和任务工作区各有用途</h3>
 <p><strong><code>delegate_task</code> 工具启动的子 Agent 有自己的会话</strong></p>
 <ul>

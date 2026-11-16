@@ -242,11 +242,11 @@
 
 ![图 4：curator 的 Skill 归档状态图](hermes-curator-state.png)
 
-## 4. 跨会话：Profile、项目和 Agent 角色各管什么
+## 4. Profile、项目与 Agent 团队
 
 **记忆按 profile 保存；Skill 会按项目和 profile 找不同文件；委派角色本身不会创建一层记忆。** 换目录、开新会话、切换 profile 是三个动作，结果不同。
 
-### 跨会话的事实和历史
+### Profile 的记忆文件与会话历史
 
 **`HERMES_HOME` 决定内置文件的位置**
 
@@ -260,7 +260,7 @@
 
 `memory.provider` 是可选扩展。远端服务怎么划分或共享数据，要看该 provider 的 bank、tenant 等实际配置；不能把它们算成 Hermes 内置文件的默认层级。[Provider 接口与生命周期](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/memory_provider.py#L85-L103)
 
-### 跨会话的 Skill：读哪份，和改哪份分开
+### Skill 的查找顺序与写入位置
 
 **`get_skill_search_roots()` 的查找顺序**
 
@@ -278,7 +278,7 @@
 
 - **后台修改：** Background Review 必须在本轮读过这次实际要修改的路径。[按目标路径做写前检查](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skill_manager_guards.py#L55-L74)
 
-**跨会话演进发生在文件上。** 例如这次把「测试后检查 diff」补进 `test-guide/SKILL.md`，下一个能发现该 Skill 的会话用 `skill_view` 工具打开文件时，就读到这一步；它不会随每次启动全文加载。profile 内运行的 `curator` 维护任务按 `.usage.json` 的活动记录维护可管理的 Skill，按规则标记 `stale` 或归档到 `.archive/`，项目版不会因为在目录里可见就被这条路径自动改写。[按需读取 Skill](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skills_tool.py#L592-L663) · [curator 生命周期](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L209-L268)
+**保存到 `SKILL.md` 的更新，可供后续会话读取。** 例如这次把「测试后检查 diff」补进 `test-guide/SKILL.md`，下一个能发现该 Skill 的会话用 `skill_view` 工具打开文件时，就读到这一步；它不会随每次启动全文加载。profile 内运行的 `curator` 维护任务按 `.usage.json` 的活动记录维护可管理的 Skill，按规则标记 `stale` 或归档到 `.archive/`，项目版不会因为在目录里可见就被这条路径自动改写。[按需读取 Skill](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/skills_tool.py#L592-L663) · [curator 生命周期](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/curator.py#L209-L268)
 
 ### Agent 团队：角色、profile 和任务工作区各有用途
 
