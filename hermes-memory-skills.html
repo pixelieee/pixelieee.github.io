@@ -8,7 +8,7 @@
 <li><strong>看哪些消息？</strong> 默认用当前会话仍保留的消息；为后台另选服务商或模型后，才摘要较早的消息。</li>
 <li><strong>什么值得存？</strong> <code>USER.md</code> 记用户信息，<code>MEMORY.md</code> 记环境与项目约定，Skill 记可复用做法。</li>
 <li><strong>Prompt 怎么写？</strong> 记忆 Prompt 指定保存位置；Skill Prompt 要求提炼技巧和纠正。</li>
-<li><strong>文件怎么组织？</strong> <code>MEMORY.md</code> 和 <code>USER.md</code> 用 <code>§</code> 分隔 <code>entry</code>；Skill 以 <code>SKILL.md</code> 为入口。</li>
+<li><strong>文件怎么组织？</strong> <code>MEMORY.md</code> 和 <code>USER.md</code> 遇到独占一行的 <code>§</code> 就分开，每段算一个 <code>entry</code>；Skill 以 <code>SKILL.md</code> 为入口。</li>
 <li><strong>怎么更新？</strong> <code>memory</code> 工具用 <code>action=&quot;patch&quot;</code> 改文字；<code>skill_manage</code> 工具改 Skill。</li>
 <li><strong>什么时候审批？</strong> 后台改删记忆先让用户批准；Skill 由 <code>skills.write_approval</code> 控制。</li>
 <li><strong>谁共享？</strong> 同一 profile 共用记忆文件；Skill 还可从受信任项目目录读取。</li>
@@ -149,8 +149,9 @@
 <figure style="margin:28px 0"><a href="hermes-memory-session-search.png" target="_blank" rel="noopener"><img src="hermes-memory-session-search.png" alt="图 2：Hermes Persistent Memory 与 Session Search" loading="lazy" style="display:block;width:100%;height:auto"></a><figcaption style="font-size:12px;color:var(--muted);margin-top:8px">图 2：Hermes Persistent Memory 与 Session Search · 点击查看原图</figcaption></figure>
 <p><strong><code>load_from_disk()</code> 读取记忆文件</strong></p>
 <ul>
-<li>当前会话的 <code>AIAgent</code> 初始化时，读取完整的 <code>MEMORY.md</code> 和 <code>USER.md</code>，按独占一行的 <code>§</code> 拆出 <code>entries</code>。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool_store.py#L647-L673">读文件和拆分 <code>entries</code></a></li>
+<li>当前会话的 <code>AIAgent</code> 初始化时，会读取完整的记忆文件。Hermes 读取 <code>MEMORY.md</code> 或 <code>USER.md</code>，遇到独占一行的 <code>§</code> 就分开。分出来的每一段，算一个 <code>entry</code>。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool_store.py#L647-L673">读取文件与分段</a></li>
 </ul>
+<p>例如，「这个仓库用 pnpm」和「提交前跑测试」之间放一行 <code>§</code>，读出来就是两个 <code>entry</code>。一段可以有多行，普通换行不会另算。</p>
 <ul>
 <li>程序去掉首尾空白、跳过空内容，并保留相同 <code>entry</code> 的第一次。安全扫描命中的 <code>entry</code> 在 system prompt 中显示为 <code>[BLOCKED: …]</code>，文件原文保留。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool_store.py#L221-L253">去重、扫描</a></li>
 </ul>

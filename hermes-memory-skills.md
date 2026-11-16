@@ -9,7 +9,7 @@
 3. **看哪些消息？** 默认用当前会话仍保留的消息；为后台另选服务商或模型后，才摘要较早的消息。
 4. **什么值得存？** `USER.md` 记用户信息，`MEMORY.md` 记环境与项目约定，Skill 记可复用做法。
 5. **Prompt 怎么写？** 记忆 Prompt 指定保存位置；Skill Prompt 要求提炼技巧和纠正。
-6. **文件怎么组织？** `MEMORY.md` 和 `USER.md` 用 `§` 分隔 `entry`；Skill 以 `SKILL.md` 为入口。
+6. **文件怎么组织？** `MEMORY.md` 和 `USER.md` 遇到独占一行的 `§` 就分开，每段算一个 `entry`；Skill 以 `SKILL.md` 为入口。
 7. **怎么更新？** `memory` 工具用 `action="patch"` 改文字；`skill_manage` 工具改 Skill。
 8. **什么时候审批？** 后台改删记忆先让用户批准；Skill 由 `skills.write_approval` 控制。
 9. **谁共享？** 同一 profile 共用记忆文件；Skill 还可从受信任项目目录读取。
@@ -165,7 +165,9 @@
 
 **`load_from_disk()` 读取记忆文件**
 
-- 当前会话的 `AIAgent` 初始化时，读取完整的 `MEMORY.md` 和 `USER.md`，按独占一行的 `§` 拆出 `entries`。[读文件和拆分 `entries`](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool_store.py#L647-L673)
+- 当前会话的 `AIAgent` 初始化时，会读取完整的记忆文件。Hermes 读取 `MEMORY.md` 或 `USER.md`，遇到独占一行的 `§` 就分开。分出来的每一段，算一个 `entry`。[读取文件与分段](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool_store.py#L647-L673)
+
+例如，「这个仓库用 pnpm」和「提交前跑测试」之间放一行 `§`，读出来就是两个 `entry`。一段可以有多行，普通换行不会另算。
 
 - 程序去掉首尾空白、跳过空内容，并保留相同 `entry` 的第一次。安全扫描命中的 `entry` 在 system prompt 中显示为 `[BLOCKED: …]`，文件原文保留。[去重、扫描](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/tools/memory_tool_store.py#L221-L253)
 
