@@ -49,6 +49,20 @@ def markdown(text):
     if code is not None: raise ValueError('Unclosed code fence')
     return '\n'.join(output)
 
+def article_body(text, outline=False):
+    body = markdown(text)
+    if not outline:
+        return body
+    headings = []
+    def anchor(match):
+        title = match[1]
+        ident = 'section-' + str(len(headings) + 1)
+        headings.append((ident, title))
+        return f'<h2 id="{ident}" tabindex="-1" style="scroll-margin-top:24px">{title}</h2>'
+    body = re.sub(r'<h2>(.*?)</h2>', anchor, body)
+    links = ''.join(f'<li style="margin:0"><a style="display:inline-block;padding:9px 0;line-height:1.6" href="#{ident}">{title}</a></li>' for ident, title in headings)
+    return '<nav aria-labelledby="outline-title" style="margin:0 0 32px;padding:20px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)"><h2 id="outline-title" style="margin:0 0 8px;font-size:18px">大纲</h2><ul style="margin:0;padding-left:20px">' + links + '</ul></nav>' + body
+
 def shell(title, body, prefix='', description='个人学习笔记。记录问题、源码与实验。'):
     return f'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="{E(description, quote=True)}"><meta name="color-scheme" content="light"><title>{E(title)} · pixel notes</title><link rel="icon" href="{prefix}favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="{prefix}style.css"></head>
@@ -61,7 +75,7 @@ for n in notes:
     assert re.fullmatch('[a-z0-9-]+',n['slug']) and n['slug'] not in slugs
     slugs.add(n['slug'])
     source = ROOT/f"{n['slug']}.md"
-    (ROOT/f"{n['slug']}.html").write_text(shell(n['title'],f'''<main id="main" class="article-wrap"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / {E(n['topic'])}</div><h1>{E(n['title'])}</h1><div class="meta"><time datetime="{n['date']}">{n['date']}</time><span>{E(n['reading'])}</span><span class="tag">{E(n['status'])}</span></div></header><article class="prose">{markdown(source.read_text())}</article><div class="article-end"><a href="{n['slug']}.md" download>下载 Markdown ↓</a><a href="index.html#research">继续看待研究问题 →</a></div></main>''','',n['summary']))
+    (ROOT/f"{n['slug']}.html").write_text(shell(n['title'],f'''<main id="main" class="article-wrap"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / {E(n['topic'])}</div><h1>{E(n['title'])}</h1><div class="meta"><time datetime="{n['date']}">{n['date']}</time><span>{E(n['reading'])}</span><span class="tag">{E(n['status'])}</span></div></header><article class="prose">{article_body(source.read_text(), outline=n['slug']=='hermes-memory-skills')}</article><div class="article-end"><a href="{n['slug']}.md" download>下载 Markdown ↓</a><a href="index.html#research">继续看待研究问题 →</a></div></main>''','',n['summary']))
 cards=''.join(f'''<article class="note" data-search="{E(' '.join([n['title'],n['summary'],n['topic'],n['status']]), quote=True)}"><div class="meta"><span>{E(n['topic'])}</span><time datetime="{n['date']}">{n['date']}</time><span class="tag">{E(n['status'])}</span></div><h3><a href="{n['slug']}.html">{E(n['title'])}</a></h3><p>{E(n['summary'])}</p><a class="read" href="{n['slug']}.html" aria-label="阅读：{E(n['title'],quote=True)}">阅读笔记 <span aria-hidden="true">↗</span></a></article>''' for n in sorted(notes,key=lambda n:n['date'],reverse=True))
 topics=sorted({n['topic'] for n in notes})
 topic_rows=''.join(f'<div class="subject"><span>{E(t)}</span><span>{sum(n["topic"]==t for n in notes):02}</span></div>' for t in topics)
