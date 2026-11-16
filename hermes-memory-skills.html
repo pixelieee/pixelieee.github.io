@@ -1,13 +1,13 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Background Review 如何触发，memory 与 session_search 工具怎样读写，Skill 怎样跨会话复用与维护。"><meta name="color-scheme" content="light"><title>Hermes Agent：记忆、Skill 与跨会话演进 · pixel notes</title><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css?v=markdown-8"></head>
-<body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="index.html#notes">笔记</a><a href="index.html#research">待研究</a></nav></header><main id="main" class="article-wrap reader-mode"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / Agent 工程</div><h1>Hermes Agent：记忆、Skill 与跨会话演进</h1><div class="meta"><time datetime="2026-11-16">2026-11-16</time><span>约 20 分钟</span><span title="按正文可见文字统计：每个汉字计 1，连续英文字母或数字计 1；含小节标题和图注，不含目录、链接地址与标点。">总字数 6,006</span><span class="tag">源码解读</span></div></header><article class="prose"><aside class="reader-sidebar"><details class="reader-outline" open><summary aria-label="文章目录"><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6h12M8 12h12M8 18h12M3 6h1M3 12h1M3 18h1"/></svg></summary><nav aria-label="文章目录"><div class="toc">
+<body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="index.html#notes">笔记</a><a href="index.html#research">待研究</a></nav></header><main id="main" class="article-wrap reader-mode"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / Agent 工程</div><h1>Hermes Agent：记忆、Skill 与跨会话演进</h1><div class="meta"><time datetime="2026-11-16">2026-11-16</time><span>约 20 分钟</span><span title="按正文可见文字统计：每个汉字计 1，连续英文字母或数字计 1；含小节标题和图注，不含目录、链接地址与标点。">总字数 5,999</span><span class="tag">源码解读</span></div></header><article class="prose"><aside class="reader-sidebar"><details class="reader-outline" open><summary aria-label="文章目录"><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6h12M8 12h12M8 18h12M3 6h1M3 12h1M3 18h1"/></svg></summary><nav aria-label="文章目录"><div class="toc">
 <ul>
 <li><a href="#section-1">TL;DR：Hermes 的 10 个记忆问题</a></li>
 <li><a href="#section-2">1. Background Review 与 memory 工具</a><ul>
 <li><a href="#section-2-1">memory 工具：模型怎样改 MEMORY.md 或 USER.md</a></li>
 <li><a href="#section-2-2">Background Review 怎样启动</a></li>
-<li><a href="#section-2-3">conversation_history：Background Review 用哪个模型，决定历史怎么传</a></li>
-<li><a href="#section-2-4">后台默认能调用哪些工具</a></li>
+<li><a href="#section-2-3">Background Review 读取哪些历史消息</a></li>
+<li><a href="#section-2-4">Background Review 默认可调用的工具</a></li>
 </ul>
 </li>
 <li><a href="#section-3">2. Persistent Memory 与 Session Search</a></li>
@@ -151,7 +151,7 @@
 <p><a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/run_agent.py#L775-L787">GitHub 源码：复制消息与安排后台任务</a></p>
 <p><strong><code>build_cache_parity_fork()</code> 在线程里新建一个临时 <code>AIAgent</code>。</strong> 它沿用当前会话的 <code>session_id</code>，关闭自身的会话持久化，也不接会话数据库。用户的会话列表里仍是原对话；这个 <code>AIAgent</code> 实例只运行一次后台任务。它可以通过 <code>memory</code> 工具和 <code>skill_manage</code> 工具提交修改，哪些改动要等批准见第 8 问。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L986-L1005">实例创建与持久化隔离</a></p>
 <p><a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L986-L1005">GitHub 源码：临时 AIAgent 与持久化隔离</a></p>
-<h3 id="section-2-3" tabindex="-1"><code>conversation_history</code>：Background Review 用哪个模型，决定历史怎么传</h3>
+<h3 id="section-2-3" tabindex="-1">Background Review 读取哪些历史消息</h3>
 <p><strong>默认没有固定条数。</strong> <code>messages_snapshot</code> 是当前会话回合收尾时仍保留的消息副本，里面有多少条就交多少条，包含仍保留的工具调用和结果。已经被压缩掉的原消息不会从数据库补读。</p>
 <ul>
 <li>
@@ -165,7 +165,7 @@
 <p><a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L1184-L1193">GitHub 源码：run_conversation 的两个入参</a></p>
 <p><strong>切换到单独配置的服务商或模型后，<code>_digest_history()</code> 怎么处理历史？</strong> 默认从末尾取 24 条，工具结果也算一条。保留区间不能以 <code>role="tool"</code> 开头，所以切口遇到工具结果就向前移；总数不超过 24 条则原样保留。前面被折叠的消息由 Python 拼成一条 <code>role="user"</code> 摘要：每条旧用户文字最多 300 字符，每条旧助手文字最多 200 字符；旧工具只留名称，不留参数和输出。<a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L332-L362">窗口和拼接源码</a></p>
 <p><a href="https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L332-L362">GitHub 源码：保留近期消息的边界</a></p>
-<h3 id="section-2-4" tabindex="-1">后台默认能调用哪些工具</h3>
+<h3 id="section-2-4" tabindex="-1">Background Review 默认可调用的工具</h3>
 <p><strong>后台执行名单</strong></p>
 <ul>
 <li>

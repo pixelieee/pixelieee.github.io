@@ -123,7 +123,7 @@
 
 [GitHub 源码：临时 AIAgent 与持久化隔离](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L986-L1005)
 
-### `conversation_history`：Background Review 用哪个模型，决定历史怎么传
+### Background Review 读取哪些历史消息
 
 **默认没有固定条数。** `messages_snapshot` 是当前会话回合收尾时仍保留的消息副本，里面有多少条就交多少条，包含仍保留的工具调用和结果。已经被压缩掉的原消息不会从数据库补读。
 
@@ -139,7 +139,7 @@
 
 [GitHub 源码：保留近期消息的边界](https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/agent/background_review.py#L332-L362)
 
-### 后台默认能调用哪些工具
+### Background Review 默认可调用的工具
 
 **后台执行名单**
 
