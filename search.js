@@ -12,7 +12,7 @@ if (search) {
       matches += Number(visible);
     }
     empty.hidden = matches !== 0;
-    count.textContent = `${matches} 篇`;
+    count.textContent = document.documentElement.lang === 'en' ? `${matches} notes` : `${matches} 篇`;
   });
   search.addEventListener('keydown', e => {
     if (e.key === 'Escape') { search.value = ''; search.dispatchEvent(new Event('input')); }
