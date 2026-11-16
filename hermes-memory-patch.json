@@ -1,0 +1,6 @@
+{
+  "target": "memory",
+  "action": "patch",
+  "old_text": "这个仓库用 npm",
+  "content": "这个仓库用 pnpm"
+}

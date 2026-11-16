@@ -30,6 +30,11 @@ def markdown(text):
         if code is not None: code.append(line); continue
         if not line.strip(): flush(); close_list(); continue
         if line.startswith('# '): continue # title comes from notes.json
+        img = re.fullmatch(r'!\[([^\]]+)\]\(([a-z0-9-]+\.png)\)', line)
+        if img:
+            flush(); close_list(); output.append(f'<figure style="margin:28px 0"><a href="{img[2]}" target="_blank" rel="noopener"><img src="{img[2]}" alt="{E(img[1],quote=True)}" loading="lazy" style="display:block;width:100%;height:auto"></a><figcaption style="font-size:12px;color:var(--muted);margin-top:8px">{E(img[1])} · 点击查看原图</figcaption></figure>'); continue
+        if line.startswith('### '):
+            flush(); close_list(); output.append('<h3>'+inline(line[4:])+'</h3>'); continue
         if line.startswith('## '):
             flush(); close_list(); output.append('<h2>'+inline(line[3:])+'</h2>'); continue
         if line.startswith('> '):
