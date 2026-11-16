@@ -11,6 +11,8 @@ class RendererTests(unittest.TestCase):
   self.assertEqual(len(tokens),5)
   self.assertEqual(body.count('<figure'),4)
   self.assertNotIn('<h1',body)
+  self.assertEqual(body.count('style="text-align:center"'),1)
+  self.assertIn('<figcaption style="text-align:center">图 3：Hermes Skills 与 curator',body)
  def test_library_nesting_duplicates_and_code(self):
   body,toc,tokens=render('# Title\n\n## 标题\n\n### Sub `code`\n\n## 标题\n\n```\n## not a heading\n```')
   self.assertEqual([t['id'] for t in tokens],['标题','标题_1'])

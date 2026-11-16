@@ -30,7 +30,10 @@ class ReadingElements(Treeprocessor):
                 node.tag = 'figure'; node.set('class','note-figure'); node.remove(img)
                 a = ET.SubElement(node,'a',{'href':src,'target':'_blank','rel':'noopener'})
                 img.set('loading','lazy'); a.append(img)
-                ET.SubElement(node,'figcaption').text = img.get('alt','') + ' · 点击查看原图'
+                caption = ET.SubElement(node,'figcaption')
+                caption.text = img.get('alt','') + ' · 点击查看原图'
+                if src == 'hermes-skills-curator.png':
+                    caption.set('style', 'text-align:center')
         return root
 
 class ReadingExtension(Extension):
