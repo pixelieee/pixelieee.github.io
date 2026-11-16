@@ -6,6 +6,7 @@
 
 ```bash
 python3 build.py
+python3 editorial_lint.py --self-test
 python3 -m http.server 8000
 ```
 
@@ -24,3 +25,5 @@ Markdown 支持：`#` 标题（标题实际采用 JSON）、`##` 小节、段落
 仓库：`pixelieee/pixelieee.github.io`。公开地址：https://pixelieee.github.io/ 。Pages 来源为 `main` 分支根目录。所有内部链接均为相对路径。
 
 需要调整发布来源时，在仓库 Settings → Pages 选择 Deploy from a branch，分支 `main`，目录 `/ (root)`。不需要提交凭据，也不需要 Actions 工作流。不要上传本地 `qa/` 或任何私有草稿。
+
+`build.py` 会先检查笔记标题、摘要与 Markdown，再检查生成页面的可见文字。检查失败时返回非零状态。

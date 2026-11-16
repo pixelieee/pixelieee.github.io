@@ -1,7 +1,6 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="多个 profile 如何领任务、交接和继续工作？从官方 Kanban 文档开始，列出下一步要跑的小实验。"><meta name="color-scheme" content="light"><title>Hermes 自带 Kanban：先记下这个研究入口 · pixel notes</title><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"></head>
-<body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="index.html#notes">笔记</a><a href="index.html#research">待研究</a></nav></header><main id="main" class="article-wrap"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / Agent 工程</div><h1>Hermes 自带 Kanban：先记下这个研究入口</h1><div class="meta"><time datetime="2026-11-16">2026-11-16</time><span>2 分钟</span><span class="tag">待研究</span></div></header><article class="prose"><blockquote>待研究 · 根据官方文档整理，尚未完成实际运行验证。</blockquote>
-<p>Hermes 的 <strong>Kanban (Multi-Agent Board)</strong> 用任务看板协调多个 profile。任务可以分给不同的 Agent worker，交接和进度保存在数据库里。</p>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Hermes 如何通过任务看板协调多个 profile？梳理任务分派、worker tools 与交接流程。"><meta name="color-scheme" content="light"><title>Hermes Kanban：多 Agent 任务派发与交接 · pixel notes</title><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"></head>
+<body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="index.html#notes">笔记</a><a href="index.html#research">待研究</a></nav></header><main id="main" class="article-wrap"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / Agent 工程</div><h1>Hermes Kanban：多 Agent 任务派发与交接</h1><div class="meta"><time datetime="2026-11-16">2026-11-16</time><span>2 分钟</span><span class="tag">待研究</span></div></header><article class="prose"><p>Hermes 的 <strong>Kanban (Multi-Agent Board)</strong> 用任务看板协调多个 profile。任务可以分给不同的 Agent worker，交接和进度保存在数据库里。</p>
 <h2>三个入口，同一块看板</h2>
 <ul>
 <li><strong>Dashboard</strong>：在界面里查看任务状态。</li>
@@ -9,12 +8,12 @@
 <li><strong>Worker tools</strong>：Agent 用 <code>kanban_show</code>、<code>kanban_request_review</code>、<code>kanban_complete</code> 等工具读取任务、提交审查和报告完成。</li>
 </ul>
 <p><a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban">官方 Kanban 说明</a></p>
-<h2>下一步想验证什么</h2>
-<p>做一个小实验：让 <code>coder</code> 实现一个功能，交给 <code>reviewer</code> 审查，发现问题后退回修改。</p>
+<h2>任务派发、审查与恢复</h2>
+<p>以 <code>coder</code> 实现功能、<code>reviewer</code> 审查并退回修改的流程为例：</p>
 <ol>
 <li>任务分给哪个 profile，由哪个步骤启动 worker？</li>
 <li>交接时传递哪些文件、消息和任务状态？</li>
 <li>worker 失败或进程退出后，任务如何恢复？</li>
 <li>人工审查放在哪里，怎样判断任务真正完成？</li>
 </ol>
-<p>这些问题先保留，跑过实验后再补结论。入口：<a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban-tutorial">官方 Kanban tutorial</a>。</p></article><div class="article-end"><a href="hermes-kanban.md" download>下载 Markdown ↓</a><a href="index.html#research">继续看待研究问题 →</a></div></main><footer class="footer"><span>pixel notes · 学习笔记</span><span>保留问题，也保留依据。</span></footer></div><script src="search.js" defer></script></body></html>
+<p>相关流程参见：<a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban-tutorial">官方 Kanban tutorial</a>。</p></article><div class="article-end"><a href="hermes-kanban.md" download>下载 Markdown ↓</a><a href="index.html#research">继续看待研究问题 →</a></div></main><footer class="footer"><span>pixel notes · 学习笔记</span><span>保留问题，也保留依据。</span></footer></div><script src="search.js" defer></script></body></html>

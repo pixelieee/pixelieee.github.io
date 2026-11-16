@@ -1,8 +1,8 @@
 [
   {
     "slug": "hermes-kanban",
-    "title": "Hermes 自带 Kanban：先记下这个研究入口",
-    "summary": "多个 profile 如何领任务、交接和继续工作？从官方 Kanban 文档开始，列出下一步要跑的小实验。",
+    "title": "Hermes Kanban：多 Agent 任务派发与交接",
+    "summary": "Hermes 如何通过任务看板协调多个 profile？梳理任务分派、worker tools 与交接流程。",
     "date": "2026-11-16",
     "topic": "Agent 工程",
     "status": "待研究",

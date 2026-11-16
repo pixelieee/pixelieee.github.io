@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Zero-dependency build. Trusted author Markdown subset only; HTML is escaped."""
 from pathlib import Path
+from editorial_lint import check_sources, check_html
 import html, json, re
 ROOT = Path(__file__).resolve().parent
 E = html.escape
@@ -48,6 +49,7 @@ def shell(title, body, prefix='', description='个人学习笔记。记录问题
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="{E(description, quote=True)}"><meta name="color-scheme" content="light"><title>{E(title)} · pixel notes</title><link rel="icon" href="{prefix}favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="{prefix}style.css"></head>
 <body><a class="skip" href="#main">跳到正文</a><div class="wrap"><header class="header"><a class="brand" href="{prefix}index.html" aria-label="pixel notes 首页"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>pixel notes<span style="color:#64686d;font-weight:400">/</span></a><nav class="nav" aria-label="主导航"><a href="{prefix}index.html#notes">笔记</a><a href="{prefix}index.html#research">待研究</a></nav></header>{body}<footer class="footer"><span>pixel notes · 学习笔记</span><span>保留问题，也保留依据。</span></footer></div><script src="{prefix}search.js" defer></script></body></html>'''
 
+check_sources(ROOT)
 notes = json.loads((ROOT/'notes.json').read_text())
 slugs=set()
 for n in notes:
@@ -58,6 +60,7 @@ for n in notes:
 cards=''.join(f'''<article class="note" data-search="{E(' '.join([n['title'],n['summary'],n['topic'],n['status']]), quote=True)}"><div class="meta"><span>{E(n['topic'])}</span><time datetime="{n['date']}">{n['date']}</time><span class="tag">{E(n['status'])}</span></div><h3><a href="{n['slug']}.html">{E(n['title'])}</a></h3><p>{E(n['summary'])}</p><a class="read" href="{n['slug']}.html" aria-label="阅读：{E(n['title'],quote=True)}">阅读笔记 <span aria-hidden="true">↗</span></a></article>''' for n in sorted(notes,key=lambda n:n['date'],reverse=True))
 topics=sorted({n['topic'] for n in notes})
 topic_rows=''.join(f'<div class="subject"><span>{E(t)}</span><span>{sum(n["topic"]==t for n in notes):02}</span></div>' for t in topics)
-body=f'''<main id="main"><section class="hero"><div><div class="eyebrow">NOTES ON BUILDING & LEARNING</div><h1>边学，边拆，<br>边做。</h1><p>记录值得追下去的问题、读过的源码，<br>以及动手之后得到的结论。</p></div><div class="annotation"><strong>一份持续更新的学习记录</strong>每篇笔记标明进度，保留原始资料。<br>还没验证的内容，先把问题写清楚。</div></section><section id="notes" aria-labelledby="notes-title"><div class="toolbar"><h2 id="notes-title">学习笔记 <span class="count" id="result-count" role="status" aria-live="polite">{len(notes)} 篇</span></h2><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜索笔记、主题…" aria-label="搜索笔记"></label></div><div class="grid"><div>{cards}<p class="empty" id="empty" hidden>没有找到相关笔记。换个关键词试试。</p></div><aside class="aside"><h3>主题</h3>{topic_rows}</aside></div></section><section class="queue" id="research" aria-labelledby="research-title"><div><div class="eyebrow">NEXT QUESTION</div><h2 id="research-title" style="margin-top:8px">多 Agent 如何真正交接工作？</h2><p>从 Hermes Kanban 开始，追一次实现、审查、退回修改的完整流程。</p><a class="read" style="margin-top:16px" href="hermes-kanban.html">查看研究入口 <span aria-hidden="true">↗</span></a></div><span class="pill">待研究</span></section></main>'''
+body=f'''<main id="main"><section class="hero"><div><div class="eyebrow">NOTES ON BUILDING & LEARNING</div><h1>边学，边拆，<br>边做。</h1><p>记录值得追下去的问题、读过的源码，<br>以及动手之后得到的结论。</p></div><div class="annotation"><strong>一份持续更新的学习记录</strong>每篇笔记标明进度，保留原始资料。<br>还没验证的内容，先把问题写清楚。</div></section><section id="notes" aria-labelledby="notes-title"><div class="toolbar"><h2 id="notes-title">学习笔记 <span class="count" id="result-count" role="status" aria-live="polite">{len(notes)} 篇</span></h2><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜索笔记、主题…" aria-label="搜索笔记"></label></div><div class="grid"><div>{cards}<p class="empty" id="empty" hidden>没有找到相关笔记。换个关键词试试。</p></div><aside class="aside"><h3>主题</h3>{topic_rows}</aside></div></section><section class="queue" id="research" aria-labelledby="research-title"><div><div class="eyebrow">NEXT QUESTION</div><h2 id="research-title" style="margin-top:8px">多 Agent 如何真正交接工作？</h2><p>从 Hermes Kanban 开始，追一次实现、审查、退回修改的完整流程。</p><a class="read" style="margin-top:16px" href="hermes-kanban.html">查看笔记 <span aria-hidden="true">↗</span></a></div><span class="pill">待研究</span></section></main>'''
 (ROOT/'index.html').write_text(shell('学习笔记',body))
+check_html(ROOT)
 print(f'Built homepage + {len(notes)} note(s).')
