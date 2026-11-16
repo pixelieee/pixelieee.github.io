@@ -24,13 +24,3 @@ Markdown 支持：`#` 标题（标题实际采用 JSON）、`##` 小节、段落
 仓库：`pixelieee/pixelieee.github.io`。公开地址：https://pixelieee.github.io/ 。Pages 来源为 `main` 分支根目录。所有内部链接均为相对路径。
 
 需要调整发布来源时，在仓库 Settings → Pages 选择 Deploy from a branch，分支 `main`，目录 `/ (root)`。不需要提交凭据，也不需要 Actions 工作流。不要上传本地 `qa/` 或任何私有草稿。
-
-## 内容与发布边界
-
-首篇笔记为原创 Hermes Kanban 研究入口，依据公开官方文档，明确标记未实测。没有个人简介、简历、联系方式、私聊内容或原技术母稿。
-
-上线前由所有者确认公开范围。更多笔记发布前逐篇校验来源、代码、隐私和结论。
-
-## 跨平台
-
-见 `SYNDICATION.md`。当前只提供工作流程，不绑定 X / 小红书账号，不代发，不标记“已同步”。
