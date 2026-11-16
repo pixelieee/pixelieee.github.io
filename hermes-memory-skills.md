@@ -240,7 +240,7 @@
 - **整合：** `consolidate` 默认关闭。开启且有候选时，另起 Agent，先给候选及使用统计，再按需读正文。
 
 
-![图 4：curator 的 Skill 归档状态图](hermes-curator-state.png)
+![图 4：curator 的 Skill 归档状态图](hermes-curator-state-gold.png)
 
 ## 4. Profile、项目与 Agent 团队
 
