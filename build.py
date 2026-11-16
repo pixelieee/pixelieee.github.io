@@ -54,14 +54,33 @@ def article_body(text, outline=False):
     if not outline:
         return body
     headings = []
+    section = sub = 0
     def anchor(match):
-        title = match[1]
-        ident = 'section-' + str(len(headings) + 1)
-        headings.append((ident, title))
-        return f'<h2 id="{ident}" tabindex="-1" style="scroll-margin-top:24px">{title}</h2>'
-    body = re.sub(r'<h2>(.*?)</h2>', anchor, body)
-    links = ''.join(f'<li style="margin:0"><a style="display:inline-block;padding:9px 0;line-height:1.6" href="#{ident}">{title}</a></li>' for ident, title in headings)
-    return '<nav aria-labelledby="outline-title" style="margin:0 0 32px;padding:20px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)"><h2 id="outline-title" style="margin:0 0 8px;font-size:18px">大纲</h2><ul style="margin:0;padding-left:20px">' + links + '</ul></nav>' + body
+        nonlocal section, sub
+        level, title = match[1], match[2]
+        if level == '2':
+            section += 1; sub = 0
+            ident = f'section-{section}'
+        else:
+            sub += 1
+            ident = f'section-{section}-{sub}'
+        headings.append((level, ident, title))
+        return f'<h{level} id="{ident}" tabindex="-1">{title}</h{level}>'
+    body = re.sub(r'<h([23])>(.*?)</h\1>', anchor, body)
+    items = []
+    nested = False
+    for level, ident, title in headings:
+        if level == '2':
+            if nested: items.append('</ul>'); nested = False
+            if items: items.append('</li>')
+            items.append(f'<li><a href="#{ident}">{title}</a>')
+        else:
+            if not nested: items.append('<ul>'); nested = True
+            items.append(f'<li><a href="#{ident}">{title}</a></li>')
+    if nested: items.append('</ul>')
+    if items: items.append('</li>')
+    toc = '<aside class="reader-sidebar"><details class="reader-outline" open><summary>大纲</summary><nav aria-label="文章大纲"><div class="outline-label" aria-hidden="true">大纲</div><ul>' + ''.join(items) + '</ul></nav></details></aside>'
+    return toc + '<div class="reader-text">' + body + '</div>'
 
 def shell(title, body, prefix='', description='个人学习笔记。记录问题、源码与实验。'):
     return f'''<!doctype html>
@@ -75,7 +94,7 @@ for n in notes:
     assert re.fullmatch('[a-z0-9-]+',n['slug']) and n['slug'] not in slugs
     slugs.add(n['slug'])
     source = ROOT/f"{n['slug']}.md"
-    (ROOT/f"{n['slug']}.html").write_text(shell(n['title'],f'''<main id="main" class="article-wrap"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / {E(n['topic'])}</div><h1>{E(n['title'])}</h1><div class="meta"><time datetime="{n['date']}">{n['date']}</time><span>{E(n['reading'])}</span><span class="tag">{E(n['status'])}</span></div></header><article class="prose">{article_body(source.read_text(), outline=n['slug']=='hermes-memory-skills')}</article><div class="article-end"><a href="{n['slug']}.md" download>下载 Markdown ↓</a><a href="index.html#research">继续看待研究问题 →</a></div></main>''','',n['summary']))
+    (ROOT/f"{n['slug']}.html").write_text(shell(n['title'],f'''<main id="main" class="article-wrap{' reader-mode' if n['slug']=='hermes-memory-skills' else ''}"><a class="back" href="index.html#notes">← 所有笔记</a><header class="article-header"><div class="eyebrow">LEARNING NOTE / {E(n['topic'])}</div><h1>{E(n['title'])}</h1><div class="meta"><time datetime="{n['date']}">{n['date']}</time><span>{E(n['reading'])}</span><span class="tag">{E(n['status'])}</span></div></header><article class="prose">{article_body(source.read_text(), outline=n['slug']=='hermes-memory-skills')}</article><div class="article-end"><a href="{n['slug']}.md" download>下载 Markdown ↓</a>{'<a href="https://github.com/pixelieee/pixelieee.github.io/blob/main/hermes-memory-skills.md">查看 Markdown（GitHub）</a>' if n['slug']=='hermes-memory-skills' else ''}<a href="index.html#research">继续看待研究问题 →</a></div></main>''','',n['summary']))
 cards=''.join(f'''<article class="note" data-search="{E(' '.join([n['title'],n['summary'],n['topic'],n['status']]), quote=True)}"><div class="meta"><span>{E(n['topic'])}</span><time datetime="{n['date']}">{n['date']}</time><span class="tag">{E(n['status'])}</span></div><h3><a href="{n['slug']}.html">{E(n['title'])}</a></h3><p>{E(n['summary'])}</p><a class="read" href="{n['slug']}.html" aria-label="阅读：{E(n['title'],quote=True)}">阅读笔记 <span aria-hidden="true">↗</span></a></article>''' for n in sorted(notes,key=lambda n:n['date'],reverse=True))
 topics=sorted({n['topic'] for n in notes})
 topic_rows=''.join(f'<div class="subject"><span>{E(t)}</span><span>{sum(n["topic"]==t for n in notes):02}</span></div>' for t in topics)

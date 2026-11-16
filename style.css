@@ -11,3 +11,27 @@
 a:focus-visible,button:focus-visible,input:focus-visible{outline-color:var(--ink)}
 
 :root{--green:#d5ae39;--soft:#f6f7f8}.annotation{border-left-color:var(--gold)}
+
+/* Markdown reading view: scoped to the long Hermes note. */
+.reader-mode{max-width:none}.reader-mode>.back,.reader-mode>.article-header,.reader-mode>.article-end{margin-left:270px}
+.reader-mode .prose{display:grid;grid-template-columns:230px minmax(0,1fr);gap:40px;align-items:start}
+.reader-sidebar{position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;overscroll-behavior:contain;padding-right:16px;border-right:1px solid var(--line)}
+.reader-outline>summary{display:none}.reader-outline:not([open])>nav{display:block}
+.outline-label{font-size:13px;font-weight:700;margin:0 0 14px;color:var(--ink)}
+.reader-sidebar ul{list-style:none;margin:0;padding:0}.reader-sidebar li{margin:0}.reader-sidebar li ul{padding-left:13px;border-left:1px solid var(--line);margin:3px 0 12px 3px}
+.reader-sidebar a{display:block;padding:7px 0;font-size:12px;line-height:1.65;color:var(--muted);text-decoration:none;overflow-wrap:anywhere}
+.reader-sidebar>details>nav>ul>li>a{font-weight:600;color:var(--ink)}.reader-sidebar a:hover{color:var(--ink);text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:4px}
+.reader-sidebar a:focus-visible{outline-offset:1px}.reader-sidebar code{font-size:inherit;padding:0;background:none}
+.reader-text{min-width:0;max-width:760px;font-size:16px;line-height:1.9;overflow-wrap:anywhere}.reader-text>h2:first-child{margin-top:0}
+.reader-text h2{font-size:24px;line-height:1.5;margin-top:54px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.reader-text h3{font-size:19px;line-height:1.55;margin:34px 0 12px}.reader-text h2,.reader-text h3{scroll-margin-top:28px}
+.reader-text a{color:var(--ink)}.reader-text code{background:var(--wash)}.reader-mode .article-header h1{font-size:36px;letter-spacing:-.6px}
+@media(max-width:900px){.reader-mode>.back,.reader-mode>.article-header,.reader-mode>.article-end{margin-left:0}.reader-mode .prose{display:block}.reader-sidebar{position:static;max-height:none;padding:0;border:0;margin:0 0 30px}.reader-outline{border:1px solid var(--line);border-radius:5px}.reader-outline>summary{display:list-item;cursor:pointer;padding:12px 16px;font-size:14px;font-weight:650;min-height:48px}.reader-outline>summary:focus-visible{outline:2px solid var(--ink);outline-offset:3px}.reader-outline:not([open])>nav{display:none}.reader-outline nav{padding:0 16px 12px;max-height:320px;overflow:auto}.outline-label{display:none}.reader-sidebar a{font-size:13px;padding:10px 0;min-height:44px}.reader-text{max-width:none}.reader-mode .article-header h1{font-size:30px}.reader-text h2{font-size:22px}.reader-text h3{font-size:18px}}
+@media print{.reader-sidebar{display:none}.reader-mode .prose{display:block}.reader-mode>.back,.reader-mode>.article-header,.reader-mode>.article-end{margin-left:0}}
+/* Gold reading accents, with dark text for contrast. */
+.reader-mode ::selection{background:#f5e7b3;color:#232323}
+.reader-mode a:focus-visible,.reader-mode summary:focus-visible{outline:2px solid #d5ae39;outline-offset:3px}
+.reader-mode .reader-sidebar a:hover{background:#fcf6e4;color:#232323;text-decoration-color:#d5ae39}
+.reader-text h2:target,.reader-text h3:target{border-left:3px solid #d5ae39;padding-left:12px;background:#fcf6e4}
+.reader-mode .reader-text a{color:#232323;text-decoration-color:#d5ae39}
+.reader-mode blockquote{border-color:#d5ae39}
