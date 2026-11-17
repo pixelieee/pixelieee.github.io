@@ -1,0 +1,10 @@
+---
+// 源码引用：固定到笔记所用提交，显示为 文件名:行号。
+const { p, l, label } = Astro.props;
+const COMMIT = 'bf0203a794a07aac3ff764972ab9087baa4e4f4e';
+const first = String(l ?? '').split('-')[0];
+const hash = l ? `#L${String(l).split('-').join('-L')}` : '';
+const href = `https://github.com/NousResearch/hermes-agent/blob/${COMMIT}/${p}${hash}`;
+const text = label ?? `${p.split('/').pop()}${l ? ':' + l : ''}`;
+---
+<a class="src" href={href} target="_blank" rel="noopener" title={`${p}${l ? ' L' + l : ''} @ bf0203a`}>{text}</a>

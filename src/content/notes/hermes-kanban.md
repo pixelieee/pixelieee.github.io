@@ -1,4 +1,10 @@
-# Hermes Kanban：多 Agent 任务派发与交接
+---
+title: "Hermes Kanban：多 Agent 任务派发与交接"
+summary: "Hermes 如何通过任务看板协调多个 profile？梳理任务分派、worker tools 与交接流程。"
+date: "2026-11-16"
+topic: "Agent 工程"
+status: "todo"
+---
 
 Hermes 的 **Kanban (Multi-Agent Board)** 用任务看板协调多个 profile。任务可以分给不同的 Agent worker，交接和进度保存在数据库里。
 

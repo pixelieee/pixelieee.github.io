@@ -1,5 +1,0 @@
-{
-  "target": "memory",
-  "action": "add",
-  "content": "这个仓库用 pnpm。"
-}
