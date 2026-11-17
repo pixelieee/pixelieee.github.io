@@ -1,11 +1,11 @@
 ---
-// 模块化像素 P：3×4 方块网格，bowl 闭合处的一块为铂金渐变。
+// 模块化像素 P：3×4 方块网格，bowl 闭合处的一块为白金渐变。
 const { size = 24 } = Astro.props;
 ---
 <svg height={size} width={size * 22 / 30} viewBox="0 0 22 30" aria-hidden="true" fill="currentColor">
   <defs>
     <linearGradient id="plat-mark" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#E9EBEE"/><stop offset=".45" stop-color="#9EA3AB"/><stop offset="1" stop-color="#D4D7DC"/>
+      <stop offset="0" stop-color="#F6EFD9"/><stop offset=".45" stop-color="#C9B27A"/><stop offset="1" stop-color="#EBDDB4"/>
     </linearGradient>
   </defs>
   <rect x="0" y="0" width="6" height="6"/><rect x="8" y="0" width="6" height="6"/><rect x="16" y="0" width="6" height="6"/>
