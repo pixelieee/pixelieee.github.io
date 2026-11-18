@@ -1,7 +1,7 @@
 ---
 title: "Hermes Kanban: Multi-Agent Dispatch and Handoff"
 dek: "How a task board lets several Hermes profiles split the work, hand it off and send it back."
-summary: "When several agents share the work, how does a task get handed out, handed back, and sent back again? Still reading the source; for now this is a list of what I want to find out."
+summary: "How Hermes uses a task board to hand out and pass back tasks between profiles. Not finished yet."
 date: "2026-11-16"
 topic: "Agent engineering"
 status: "todo"
