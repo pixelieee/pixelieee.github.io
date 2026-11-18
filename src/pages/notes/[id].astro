@@ -13,39 +13,71 @@ export async function getStaticPaths() {
 const { note, prev, next } = Astro.props;
 const { Content, headings } = await render(note);
 const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
-const words = (note.body ?? '').replace(/```[\s\S]*?```/g, '').match(/[一-鿿]|[A-Za-z0-9]+/g)?.length ?? 0;
-const minutes = Math.max(1, Math.round(words / 400));
+// 字数：去掉代码块、import 和组件标签；汉字逐个计，英文/数字按词计。
+const text = (note.body ?? '')
+  .replace(/```[\s\S]*?```/g, '')
+  .replace(/^import .*$/gm, '')
+  .replace(/<[^>]+>/g, '');
+const words = text.match(/[一-鿿]|[A-Za-z0-9_]+/g)?.length ?? 0;
+const minutes = Math.max(1, Math.round(words / 450));
+let sec = -1;
+const tocLinks = toc.map((h) => {
+  if (h.depth === 2) sec += 1;
+  return { cls: h.depth === 2 ? 'd2' : 'd3', href: `#${h.slug}`, text: h.text, sec };
+});
 ---
-<Base title={`${note.data.title} · pixel notes`} description={note.data.summary}>
-  <div id="progress"></div>
+<Base title={`${note.data.title} · pixel notes`} description={note.data.summary} type="article" published={note.data.date}>
+  <div id="progress" aria-hidden="true"></div>
   <div class="wrap article-grid">
-    <nav class="toc" aria-label="contents">
-      {toc.map((h) => <a class={h.depth === 2 ? 'd2' : 'd3'} href={`#${h.slug}`}>{h.text}</a>)}
-    </nav>
-    <article>
-      <a class="back" href="/#notes">← <span data-zh="所有笔记" data-en="All notes">所有笔记</span></a>
-      <div class="eyebrow" style="margin-top:20px">{note.data.topic}{note.data.pinned ? ` · ${note.data.pinned}` : ''}</div>
-      <h1 data-zh={note.data.title} data-en={note.data.titleEn ?? note.data.title}>{note.data.title}</h1>
-      <div class="meta"><time datetime={note.data.date}>{note.data.date}</time><span>{words.toLocaleString('en-US')} <span data-zh="字" data-en="words">字</span></span><span data-zh={`约 ${minutes} 分钟`} data-en={`${minutes} min read`}>{`约 ${minutes} 分钟`}</span></div>
+    <article lang="zh-CN">
+      <header>
+        <a class="back" href="/#notes">← <span data-zh="所有笔记" data-en="All notes">所有笔记</span></a>
+        <div class="eyebrow" style="margin-top:22px">{note.data.topic}{note.data.pinned ? ` · ${note.data.pinned}` : ''}</div>
+        <h1>{note.data.title}</h1>
+        {note.data.dek && <p class="dek">{note.data.dek}</p>}
+        <div class="meta"><time datetime={note.data.date}>{note.data.date}</time><span>{words.toLocaleString('en-US')} <span data-zh="字" data-en="words">字</span></span><span data-zh={`约 ${minutes} 分钟`} data-en={`${minutes} min read`}>{`约 ${minutes} 分钟`}</span></div>
+        {tocLinks.length > 0 && (
+          <details class="toc-inline">
+            <summary><span data-zh="目录" data-en="Contents">目录</span></summary>
+            <nav aria-label="contents">{tocLinks.map((l) => <a class={l.cls} href={l.href}>{l.text}</a>)}</nav>
+          </details>
+        )}
+      </header>
       <div class="prose"><Content /></div>
-      <div class="pager">
+      <nav class="pager" aria-label="pagination">
         {prev ? <a href={`/notes/${prev.id}/`}>← <span data-zh={prev.data.title} data-en={prev.data.titleEn ?? prev.data.title}>{prev.data.title}</span></a> : <span />}
-        {next ? <a href={`/notes/${next.id}/`}><span data-zh={next.data.title} data-en={next.data.titleEn ?? next.data.title}>{next.data.title}</span> →</a> : <span />}
-      </div>
+        {next ? <a class="next" href={`/notes/${next.id}/`}><span data-zh={next.data.title} data-en={next.data.titleEn ?? next.data.title}>{next.data.title}</span> →</a> : <span />}
+      </nav>
     </article>
+    {tocLinks.length > 0 && (
+      <nav class="toc" aria-label="contents">
+        <p class="toc-title" data-zh="目录" data-en="Contents">目录</p>
+        {tocLinks.map((l) => <a class={l.cls} href={l.href} data-sec={l.sec}>{l.text}</a>)}
+      </nav>
+    )}
   </div>
   <script is:inline>
   (function(){
-    var bar=document.getElementById('progress');
+    var bar=document.getElementById('progress'),art=document.querySelector('article');
+    var toc=document.querySelector('.toc');
     var links=[].slice.call(document.querySelectorAll('.toc a'));
     var heads=links.map(function(a){return document.getElementById(decodeURIComponent(a.hash.slice(1)))});
+    var ticking=false,last=-2;
     function tick(){
-      var h=document.documentElement,max=h.scrollHeight-h.clientHeight;
-      bar.style.width=(max>0?h.scrollTop/max*100:0)+'%';
-      var cur=-1;for(var i=0;i<heads.length;i++){if(heads[i]&&heads[i].getBoundingClientRect().top<120)cur=i}
+      ticking=false;
+      var r=art.getBoundingClientRect(),total=r.height-innerHeight;
+      bar.style.width=(total>0?Math.min(1,Math.max(0,-r.top/total))*100:0)+'%';
+      var cur=-1;for(var i=0;i<heads.length;i++){if(heads[i]&&heads[i].getBoundingClientRect().top<140)cur=i}
+      if(cur===last)return;last=cur;
       links.forEach(function(a,i){a.classList.toggle('on',i===cur)});
+      var sec=cur>=0?links[cur].dataset.sec:'-1';
+      links.forEach(function(a){if(a.classList.contains('d3'))a.classList.toggle('show',a.dataset.sec===sec)});
+      var on=links[cur];
+      if(on&&toc){var y=on.offsetTop-toc.clientHeight/2;if(Math.abs(toc.scrollTop-y)>toc.clientHeight/3)toc.scrollTop=y}
     }
-    addEventListener('scroll',tick,{passive:true});tick();
+    addEventListener('scroll',function(){if(!ticking){ticking=true;requestAnimationFrame(tick)}},{passive:true});
+    addEventListener('resize',function(){last=-2;tick()});tick();
+    document.querySelectorAll('.toc-inline a').forEach(function(a){a.addEventListener('click',function(){a.closest('details').open=false})});
   })();
   </script>
 </Base>

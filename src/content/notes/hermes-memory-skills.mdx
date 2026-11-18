@@ -1,80 +1,100 @@
 ---
 title: "Hermes Agent：记忆、Skill 与跨会话演进"
 titleEn: "Hermes Agent: Memory, Skills and Cross-Session Evolution"
-summaryEn: "Three stores, three write paths, and the one constraint that ties them together: never dirty the prefix cache. Claims checked line by line against the source, with trade-offs, edge cases and open questions."
-summary: "三类存储、三条写入路径，以及把它们串起来的一条约束：不要弄脏前缀缓存。逐条对照源码，写清取舍、边界情况和仍未弄清的问题。"
+dek: "三类存储、三条写入路径，以及把它们串在一起的一条约束：不要弄脏前缀缓存。"
+summary: "三类存储、三条写入路径，以及把它们串在一起的一条约束：不要弄脏前缀缓存。逐条对照源码，附一个复现实验、设计评价和文档与代码的出入。"
+summaryEn: "Three stores, three write paths, and the one constraint that ties them together: never dirty the prefix cache. Checked line by line against the source, with a reproducible experiment, a design review and the places where docs and code disagree."
 date: "2026-11-16"
+updated: "2026-11-18"
 topic: "Agent 工程"
 status: "published"
-pinned: "NousResearch/hermes-agent @ bf0203a"
+pinned: "hermes-agent @ bf0203a"
 ---
 import Src from '../../components/Src.astro';
+import Infer from '../../components/Infer.astro';
 import FigArch from '../../components/FigArch.astro';
 import FigReview from '../../components/FigReview.astro';
 import FigCurator from '../../components/FigCurator.astro';
+import Journey from '../../components/Journey.astro';
 
-**一句话结论：** Hermes 把「学到的东西」放进三类存储，分别是两个很小的 Markdown 文件、一个全量历史库和一个 Skill 目录，再用前台工具、后台复盘和定期维护三条路径往里写。这套设计里大部分看起来别扭的地方，都能用同一条约束解释：**别弄脏 system prompt 的前缀缓存**。
+**一句话结论：** Hermes 把「学到的东西」分进三类存储：两个很小、每轮都注入的 Markdown 文件，一个全量但只按需检索的历史库，一组按需加载的 Skill。往里写的路径也有三条：前台模型自己写、回合结束后的后台复盘、每周一次的 Skill 库维护。这套设计里大部分看似别扭的地方，都能用同一条约束解释：**不要弄脏 system prompt 的前缀缓存。**
 
-这篇写给已经熟悉 LLM Agent 的工程师，不解释 tool calling 或 prompt cache 的基本概念。篇幅花在三件事上：机制各自解决什么问题，边界情况在哪里，设计取舍是否站得住。
+读完这篇，你应该能回答五个问题：
 
-> 版本说明：所有行号都固定到提交 `bf0203a`。该提交的 `pyproject.toml` 版本号是动态生成的 0.0.0，所以我不使用版本号。凡是代码和注释没有明说、由我推断的结论，都会标注「推断」。
+1. 一条事实写进记忆之后，**什么时候**、**被谁**看到？
+2. 后台复盘**什么时候**触发，为什么记忆和 Skill 的触发时机不一样？
+3. 后台 Agent **能改什么、不能改什么**，改不了的去了哪里？
+4. Skill 怎样从创建走到归档，**restore 之后为什么可能马上又被归档**？
+5. 同一台机器上的 profile、项目和子 Agent 之间，**谁和谁共享**这些存储？
+
+> 这篇写给熟悉 LLM Agent 的工程师，不解释 tool calling 和 prompt cache 的基本概念。所有行号固定到提交 `bf0203a`（该提交的 `pyproject.toml` 版本号由构建时生成，写作 0.0.0，所以文中不写版本号）。源码和注释没有明说、由我推断的结论，前面都标了 <Infer />。
 
 ## 全景
 
 <FigArch />
 
-三类存储的差别，决定了后面所有机制的形状：
+三类存储的差异决定了后面所有机制的形状：
 
-| | `MEMORY.md` / `USER.md` | `state.db` 历史 | Skill |
+| | 记忆文件 | 会话历史 | Skill |
 |---|---|---|---|
-| 存什么 | 跨任务都成立的稳定事实 | 每条消息，含工具调用和结果 | 某类任务的可复用做法 |
-| 怎样进入模型 | 会话开始时整体注入 system prompt | 从不自动注入，靠 `session_search` 按需查 | 目录进 prompt，正文靠 `skill_view` 按需读 |
-| 容量 | 2200 / 1375 字符硬上限 | — | 无硬上限，由 curator 维护 |
-| 谁来改 | 前台模型、后台复盘 | 运行时自动写入 | 前台模型、后台复盘、curator |
+| 位置 | `memories/MEMORY.md`、`USER.md` | `state.db` 的 `messages` 表 | `skills/<name>/SKILL.md` |
+| 存什么 | 跨任务都成立的稳定事实 | 每一条消息，含工具调用与结果 | 某类任务的可复用做法 |
+| 怎样进入模型 | 会话开始时整体注入 system prompt | 从不自动注入，靠 `session_search` 查 | 目录进 prompt，正文靠 `skill_view` 按需读 |
+| 容量 | 2200 / 1375 字符硬上限 | 不限 | 不限，由 curator 定期维护 |
+| 谁来写 | 前台模型、后台复盘 | 运行时自动写入 | 前台模型、后台复盘、curator |
 
-### 贯穿全文的一条线：前缀缓存
+这张表里最重要的一行是「怎样进入模型」。记忆每轮都在，所以必须小；历史从不自动出现，所以可以全量；Skill 介于两者之间，平时只露出名字和一句描述。后面关于「什么该存在哪里」的规则，都从这一点推出来。
 
-下面这些设计看上去互不相关，源码注释里给出的理由却是同一个：
+## 一条约束：不要弄脏前缀缓存
 
-- 记忆是**加载时冻结的快照**，会话中途写入只改磁盘，不改 prompt。<Src p="tools/memory_tool_store.py" l="618-621" /> 注释写的是 “preserving the prefix cache”。
-- 记忆放在 system prompt 的 **volatile 档**，排在最后，让前面 stable 部分的前缀能被复用。<Src p="agent/system_prompt.py" l="736-799" />
-- 后台复盘的 fork 复制父会话的 `tools[]` 定义，沿用同一个 `session_id`，注释称之为 “warm prompt-cache parity”。<Src p="agent/background_review.py" l="954-1005" />
-- 后台**只在派发时**限制工具，不改发给模型的工具列表，原因同样是保持 `tools[]` 字节一致。<Src p="agent/background_review.py" l="1088-1128" />
-- 复盘等回合答复送出之后才启动，不和用户任务争抢资源。<Src p="agent/turn_finalizer.py" l="778-795" />
+Hermes 把 system prompt 分成三档，按「重建时变化的可能性」从低到高排列：stable（身份、指引）、context（项目上下文）、volatile（Skill 目录、记忆、时间戳）。记忆被放在最后一档：
 
-读源码时可以用这条线预测行为：任何会改变已发送前缀的动作，都会被推迟到压缩或新会话这类本来就要重建 prompt 的时刻。
+```python title="agent/system_prompt.py · 782–785"
+# ── Volatile tier (most likely to differ on a rebuild; kept last so the stable prefix stays reusable) ──
+# Skills are runtime-mutable, so the index leads the volatile band: on a longest-prefix
+# backend an unchanged index stays inside the reused prefix; a changed one re-prefills from here.
+volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
+```
+<Src p="agent/system_prompt.py" l="736-799" />
+
+进入 prompt 的记忆文字是**加载时冻结的快照**，会话中途的写入只改磁盘：
+
+```python title="tools/memory_tool_store.py · 618–621"
+def format_for_system_prompt(self, target: str) -> Optional[str]:
+    """Frozen load-time snapshot (NOT live state — mid-session writes don't touch
+    it, preserving the prefix cache); None if empty."""
+    return self._system_prompt_snapshot.get(target, "") or None
+```
+<Src p="tools/memory_tool_store.py" l="618-621" />
+
+同一个目标在代码里至少出现了五次，每次都有注释写明理由：
+
+- **记忆冻结**：会话中途写入不改 prompt，上面已经看到。
+- **记忆排在最后**：让前面的 stable 部分成为可复用的最长前缀。
+- **后台复盘复制父会话的 `tools[]`**，沿用同一个 `session_id`。注释称之为 “warm prompt-cache parity”，估计能省约 26% 成本。<Src p="agent/background_review.py" l="965-1008" />
+- **后台只在派发时限制工具**，发给模型的工具列表保持字节一致。<Src p="agent/background_review.py" l="1088-1092" />
+- **刷新只发生在本来就要重建 prompt 的时刻**：上下文压缩之后、会话切换或恢复时。<Src p="agent/system_prompt.py" l="814-832" />
+
+读源码时可以用这条线预测行为：**任何会改变已发送前缀的动作，都会被推迟到压缩或新会话这类本来就要重建 prompt 的时刻。**
 
 ## 记忆文件：小、冻结、可审计
 
-### 格式与容量
+### 格式、容量与安全扫描
 
-两个文件各是一串 `entry`，用独占一行的 `§` 分隔（常量是 `"\n§\n"`，所以不在行首行尾的 `§` 只是普通文字）。<Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" /> 一个 `entry` 可以跨多行。
+两个文件各是一串 `entry`，用独占一行的 `§` 分隔。常量是 `"\n§\n"`，所以不在行首行尾的 `§` 只是普通文字；一个 `entry` 可以跨多行。<Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
 
-`MEMORY.md`（环境与约定）上限 2200 字符，`USER.md`（用户资料）上限 1375 字符，配置项分别是 `memory_char_limit` 和 `user_char_limit`。<Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> 限制用字符数而不是 token 数，源码没有说明原因。我的推断是：字符数与分词器无关，计数也便宜。
+`MEMORY.md` 记环境与约定，上限 2200 字符；`USER.md` 记用户资料，上限 1375 字符。<Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Infer />限制用字符数而不是 token 数，源码没有解释；字符数与分词器无关、计数便宜，是合理的理由。
 
-文件被手工改到超限时，加载不会截断，只告警，并禁止继续添加，直到回到上限以内。<Src p="tools/memory_tool_store.py" l="246-252" /> 注释的态度很明确：不截断用户的记忆。
+两条保护措施体现了同一种态度：**出了问题要让人看得见，而不是悄悄处理掉。**
 
-加载时每条 `entry` 还会过一遍威胁扫描。命中的条目在 system prompt 里显示为 `[BLOCKED: …]`，**文件原文保持不变**。<Src p="tools/memory_tool_store.py" l="221-253" /> 注释给出的理由是：记忆会进入 system prompt，一条被投毒的条目会跨会话持续生效；而静默丢弃会把攻击藏起来，用户就无从发现和删除。
+- 文件被手工改到超限时，加载**不截断**，只告警，并禁止继续添加，直到回到上限以内。<Src p="tools/memory_tool_store.py" l="246-252" />
+- 每条 `entry` 加载时都会过一遍威胁扫描。命中的条目在 prompt 里显示为 `[BLOCKED: …]`，**文件原文不动**。注释的理由是：记忆会进入 system prompt，一条被投毒的条目会跨会话持续生效；静默丢弃则会把攻击藏起来，用户无从发现和删除。<Src p="tools/memory_tool_store.py" l="221-253" />
 
-### 注入：为什么是快照
+### `memory` 工具：一次调用，一个原子批次
 
-加载后的文字存在 `_system_prompt_snapshot["memory"]` 和 `["user"]`，标题分别是 `MEMORY (your personal notes)` 和 `USER PROFILE (who the user is)`，后面带字符用量。<Src p="tools/memory_tool_store.py" l="638-644" /> 文件为空则整段省略。配置了 `memory.provider` 时，外部记忆服务返回的文字会追加在内置段落之后。<Src p="agent/system_prompt.py" l="522-547" />
+工具描述本身就是一份设计说明。它要求把对同一文件的所有改动放进一次调用的 `operations` 数组，原子执行，**字符上限只检查最终结果**。这样一次调用就能「删掉旧条目腾出空间，再加新条目」，不会因为中间状态超限而失败。添加被拒绝时，工具会把现有条目全部返回，提示模型重发一个合并批次。<Src p="tools/memory_tool.py" l="375-445" />
 
-快照的代价是**延迟可见**。以「npm 改成 pnpm」为例：
-
-1. 会话启动时文件里是「用 npm」，快照也是。
-2. 本轮或后台复盘调用 `memory` 工具改成「用 pnpm」，磁盘已更新。
-3. 当前会话的 system prompt 仍然写着 npm，直到 `invalidate_system_prompt()` 触发重读。
-
-触发重读的地方比我之前写的多。压缩之后会调用，会话切换和恢复时也会调用，包括 CLI、ACP 和 TUI 的几条路径。<Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> 官方文档里 “until the next session starts” 的说法比代码保守，以代码为准。
-
-但**调用方自己**总能立刻看到结果：`memory` 工具的返回值反映的是实时状态，快照只影响 system prompt。<Src p="tools/memory_tool_store.py" l="623-636" />
-
-### `memory` 工具
-
-工具描述本身就是一份设计说明。它要求把同一目标的所有改动放进一次调用的 `operations` 数组，原子执行，字符上限**只检查最终结果**。这样一次调用就能「删旧条目腾空间 + 加新条目」，不会因为中间状态超限而失败。<Src p="tools/memory_tool.py" l="375-445" /> 添加被拒绝时，工具会把当前所有条目一并返回，提示模型重发一个合并批次。
-
-单次调用的写法适合只有一处改动的情况：
+只有一处改动时可以用单次写法：
 
 ```json title="单次 add"
 {
@@ -93,191 +113,317 @@ import FigCurator from '../../components/FigCurator.astro';
 }
 ```
 
-几条容易踩的边界：
+几条边界：
 
-- `add` 去掉首尾空白后与已有 `entry` 完全相同就跳过；措辞不同则视为新条目。<Src p="tools/memory_tool_store.py" l="369-388" />
-- `patch` 和 `remove` 用 `old_text` 定位。命中多个**不同** `entry` 返回 `ambiguous`；完全相同的重复条目不算歧义。`replace` 被明确拒绝。<Src p="tools/memory_tool_store.py" l="419-461" /> <Src p="tools/memory_tool.py" l="261-262" />
-- 写入流程是加锁、重读、校验、写临时文件、原子替换。<Src p="tools/memory_tool_store.py" l="338-367" /> <Src p="tools/memory_tool_store.py" l="675-683" />
-- 成功返回**故意不回显条目列表**，注释的理由是回显会诱导模型「再找点东西改」，重复发出同样的操作。<Src p="tools/memory_tool_store.py" l="623-636" />
+- `add` 去掉首尾空白后与已有条目完全相同就跳过；措辞不同则算新条目。<Src p="tools/memory_tool_store.py" l="369-388" />
+- `patch` 和 `remove` 用 `old_text` 定位。命中多个**不同**条目返回 `ambiguous`；完全相同的重复条目不算歧义。`replace` 被明确拒绝。<Src p="tools/memory_tool_store.py" l="419-461" /> <Src p="tools/memory_tool.py" l="261-262" />
+- 写入流程是加锁、重读文件、校验、写临时文件、原子替换。因为每次都先重读，两个同时运行的会话不会互相覆盖对方的写入。<Src p="tools/memory_tool_store.py" l="338-367" /> <Src p="tools/memory_tool_store.py" l="675-683" />
+- 成功返回**故意不回显条目列表**。注释说回显会诱导模型「再找点东西改」，重复发出同样的操作。<Src p="tools/memory_tool_store.py" l="623-636" />
 
-## 写入路径一：前台，模型自己决定
+### 什么该进记忆，什么该进 Skill
 
-没有「记住」之类的触发词。`memory` 工具开启时，system prompt 的 stable 部分会加入一段生成的指引；两个内置存储都关闭则为空，只开用户资料则只引导写 `target="user"`。<Src p="agent/system_prompt.py" l="274-299" /> <Src p="agent/prompt_builder.py" l="192-230" />
+这是整套设计里最重要的一条规则，它在三个地方各说了一遍：工具描述、system prompt 里的指引、后台复盘的提示词。<Src p="tools/memory_tool.py" l="375-398" /> <Src p="agent/prompt_builder.py" l="192-230" /> <Src p="agent/background_review.py" l="370-388" />
 
-指引划出了 Memory 和 Skill 的分界，这是整套设计里最重要的一条规则：
+| | 进记忆 | 进 Skill | 都不进 |
+|---|---|---|---|
+| 判据 | 不管做什么任务都成立 | 只在做某类任务时有用 | 很快会过时，或随时能重新查到 |
+| 例子 | 用户是谁、稳定的环境事实、长期约定 | 具体步骤、踩过的坑、用户对**这类任务**的偏好与纠正 | 任务进度、完成记录、临时待办 |
+| 写法 | 陈述句：「用户偏好简短回答」 | 可执行的步骤 | 留在会话历史，用 `session_search` 找 |
 
-- **Memory**：跨任务都成立的事实，例如用户是谁、稳定的环境事实、长期约定，写成陈述句（「用户偏好简短回答」），不写成给未来模型的命令。预计一周内就会过时的事实不该进来。
-- **Skill**：具体任务的做法、踩过的坑，以及用户对**这类**任务的偏好和纠正。
+理由写在工具描述里：记忆**每一轮都会注入**，所以必须小；Skill 只在相关时才加载。这也解释了一个初看反直觉的选择：「用户对 TypeScript 任务的纠正」进的是 Skill，而不是 `USER.md`。同一事实也不该两处都写，注释说那样会让两个文件都更快顶到上限。
 
-工具描述里的 `SKIP` 段把同一条规则再说了一遍：任务进度、完成记录、临时待办留在会话历史里，需要时用 `session_search` 找。<Src p="tools/memory_tool.py" l="375-398" />
+## 会话历史与 `session_search`
 
-理由写在 `tools/memory_tool.py` 的注释里：记忆**每一轮都会注入**，所以必须小；Skill 只在相关时才加载。这也解释了为什么「用户对某类任务的纠正」被导向 Skill 而不是 Memory。
+记忆只放得下几十条最精炼的事实，其余的一切都在 `state.db` 里。`session_search` 是取回它们的唯一入口：用 SQLite FTS5 检索 `messages` 表，**不调用任何 LLM**，返回的全是数据库里的原始消息。<Src p="tools/session_search_tool.py" l="2-8" />
 
-## 写入路径二：Background Review
+我在 `hermes_state*` 里没有找到任何向量或 embedding 相关的代码，所以「为什么不用向量检索」没有注释可引。<Infer />这个工具要找回的是用户原话和命令输出，精确匹配比语义相似更重要，也省掉一次模型调用。
 
-前台模型可能忘了存。Background Review 是兜底：在回合结束后另起一个临时 Agent，回看这一段对话，决定是否写记忆或 Skill。
+几处细节：
 
-<FigReview />
+- 默认只搜 `user` 和 `assistant`，显式传 `role_filter="tool"` 才搜工具结果。<Src p="tools/session_search_tool.py" l="330-385" /> 中日韩文本另有一张 trigram 索引，但工具消息被排除在外：注释估计 trigram 索引约为原文体积的 2.6 倍，而工具输出占消息字节的约 90%。<Src p="hermes_state_common.py" l="1025-1039" />
+- `scroll` 模式围绕命中行读取：`window` 默认 5，**限制在 1 到 20 之间**，返回中心行加前后各最多 5 行，按数据库行顺序，可以带回工具结果。<Src p="tools/session_search_tool.py" l="763-770" /> <Src p="hermes_state_messages.py" l="1407-1424" /> 锚点在**当前会话谱系**内的请求会被拒绝，那部分本来就在上下文里。<Src p="tools/session_search_tool.py" l="542-543" />
+- `read` 模式只传 `session_id`，超过 30 条消息时返回最早 20 条和最近 10 条，单条内容也有长度上限。<Src p="tools/session_search_tool.py" l="447-462" />
 
-### 两套计数
+注意 `window` 数的是**行**，不是对话轮次。你只说一句「找出 pnpm 版本」，库里就可能有四行：用户提问、助手发出工具调用、工具返回、助手作答。一条助手消息发出两个工具调用时，助手只占一行，两个工具返回各占一行。<Src p="hermes_state_common.py" l="531-538" />
 
-| | 记忆 | Skill |
-|---|---|---|
-| 计什么 | 用户轮 | 模型请求（内部步骤） |
-| 默认阈值 | 10 | 10 |
-| 配置项 | `memory.nudge_interval` | `skills.creation_nudge_interval` |
-| 何时累加 | 每来一条新用户消息 | 每准备一次模型请求 |
-| 何时检查 | 回合收尾 | 回合收尾 |
+## Skill：按需加载的做法
 
-出处：<Src p="agent/turn_context.py" l="758-767" />、<Src p="agent/turn_iteration_prep.py" l="144-167" />、<Src p="agent/agent_init.py" l="1386-1390" />。
+### 发现与读取
 
-用一个例子区分两种单位。你只说了一句「修好测试」，模型先读两个文件（第 1 步），拿到内容后决定跑测试（第 2 步），看到结果后直接给出答复（第 3 步，没有工具调用也算）。这是 **1 个用户轮、3 个内部步骤**。
+一个 Skill 以 `SKILL.md` 为入口，文件头有 `name` 和 `description`。system prompt 里只放一份目录：每个 Skill 的 `load_name`（就是传给 `skill_view` 的 `name`）和一句描述，标成 `[names only]` 的类别连描述也省去。<Src p="agent/prompt_builder.py" l="1309-1372" /> 正文由模型用 `skill_view` 按需打开，传 `file_path` 可读附带文件。<Src p="tools/skills_tool.py" l="592-694" />
 
-两种计数单位选择的**理由，代码里没有注释**。我的推断是：值得记进 Memory 的事实通常出现在用户的话里，所以按用户轮数；值得沉淀成 Skill 的做法通常对应较多的工具操作，所以按步骤数。
+这就是 Skill 能比记忆「大」的原因：它的常驻成本只有目录里的一行。
 
-有一个容易漏掉的细节：**调用 `memory` 会把记忆计数清零，调用 `skill_manage` 会把 Skill 计数清零**。<Src p="agent/tool_executor.py" l="746-749" /> Skill 的检查发生在回合末，所以本轮前台已经写过 Skill，就会让这一轮的 Skill 复盘落空。
+### 前台什么时候写
 
-### 触发时机与 fork
+- **创建**：`skill_manage` 可用时，prompt 里有一句指引，要求模型在摸索出非平凡的流程后用 `skill_manage` 记下来；困难或反复试错的任务结束时，还会提示模型主动提议保存。<Src p="agent/prompt_builder.py" l="257-264" /> <Src p="agent/prompt_builder.py" l="1362-1375" />
+- **修补**：加载的 Skill 漏了步骤或命令有误时，指引要求模型**在结束前**用 `skill_manage(action='patch')` 修订，不等用户开口。
 
-收尾时检查计数，条件是：有最终答复、回合没被中断、宿主没有要求跳过，且 `auxiliary.background_review.enabled` 没关。两个计数同时达标时合成一次复盘。<Src p="agent/turn_finalizer.py" l="763-792" /> 源码注释说得很直白：复盘在**答复送出之后**运行，不与用户任务竞争；对 cron 这类没有人在场的场景直接跳过，因为一次 fork 约耗费 3 万 token。
-
-复制消息、起线程的代码在 <Src p="agent/background_review.py" l="965-1005" />。fork 有几个刻意的设计：
-
-- **复制当前会话的 `tools[]`**，沿用同一个 `session_id`，换来 system prompt 和工具列表字节一致。注释估计这能省约 26% 成本，因为重建 prompt 会错过前缀缓存。
-- **持久化关闭**，不接会话数据库。注释解释了原因：共用 `session_id` 的情况下，fork 的「复盘指令」若写进真实会话，下一轮用户对话会把它当成常驻指令读回来。
-- **自身的计数器置零**，不会递归触发复盘；**最多 16 轮**。<Src p="agent/background_review.py" l="173" /> <Src p="agent/background_review.py" l="995" />
-- 使用 Hermes 托管的本地 `llama-server` 时，任务进**空闲队列**，等本机没有正在处理的聊天回合、本地模型空闲时才取出，最长等 `defer_max_age_s`（默认 30 分钟）。理由是复盘会占住 GPU，下一轮用户请求一到又会被取消，解码成本白付。<Src p="agent/review_idle_queue.py" l="1-59" /> <Src p="agent/review_idle_queue.py" l="126-142" />
-
-### 看到哪些消息
-
-默认**没有条数上限**：交给 fork 的是回合收尾时当前会话仍保留的全部消息副本，包含仍在上下文里的工具调用和结果。已被压缩掉的消息不会再从数据库补读。
-
-如果在 `auxiliary.background_review` 下指定了**不同于当前会话的**服务商和模型，缓存前缀无法沿用，于是改走 `_digest_history()`：保留最近 24 条原文，更早的折叠成一条 `role="user"` 摘要，每条旧用户消息最多 300 字符、旧助手消息最多 200 字符，旧工具只留名称。<Src p="agent/background_review.py" l="269-291" /> <Src p="agent/background_review.py" l="332-362" /> 窗口的起点不会落在 `role="tool"` 的消息上，必要时向前移。注释的原话是 “Routed -> digest (cache cold anyway); same model -> full snapshot (warm cache reads)”。<Src p="agent/background_review.py" l="1184-1193" />
-
-### 能用哪些工具
-
-默认白名单是 `skills_list`、`skill_view`、`skill_manage`、`read_file`、`search_files`；只有在这一轮是为记忆而复盘、并且对应的记忆功能开着时，才加入 `memory`。只因 Skill 计数达标而启动的复盘拿不到 `memory`，注释说明这是为了防止无人值守的 fork 顺着 “consolidate now” 的提示去删掉没人审阅过的条目。<Src p="agent/background_review.py" l="1088-1128" /> `terminal`、`write_file`、`patch` 被拒绝，`extra_tools` 只能追加已有工具。
-
-白名单只在**派发**一侧生效，模型看到的工具列表不变。这是为了前缀缓存，也有现实原因：注释记录过一个部署在两天内出现约 142 次工具拒绝和约 204 次先读后写拒绝，所以只读工具必须放行。
-
-### 审批：暂存而不是拒绝
-
-无人值守的复盘提交 `patch` 或 `remove` 时，工具不执行，返回 `staged: true` 和 `pending_id`。用户用 `/memory pending` 查看、`/memory approve <id>` 应用。<Src p="tools/memory_tool.py" l="179-219" /> 注释解释了为什么是暂存而不是直接拒绝：fork 自己的总结不会回传，直接拒绝会让这次整理请求凭空消失。批准时会核对原条目，避免回放时打到一个包含 `old_text` 的新条目上。<Src p="tools/memory_tool_store.py" l="447-454" />
-
-这里有三个容易被忽略的范围限制：
-
-1. 门槛只覆盖**无人值守**的复盘。用户显式发起的 `/refine` 属于有人在场，不受限。<Src p="agent/background_review.py" l="1154-1159" />
-2. `add` 不受这道门限制，除非开启 `memory.write_approval`。
-3. Skill 走另一套开关 `skills.write_approval`，默认直接写，开启后改为暂存，用 `/skills diff <id>` 和 `/skills approve <id>` 处理。
-
-### 提示词的倾向
-
-两份复盘提示词的措辞有意不对称。记忆的那份中性，按「一个事实只存一处」的路由规则指引模型选文件：`USER.md` 写 who the user is，`MEMORY.md` 写 facts about the ENVIRONMENT you operate in；注释说明这是因为同一事实写进两处，会让两个文件都更快顶到上限。<Src p="agent/background_review.py" l="370-388" /> Skill 的那份则明显更积极：它要求从对话里提炼可复用的技巧和纠正，并且特别注明 `Nothing to save.` **不应该是默认答案**。<Src p="agent/background_review.py" l="448-518" />
-
-## 读取：什么时候看到新内容
-
-| 时机 | 记忆文件 | Skill |
-|---|---|---|
-| 调用方本人 | 工具返回值立刻反映实时状态 | `skill_view` 读到最新文件 |
-| 当前会话的 system prompt | 压缩后、会话切换或恢复时重读 | 目录在 prompt 里，正文不在 |
-| 新会话 | 启动时读取 | 启动时按目录发现，正文按需读 |
-
-### `session_search`
-
-前两类存储进不了 prompt 的内容，靠它找回。它用 SQLite FTS5 检索 `messages` 表，**不调用任何 LLM**，返回的全是数据库里的原始消息。<Src p="tools/session_search_tool.py" l="2-8" /> 我没有在 `hermes_state*` 里找到任何向量或 embedding 相关代码，所以「为什么不用向量检索」没有注释可引。可以推断的是：这个工具的使命是找回**用户原话和命令输出**，精确匹配比语义相似更重要，也不用额外的模型调用。
-
-细节：
-
-- 默认只搜 `user` 和 `assistant`，显式传 `role_filter="tool"` 才搜工具结果。<Src p="tools/session_search_tool.py" l="330-385" /> 中日韩文本另有一张 trigram 索引，但工具消息被排除在外，因为 trigram 索引约为文本体积的 2.6 倍，而工具输出占消息字节的约 90%。<Src p="hermes_state_common.py" l="1025-1039" />
-- `scroll` 模式围绕命中行读取：`window` 默认 5，**限制在 1 到 20 之间**，返回中心行加前后各最多 5 行，按数据库行顺序，可带回工具结果。<Src p="tools/session_search_tool.py" l="763-770" /> <Src p="hermes_state_messages.py" l="1407-1424" /> 如果锚点在**当前会话谱系**里，请求会被拒绝。<Src p="tools/session_search_tool.py" l="542-543" />
-- `read` 模式只传 `session_id`。超过 30 条消息时，返回最早 20 条和最近 10 条，单条内容也有长度上限。<Src p="tools/session_search_tool.py" l="447-462" />
-
-`window` 数的是 `messages` 表的**行**，不是对话轮次。你只发一句「找出 pnpm 版本」，库里就可以有四行：用户提问、助手发出工具调用、工具返回、助手最终答复。一次助手消息发出两个工具调用，助手只占一行，两个工具返回各占一行。<Src p="hermes_state_common.py" l="531-538" />
-
-## Skill 的生命周期
-
-### 发现、读取、创建、修补
-
-一个 Skill 以 `SKILL.md` 为入口，文件头有 `name` 和 `description`。system prompt 里的目录列出 `load_name`（也就是传给 `skill_view` 的 `name`）和描述，标成 `[names only]` 的类别连描述也省去。<Src p="agent/prompt_builder.py" l="1309-1372" /> 正文靠 `skill_view` 按需读取，传 `file_path` 可读附带文件。<Src p="tools/skills_tool.py" l="592-694" />
-
-前台模型在两种情况下会主动写 Skill：
-
-- **创建**：`skill_manage` 可用时，prompt 里有一句指引，要求在整理出非平凡的工作流程后，用 `skill_manage` 记录下来。<Src p="agent/prompt_builder.py" l="257-264" /> 复杂或反复试错的任务结束时，还会提示模型提议保存为 Skill。<Src p="agent/prompt_builder.py" l="1362-1375" />
-- **修补**：加载的 Skill 漏了步骤或命令有误，提示要求模型在**结束前**用 `skill_manage(action='patch')` 修订，不等用户提出。
-
-后台复盘改已有 Skill 时有一道硬约束：必须在本轮读过**这次要改的那个路径**，否则 `skill_manage` 拒绝。<Src p="tools/skill_manager_guards.py" l="55-73" /> <Src p="tools/skill_manager_guards.py" l="211-221" /> 提示词里把它写成 “ENFORCED”，代码确实也在执行。
+这些写入默认直接生效；开启 `skills.write_approval` 后改为暂存待批，前台和后台都一样。<Src p="tools/write_approval.py" l="1-10" /> 由 `skill_manage` 创建的 Skill 会被打上 `created_by: agent`，这是它进入 curator 管理范围的唯一途径，从不按目录位置推断。<Src p="tools/skill_usage.py" l="1-6" />
 
 ### curator：只归档，不删除
 
-`curator` 是 Skill 库的维护任务，约束写在模块开头：**never delete, only archive (recoverable)**。<Src p="agent/curator.py" l="1-7" /> 它的运行规则容易被想得比实际更激进：
+`curator` 是 Skill 库的维护任务，模块开头写着它的底线：**never delete, only archive (recoverable)**。<Src p="agent/curator.py" l="1-7" />
 
-- **首次运行不会立刻执行。** 没有 `last_run_at` 时，第一次调用只是把它写成当前时间并返回 `False`，所以刚安装后要等满一个间隔才会真正运行。<Src p="agent/curator.py" l="169-176" />
-- 间隔默认 168 小时。调用方传入 `idle_for_seconds` 时，还要求空闲至少 2 小时。默认值定义在 <Src p="agent/curator.py" l="31-35" />，检查在 <Src p="agent/curator.py" l="1198-1207" />。
-- 范围默认只含**由 Agent 创建**的 Skill（带 `created_by: agent` 标记，从不按目录位置推断）。内置 Skill 只有在开启 `curator.prune_builtins` 时才可能被归档。置顶（pinned）和被 cron 引用的 Skill 跳过。<Src p="tools/skill_usage.py" l="618-628" /> <Src p="agent/curator.py" l="216-230" />
-- 判断依据是旁路文件 `.usage.json` 里的活动时间，取 `last_used_at`、`last_viewed_at`、`last_patched_at` 中最新的一个，没有记录时退回 `created_at`。<Src p="tools/skill_usage.py" l="121-127" /> 遥测放在旁路文件里，是为了不污染用户手写的 `SKILL.md`，也不碰内置和 hub 的 Skill。
+它的运行规则比想象中保守：
+
+- **首次调用不执行。** 没有 `last_run_at` 时，第一次调用只把它记成当前时间就返回，所以刚装好要等满一个间隔才会真正运行。<Src p="agent/curator.py" l="169-176" />
+- **间隔默认 168 小时**；调用方传入空闲时长时，还要求至少空闲 2 小时。<Src p="agent/curator.py" l="31-35" /> <Src p="agent/curator.py" l="1198-1207" />
+- **只管 Agent 创建的 Skill。** 用户自己写的不碰；内置 Skill 只有开启 `curator.prune_builtins` 才可能被归档；置顶（pinned）和被 cron 引用的 Skill 跳过。<Src p="tools/skill_usage.py" l="618-628" /> <Src p="agent/curator.py" l="216-230" />
+- **按活动时间判断。** 活动时间取 `last_used_at`、`last_viewed_at`、`last_patched_at` 中最新的一个，存在旁路文件 `.usage.json` 里，没有记录时退回 `created_at`。遥测放在旁路文件，是为了不污染用户手写的 `SKILL.md`。<Src p="tools/skill_usage.py" l="121-127" />
 
 <FigCurator />
 
-状态转换在 <Src p="agent/curator.py" l="209-261" />：超过 14 天无活动标为 `stale`，超过 30 天归档到 `skills/.archive/`，`active` 可以**直接**跳到归档。`stale` 的 Skill 在代码里没有被排除出目录，所以仍可用。从未使用过的 Skill（使用计数为 0）只在创建后 14 天内被豁免，过了 30 天同样归档。源码里有一句话说得很准：use_count 为 0 是缺少证据，不等于过时。
+状态转换只有十几行：
 
-删除只发生在手动执行 `hermes curator purge` 时，默认还处于禁用状态。<Src p="hermes_cli/curator.py" l="420-477" /> 配置值被限制在合理范围内，注释说明这是为了防止异常配置把所有 Skill 的截止时间压到「现在」而造成批量归档，因为这条路径不像手动 prune 那样要用户确认。
+```python title="agent/curator.py · 248–260" {3,7,10,12}
+# use_count == 0 is absence of evidence, not staleness: never archive a
+# never-used skill younger than stale_after_days.
+if int(row.get("use_count", 0) or 0) == 0 and anchor > stale_cutoff:
+    if current == _u.STATE_STALE:
+        _set(name, _u.STATE_ACTIVE, "reactivated")
+    continue
+if anchor <= archive_cutoff and current != _u.STATE_ARCHIVED:
+    if _archive_as_curator(_u, name):
+        counts["archived"] += 1
+elif anchor <= stale_cutoff and current == _u.STATE_ACTIVE:
+    _set(name, _u.STATE_STALE, "marked_stale")
+elif anchor > stale_cutoff and current == _u.STATE_STALE:
+    _set(name, _u.STATE_ACTIVE, "reactivated")  # used again after going stale
+```
+<Src p="agent/curator.py" l="209-261" />
+
+三点值得注意：`active` 超过 30 天可以**直接**归档，不必先经过 `stale`；`stale` 在代码里没有被排除出目录，所以仍然可用；归档条件只看「时间够久、当前不是 archived」，**不看它是不是刚被 restore 回来**。最后这一点会在后面的实验里出问题。
+
+真正的删除只发生在手动执行 `hermes curator purge` 时，而且默认处于禁用状态。<Src p="hermes_cli/curator.py" l="420-477" />
 
 ### 整合：默认关闭
 
-`curator.consolidate` 默认关闭。开启并且有候选时，curator 另起一个只带 `skills` 工具集的 Agent，`skip_memory=True`，并跳过项目上下文文件。<Src p="agent/curator.py" l="1105-1140" /> 它拿到的是候选列表和使用统计，再按需读正文，**不读用户的对话历史**。提示词要求按**内容**判断重叠，不按使用次数；倾向于合并成一个类级别的「伞形」Skill，并且把「归档」称为最大的破坏性操作。<Src p="agent/curator.py" l="296-337" />
+`curator.consolidate` 默认关闭。开启并且有候选时，curator 另起一个只带 `skills` 工具集的 Agent，关掉记忆、跳过项目上下文文件。<Src p="agent/curator.py" l="1105-1140" /> 它拿到的是候选列表和使用统计，再按需读正文，**不读用户的对话历史**。提示词要求按**内容**判断重叠而不是按使用次数，倾向于合并成一个类级别的「伞形」Skill，并把归档称为它能做的最具破坏性的操作。<Src p="agent/curator.py" l="296-337" />
 
-所以一个 Skill 的完整演进路径是：前台或后台**创建** → 使用中被**修补**（修补会刷新活动时间，推迟变成 `stale`）→ 积累后被**整合** → 长期无人问津被**归档** → 必要时 **restore**。
+把这些串起来，一个 Skill 的一生是：**创建 → 使用中被修补**（修补会刷新活动时间，推迟变成 `stale`）**→ 积累后被整合 → 长期无人问津被归档 → 必要时 restore。**
 
-## 层级：谁和谁共享
+## Background Review：把三者串起来
 
-记忆按 **profile** 保存。`HERMES_HOME` 决定位置：默认 profile 是 `~/.hermes`，具名 profile 是 `~/.hermes/profiles/<名字>`。<Src p="tools/memory_tool.py" l="38-40" /> <Src p="tools/memory_tool_store.py" l="298-301" /> 同一 profile 的所有会话共享同一对文件，**不再按项目、工作目录、用户 ID 或角色名分文件**。换工作目录只改变工作位置，换 profile 才换文件。
+前台模型可能忘了存。Background Review 是兜底：回合结束后另起一个临时 Agent，回看这一段对话，决定往记忆或 Skill 里写什么。
 
-一个例外：`profile create --clone` 会把 `MEMORY.md` 和 `USER.md` 复制进新 profile，文档的理由是记忆被当作 Agent 身份的一部分，和 `SOUL.md` 一样。所以「具名 profile 不继承默认 profile 的记忆」只在不用 `--clone` 时成立。
+<FigReview />
 
-历史库同理按 profile 划分。`session_search` 默认查当前 profile 的 `state.db`，显式传 `profile` 时以**只读**方式打开另一个 profile 的库。<Src p="tools/session_search_tool.py" l="434-444" /> profile 只是默认存储的边界，**不是沙箱**：文件权限和工具授权另算。
+### 什么时候触发
 
-### Skill 的四层查找
+两种存储用两套计数，单位不同，**判断时机也不同**：
 
-查找顺序是：受信任的项目目录、当前 profile 的 `$HERMES_HOME/skills`、`skills.create_dir`、`skills.external_dirs`。<Src p="agent/skill_utils.py" l="398-420" /> 同名时前者覆盖后者。
+| | 记忆复盘 | Skill 复盘 |
+|---|---|---|
+| 计什么 | 用户轮 | 模型请求（内部步骤） |
+| 默认阈值 | 10（`memory.nudge_interval`） | 10（`skills.creation_nudge_interval`） |
+| 何时累加 | 每来一条用户消息 | 每准备一次模型请求 |
+| **何时决定要不要复盘** | **回合开头** | **回合结尾** |
+| 跨回合 | 累计，不按回合清零 | 累计，不按回合清零 |
 
-项目层有一道信任门：只有项目根在 `skills.trusted_project_dirs` 里，才会扫描最近 Git 根下的 `.hermes/skills/` 和 `.agents/skills/`。<Src p="agent/skill_utils.py" l="507-596" /> 注释的理由是项目目录里的 Skill 是提示注入的入口，不能因为克隆了仓库就自动加载；用户主目录本身也不会被当作项目根，避免点文件仓库被误认。
+出处：<Src p="agent/turn_context.py" l="758-767" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/agent_init.py" l="1386-1390" /> <Src p="agent/turn_context.py" l="600-602" />
 
-写入的位置却**不对称**：
+用一个例子区分两种单位。你只说了一句「修好测试」：模型先读两个文件（第 1 步），拿到内容后决定跑测试（第 2 步），看到结果后直接作答（第 3 步，没有工具调用也算）。这是 **1 个用户轮、3 个内部步骤**。<Infer />按用户轮数记忆、按步骤数记 Skill，大概是因为值得记的事实通常出现在用户的话里，而值得沉淀的做法通常伴随大量工具操作；代码里没有注释说明这一点。
 
-- **新建**写当前 profile，或配置了 `skills.create_dir` 时写那个目录。官方文档说「总是写 `~/.hermes/skills/`」，代码并不是这样，以代码为准。<Src p="tools/skill_manager_tool.py" l="200-208" />
-- **修改**用 `include_project=False` 找目标，项目层**从不被改写**。<Src p="agent/skill_utils.py" l="423-426" /> 后果是：你读的是项目版，再用同名 `name` 提交修改，命中的可能是 profile 里的同名副本，而且我没有找到给模型的提示。
+判断时机的差别要看三段代码才能拼出来。记忆复盘在构建回合上下文时就决定了：
 
-项目 Skill 被当作仓库自己的资产：curator 不改，agent 新建的 Skill 也不会落进仓库。
+```python title="agent/turn_context.py · 1132"
+should_review_memory = _tick_memory_nudge(agent)
+```
 
-### 委派
+工具执行时，调用 `memory` 或 `skill_manage` 会把各自的计数清零：
 
-`delegate_task` 起的子 Agent 有自己的会话，记录在同一个数据库里，通过 `parent_session_id` 关联。<Src p="tools/delegate_tool.py" l="124-152" /> 它的记忆是被**硬编码**关掉的（`skip_memory=True`），委派用的工具表里也屏蔽了 `memory`，注释写的是 “no writes to shared MEMORY.md”。<Src p="tools/delegate_tool.py" l="289-308" /> 这不会给子 Agent 另建一份 `reviewer/USER.md`。
+```python title="agent/tool_executor.py · 746–749"
+if ref.name == "memory":
+    agent._turns_since_memory = 0
+elif ref.name == "skill_manage":
+    agent._iters_since_skill = 0
+```
 
-想让不同角色各有长期记忆，要为它们分别建 profile 并各自运行。开启 `profile_routes` 的委派可以让子 Agent 用另一个 profile 的环境、凭据和 Skill，但它仍然是子 Agent，仍然带着上面的记忆限制。<Src p="tools/delegate_tool_routes.py" l="111-153" />
+而 Skill 复盘要到回合收尾才检查：
+
+```python title="agent/turn_finalizer.py · 763–770"
+# Skill trigger is checked NOW — based on how many tool iterations THIS turn used.
+_should_review_skills = (
+    agent._skill_nudge_interval > 0
+    and agent._iters_since_skill >= agent._skill_nudge_interval
+    and "skill_manage" in agent.valid_tool_names
+)
+if _should_review_skills:
+    agent._iters_since_skill = 0
+```
+
+合起来是一个容易忽略的不对称：**本轮前台已经写过 Skill，这一轮的 Skill 复盘就不会发生；本轮前台已经写过记忆，这一轮的记忆复盘照样发生**，因为决定早在写入之前就做了。清零只影响下一个计数窗口。
+
+最终是否启动还要满足：有最终答复、回合没被中断、宿主没有要求跳过。复盘在**答复送出之后**才运行，注释的说法是不与用户的任务竞争；对 cron 这类没人在场的场景直接跳过，因为一次 fork 大约要花 3 万 token。<Src p="agent/turn_finalizer.py" l="778-792" /> 总开关是 `auxiliary.background_review.enabled`。<Src p="agent/background_review.py" l="185-250" />
+
+### fork：为缓存而生的临时 Agent
+
+`build_cache_parity_fork()` 新建的临时 `AIAgent` 有几个刻意的设计：<Src p="agent/background_review.py" l="965-1005" />
+
+- **复制父会话的 system prompt 和 `tools[]`，沿用同一个 `session_id`**，让请求命中父会话已经预热的前缀缓存。
+- **与父会话共用同一个 `MemoryStore` 对象**，所以它写入的记忆和前台写入的是同一份状态。<Src p="agent/background_review.py" l="992" />
+- **持久化完全断开**，不写 `state.db`。注释记录了不这样做的后果：共用 `session_id` 的 fork 会把自己的「复盘指令」写进真实会话，下一轮用户对话会把它当成常驻指令读回来。
+- **自身的计数器置零**，不会递归触发复盘；最多跑 16 轮。<Src p="agent/background_review.py" l="173" /> <Src p="agent/background_review.py" l="995" />
+- 使用 Hermes 托管的本地 `llama-server` 时，任务进入**空闲队列**，等本机没有进行中的聊天回合、本地模型空闲时才取出，最长等 30 分钟。理由是复盘会占住 GPU，而下一轮用户请求一到又会把它取消，解码成本白付。<Src p="agent/review_idle_queue.py" l="1-42" /> <Src p="agent/review_idle_queue.py" l="126-142" />
+
+### 它看到哪些消息
+
+默认**没有条数上限**：交给 fork 的是回合收尾时当前会话仍保留的全部消息副本，包括还在上下文里的工具调用与结果。已经被压缩掉的消息不会从数据库补回来。
+
+如果在 `auxiliary.background_review` 下指定了**和当前会话不同的**服务商与模型，前缀缓存反正用不上，于是改走 `_digest_history()`：保留最近 24 条原文，更早的折叠成一条 `role="user"` 摘要，旧用户消息每条最多 300 字符、旧助手消息每条最多 200 字符，旧工具调用只留名称。保留窗口的起点不会落在 `role="tool"` 上，必要时向前挪。<Src p="agent/background_review.py" l="269-291" /> <Src p="agent/background_review.py" l="332-362" /> 注释把这个选择说得很干脆：“Routed -> digest (cache cold anyway); same model -> full snapshot (warm cache reads)”。<Src p="agent/background_review.py" l="1184-1193" />
+
+### 它能用哪些工具
+
+默认白名单是 `skills_list`、`skill_view`、`skill_manage`、`read_file`、`search_files`。`memory` 只在这一轮**确实是为记忆而复盘**、并且记忆功能开着时才加入：
+
+```python title="agent/background_review.py · 1094–1098"
+# Gate the built-in memory tool on BOTH the profile's memory flags and the trigger that fired
+# (#105921): a skill-nudge review never gets the memory tool, so an unattended fork cannot
+# act on the memory tool's "consolidate now" hint and delete entries no one reviewed.
+memory_on = review_agent._memory_enabled or review_agent._user_profile_enabled
+review_toolsets = ["memory", "skills"] if memory_on and review_memory else ["skills"]
+```
+<Src p="agent/background_review.py" l="1088-1128" />
+
+`terminal`、`write_file`、`patch` 一律拒绝，自动维护只能走 `skill_manage` 的校验；`extra_tools` 只能放行父会话里已有的工具。只读工具必须放行也有现实原因：注释记录了某个部署在两天里出现约 142 次工具拒绝和约 204 次「先读后写」拒绝，模型读不到 `SKILL.md`，几乎没有一次修补能落地。
+
+后台修改已有 Skill 还有一道硬约束：本轮必须读过**这次要改的那个路径**，否则 `skill_manage` 拒绝。<Src p="tools/skill_manager_guards.py" l="55-73" /> <Src p="tools/skill_manager_guards.py" l="211-221" />
+
+### 审批：暂存而不是拒绝
+
+无人值守的复盘提交 `patch` 或 `remove` 时，工具不执行，而是返回 `staged: true` 和 `pending_id`；用户用 `/memory pending` 查看、`/memory approve <id>` 应用。为什么是暂存而不是直接拒绝，docstring 讲得最清楚：
+
+```python title="tools/memory_tool.py · 179–186"
+def _background_delete_gate(store, action, operations, target="memory", content=None,
+                            old_text=None) -> Optional[str]:
+    """Fail-closed operation gate for unattended background-review forks (#105921): ``add``
+    stays available (it is all any review prompt asks for), while ``patch``/``remove`` —
+    single or inside a batch — are never applied unattended. The op is staged in the pending
+    store instead of merely denied: the fork's own review summary is never published back, so
+    a plain denial would drop the consolidation request with no surfacing path at all. A
+    staging failure fails closed to a plain denial."""
+```
+<Src p="tools/memory_tool.py" l="179-219" />
+
+这段注释顺带回答了另一个问题：fork 的总结**从不回传**给前台会话。它对外的产出只有两样：写进存储的东西，以及这里暂存的待批操作。批准时会核对原条目，避免回放时打到一个恰好也包含 `old_text` 的新条目上。<Src p="tools/memory_tool_store.py" l="447-454" />
+
+三个范围限制：
+
+1. 门槛只覆盖**无人值守**的复盘。用户显式发起的 `/refine` 算有人在场，保留全部操作。<Src p="agent/background_review.py" l="1150-1159" />
+2. `add` 不受限制，除非开启 `memory.write_approval`，那时新增也要批准。<Src p="website/docs/user-guide/features/memory.md" l="329-362" />
+3. Skill 走另一套开关 `skills.write_approval`，用 `/skills diff <id>` 和 `/skills approve <id>` 处理。<Src p="website/docs/user-guide/features/memory.md" l="516-541" />
+
+### 提示词的倾向
+
+两份复盘提示词的语气有意不对称。记忆那份是中性的，按「一个事实只存一处」的规则引导选文件：`USER.md` 写 who the user is，`MEMORY.md` 写 facts about the ENVIRONMENT you operate in。<Src p="agent/background_review.py" l="370-388" /> Skill 那份明显更积极：要求从对话里提炼可复用的技巧和纠正，并特别注明 `Nothing to save.` **不应该是默认答案**。<Src p="agent/background_review.py" l="448-518" /> 结合上面的工具限制，后台的整体倾向很清楚：**Skill 尽量多写，记忆只增不删。**
+
+## 一次写入，何时被谁看到
+
+把前面所有机制放到一条时间线上，跟踪一条事实和一个 Skill：
+
+<Journey />
+
+归纳成一张表：
+
+| 读者 | 记忆文件 | Skill |
+|---|---|---|
+| 发起写入的那次调用 | 工具返回值立刻反映实时状态 | `skill_view` 读到的就是最新文件 |
+| 同一会话的 system prompt | 压缩后、会话切换或恢复时才重读 | 目录在重建时更新，正文本来就不在 prompt 里 |
+| 同一 profile 的新会话 | 启动时读入 | 启动时出现在目录里，正文按需读 |
+| 同时运行的另一个会话 | 磁盘上不会丢，但它的 prompt 要等它自己重建 | 同左 |
+| 后台复盘的 fork | 与父会话共用同一个存储对象 | 读写同一个目录 |
+
+触发重读的地方比官方文档写的多：压缩之后会调用 `invalidate_system_prompt()`，CLI、ACP、TUI 的会话切换与恢复路径也会调用。<Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" />
+
+表里真正可能出问题的是第四行。同一会话里写入的事实本来就来自这个会话的对话，模型的上下文里已经有它，所以 prompt 晚一点更新基本无害。但**两个同时运行、共用一个 profile 的会话**之间，一方写入的记忆，另一方在重建之前完全看不到。
+
+## 作用域：profile、项目与委派
+
+### profile 是存储的边界
+
+记忆按 profile 保存，位置由 `HERMES_HOME` 决定：默认 profile 是 `~/.hermes`，具名 profile 是 `~/.hermes/profiles/<名字>`。<Src p="tools/memory_tool.py" l="38-40" /> <Src p="website/docs/user-guide/profiles.md" l="401-433" /> 同一 profile 的所有会话共享同一对文件，**不按项目、工作目录、用户 ID 或角色分文件**。换工作目录只改变工作位置，换 profile 才换文件。
+
+一个例外：`profile create --clone` 会把 `MEMORY.md` 和 `USER.md` 复制进新 profile，文档的理由是记忆被当作 Agent 身份的一部分，和 `SOUL.md` 一样。<Src p="website/docs/user-guide/profiles.md" l="83" />
+
+历史库也按 profile 划分。`session_search` 默认只查当前 profile 的 `state.db`；显式传 `profile` 时，以**只读**方式打开另一个 profile 的库。<Src p="tools/session_search_tool.py" l="434-444" /> profile 只是存储的边界，**不是沙箱**，文件权限和工具授权另算。
+
+### Skill 的四层查找，与不对称的写入
+
+查找顺序是：受信任的项目目录 → 当前 profile 的 `$HERMES_HOME/skills` → `skills.create_dir` → `skills.external_dirs`，同名时前者覆盖后者。<Src p="agent/skill_utils.py" l="398-420" />
+
+项目层有一道信任门：只有项目根在 `skills.trusted_project_dirs` 里，才会扫描最近 Git 根下的 `.hermes/skills/` 和 `.agents/skills/`。注释的理由很直接：项目里的 Skill 是提示注入的入口，不能因为克隆了一个仓库就自动加载；用户主目录本身也不会被当作项目根，以免点文件仓库被误认。<Src p="agent/skill_utils.py" l="507-596" />
+
+写入却是**不对称**的：
+
+- **新建**写当前 profile；配置了 `skills.create_dir` 时写那个目录。<Src p="tools/skill_manager_tool.py" l="200-208" />
+- **修改**查找目标时排除项目层，所以项目 Skill **从不被改写**。<Src p="agent/skill_utils.py" l="423-426" />
+
+后果是：模型读的是项目版，再用同名 `name` 提交修改，命中的可能是 profile 里的同名副本，而我没有找到任何给模型的提示。
+
+### 委派不会创造新的记忆层
+
+`delegate_task` 起的子 Agent 有自己的会话，和父会话存在同一个数据库里，用 `parent_session_id` 关联。<Src p="tools/delegate_tool.py" l="124-152" /> 它的记忆被**硬编码**关掉（`skip_memory=True`），委派工具表里也屏蔽了 `memory`，注释写的是 “no writes to shared MEMORY.md”。<Src p="tools/delegate_tool.py" l="289-308" /> <Src p="tools/delegate_tool_toolsets.py" l="14-22" />
+
+想让不同角色各有长期记忆，就要为它们分别建 profile、分别运行。开启 `profile_routes` 的委派可以让子 Agent 使用另一个 profile 的环境、凭据和 Skill，但它仍然是子 Agent，记忆限制不变。<Src p="tools/delegate_tool_routes.py" l="111-153" />
+
+## 一个实验：restore 之后会被立刻重新归档
+
+读 curator 的代码时我注意到，`restore_skill()` 最后只调用了 `set_state(ACTIVE)`，不刷新任何时间戳；而归档条件只看「时间够久、当前不是 archived」。<Src p="tools/skill_usage.py" l="586-614" /> 这意味着一个被 restore 的旧 Skill，下一次 curator 运行时应该会被**立刻再次归档**。
+
+光读代码不够，我在固定提交上用一个隔离的 `HERMES_HOME` 跑了一遍：建一个由 Agent 创建、45 天没有活动的 Skill，跑一次自动转换，restore，再跑一次。
+
+```python title="restore_rearchive.py（节选）"
+u.mark_agent_created("demo")
+rec.update(use_count=3, last_used_at=old, last_viewed_at=old, created_at=old)  # 45 天前
+
+print("pass 1:", c.apply_automatic_transitions(), state())
+print("restore:", u.restore_skill("demo"), state())
+print("pass 2:", c.apply_automatic_transitions(), state())
+```
+
+```text title="输出（state, 目录在 skills/ 下, 目录在 .archive/ 下）"
+pass 1:  {'archived': 1, ...} -> ('archived', False, True)
+restore: (True, 'restored to …/skills/demo') -> ('active', True, False)
+pass 2:  {'archived': 1, ...} -> ('archived', False, True)
+```
+
+结论确认：**restore 之后，如果在下一次 curator 运行之前没有读取、使用或修改这个 Skill，它会被原样再次归档。** 实际影响有限：curator 默认一周才跑一次，而 restore 通常是为了马上用它，一次 `skill_view` 就会刷新活动时间。但如果你 restore 只是想「先放回来以后再说」，它会在一周后悄悄回到归档里。
 
 ## 设计评价
 
-**做得好的地方：**
+### 做得好的地方
 
-1. **约束一致。** 冻结快照、volatile 档排序、dispatch 侧白名单、fork 复制工具列表、复盘延后到答复之后，都服务于同一个目标，而且每一处都有注释写明缘由。这在大型代码库里不常见。
-2. **从不销毁。** 记忆只通过显式操作变更，Skill 只归档不删除，导入的内容有 `[BLOCKED]` 占位而不是静默丢弃。「出了问题能看见、能恢复」是一致的取向。
-3. **信任边界清楚。** 项目 Skill 需要显式信任，后台修改记忆需要审批，跨 profile 读取默认只读。
-4. **Memory 与 Skill 的分工有明确判据**，不靠模型凭感觉。
+1. **一条约束贯彻到底。** 冻结快照、volatile 档排序、fork 复用工具列表、派发侧白名单、复盘推迟到答复之后，全都服务于前缀缓存，而且每一处都有注释写明理由。在这么大的代码库里，这种一致性并不常见。
+2. **默认可逆。** 记忆超限不截断，可疑条目只遮盖不删除，Skill 只归档不删除，后台的删除意图暂存而不是丢弃。出了问题，用户总能看见、总能撤回。
+3. **分工有明确判据。** 「每轮都要注入，所以必须小」这一条，同时决定了记忆和 Skill 的边界、两份提示词的语气，以及后台工具的范围，而不是交给模型凭感觉。
+4. **失败时收紧而不是放开。** 暂存失败就退化为拒绝；由 Skill 计数触发的复盘拿不到 `memory`；项目 Skill 必须显式信任。
 
-**我认为值得警惕的地方（以下是判断，不是源码事实）：**
+### 值得警惕的地方
 
-1. **长会话里的陈旧窗口。** 一个会话可以跑很久而不压缩，期间 system prompt 里的记忆是旧的，而模型又知道自己刚改过记忆。工具返回值能让它在局部纠正，但新开的子流程（例如委派）可能读到旧上下文。
-2. **审批把整理成本转给了人。** 后台只被允许 `add`，`patch` 和 `remove` 要人批。记忆容量只有 2200 字符，满了之后整理依赖用户去处理 `/memory pending`，长期不处理会让记忆变成只增不减的堆。
-3. **计数阈值是启发式。** 「每 10 个用户轮」对短对话和长任务的含义完全不同，而且前台写过就清零的规则让后台复盘与前台行为互相抵消，难以预测一次具体对话里到底会不会触发。
-4. **字符上限是个粗粒度的约束。** 它保护了 prompt 大小，但不保证条目质量，高价值条目和低价值条目一样占字符。
+以下是我的判断，不是源码事实。
 
-## 还没弄清的问题
+1. **记忆会饱和，而后台无力清理。** 后台复盘只能 `add`；文件写满后，`add` 被拒绝，腾空间所需的 `remove` 和 `patch` 又要人批准。清理只能等前台模型下一次主动添加时被拒、顺手合并，或者用户去处理 `/memory pending`。如果大部分记忆都由后台写入，它很可能长期停在第一次写满时的样子。
+2. **触发时机难以预测。** 两套计数单位不同、决定时机不同，前台写入还会清零计数，很难事先说清一次具体对话会不会触发复盘。这对用户无所谓，对调试和评测却是个麻烦。
+3. **并发会话之间看不到彼此。** 同一 profile 下同时开着两个会话，一方写入的记忆另一方要等自己重建 prompt 才看得到。磁盘层面不会丢数据，但两个会话可能各自基于不同版本的「事实」工作。
+4. **restore 不重置时钟**，见上面的实验。
+5. **同名 Skill 的修改会悄悄落到 profile 副本上。** 项目层和 profile 层同名时，`skill_manage` 改的是 profile 版，模型和用户都可能以为改的是项目版。
+6. **字符上限是一个粗粒度的约束。** 它守住了 prompt 的大小，但不区分条目的价值：一条关键约定和一条可有可无的偏好，占用同样的预算。
 
-1. **restore 会不会被立刻重新归档？** `restore_skill` 把状态改回 active，但保留旧的活动时间戳；下一轮自动转换里，`anchor <= archive_cutoff and current != ARCHIVED` 仍然成立。代码里没有看到宽限期。这看起来像一个潜在的循环，需要写测试确认，我没有运行它。
-2. **前台与后台各自持有一个 `MemoryStore`，未落盘的修改如何协调？** `_file_lock` 和 `_mutate` 的重读机制能覆盖大部分情况，但我没有追踪跨 Agent 的完整路径。
-3. **「后台工具结果不会回到前台会话」是代码强制的，还是只靠进程分离？** 我没有在 `agent/background_review.py` 里找到明确的断言。
-4. **`profile_routes` 子 Agent 会不会通过别的路径拿到目标 profile 的记忆？** 它被设为 `skip_memory=True` 并带 `load_soul_identity=True`，但我没有追进 prompt 构建流程确认。
-5. **同名 Skill 在项目层和 profile 层都存在时，`skill_manage edit` 悄悄选中 profile 版**，是有意如此还是遗漏，没有注释。
+## 文档与代码不一致的地方
+
+| 主题 | 官方文档 | 代码实际 |
+|---|---|---|
+| 会话中途写入的记忆何时进入 prompt | “won't appear in the system prompt until the next session starts” <Src p="website/docs/user-guide/features/memory.md" l="57" /> | 压缩、会话切换和恢复时也会重读 <Src p="agent/system_prompt.py" l="814-832" /> |
+| Agent 新建的 Skill 写到哪里 | “always go to `~/.hermes/skills/`” <Src p="website/docs/user-guide/features/skills.md" l="500" /> | 配置了 `skills.create_dir` 时写那个目录 <Src p="tools/skill_manager_tool.py" l="200-208" /> |
+
+两处文档都比代码保守，照文档理解不会出错，只是会漏掉一些行为。本文以代码为准。
+
+## 仍未弄清的问题
+
+1. **`profile_routes` 子 Agent 会不会通过别的路径拿到目标 profile 的记忆？** 它被设为 `skip_memory=True`，同时又带 `load_soul_identity=True`；我没有追进 prompt 构建流程确认。
+2. **同名 Skill 被改到 profile 副本时，有没有任何提示？** 我在 `_find_skill` 里没有找到，但可能在别处。
+3. **记忆饱和在实际使用中是否常见？** 上面的推演基于代码路径，我没有做长时间的端到端实验，也不清楚上游是否有别的机制，例如在 `/memory pending` 积压时提醒用户。
 
 ## 附录
 
@@ -290,21 +436,24 @@ import FigCurator from '../../components/FigCurator.astro';
 | `memory_char_limit` / `user_char_limit` | 2200 / 1375 | 两个文件的字符上限 | <Src p="tools/memory_tool_store.py" l="186" /> |
 | `auxiliary.background_review.enabled` | 开 | 是否自动启动复盘 | <Src p="agent/background_review.py" l="185-250" /> |
 | `auxiliary.background_review.defer_max_age_s` | 1800 | 本地模型空闲队列的最长等待 | <Src p="agent/review_idle_queue.py" l="26-42" /> |
-| `_digest_history` 窗口 | 24 条 | 换模型后保留的近期原文条数 | <Src p="agent/background_review.py" l="332" /> |
+| `_digest_history` 窗口 | 24 条 | 换模型复盘时保留的近期原文 | <Src p="agent/background_review.py" l="332" /> |
+| `_REVIEW_MAX_ITERATIONS` | 16 | 单次复盘的最大轮数 | <Src p="agent/background_review.py" l="173" /> |
 | `memory.write_approval` | 关 | 开启后 `add` 也要批准 | <Src p="website/docs/user-guide/features/memory.md" l="329-362" /> |
 | `skills.write_approval` | 关 | 开启后 Skill 修改暂存待批 | <Src p="tools/write_approval.py" l="1-10" /> |
 | `curator.interval_hours` | 168 | 两次运行的最小间隔 | <Src p="agent/curator.py" l="31-35" /> |
 | `curator.min_idle_hours` | 2 | 传入空闲时长时的最小空闲 | <Src p="agent/curator.py" l="1198-1207" /> |
-| `curator.stale_after_days` / `archive_after_days` | 14 / 30 | 转 stale / 归档的天数 | <Src p="agent/curator.py" l="254-261" /> |
-| `curator.consolidate` | 关 | 是否启动整合 Agent | <Src p="agent/curator.py" l="33-35" /> |
+| `curator.stale_after_days` / `archive_after_days` | 14 / 30 | 转 stale / 归档的天数 | <Src p="agent/curator.py" l="31-35" /> |
+| `curator.consolidate` | 关 | 是否启动整合 Agent | <Src p="agent/curator.py" l="31-35" /> |
 | `skills.trusted_project_dirs` | 空 | 允许加载项目 Skill 的根目录 | <Src p="agent/skill_utils.py" l="563-568" /> |
 
-### 如何核实这些结论
+### 核实方法
 
-本文所有结论都固定到提交 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`，每一条带行号的引用都按下面的办法检查过：
+本文所有带行号的引用都固定在提交 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`，可以这样逐条复核：
 
-```bash title="取出固定提交里的某段源码"
-git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '209,261p'
+```bash title="取出固定提交里的一段源码"
+git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
 ```
 
-核实过程中发现旧版笔记有 7 处行号范围偏移，已在本文中修正，也补进了几条被遗漏的行为：计数清零规则、`/refine` 的审批豁免、curator 的首次运行规则、`session_search` 的窗口上限。没有发现把代码行为写反的结论。
+文中的代码摘录都是逐字复制，只去掉了首行缩进。restore 实验在 Python 3.12 下运行，`HERMES_HOME` 指向一个临时目录，没有触碰任何真实配置。
+
+和上一版相比，这一版修正了 7 处行号偏移，并补上了原来漏掉的行为：两种复盘的判断时机不同、调用工具会清零计数、fork 与前台共用同一个记忆存储、`/refine` 不受审批限制、curator 首次调用不执行、`session_search` 的窗口上限，以及 restore 之后会被重新归档。没有发现把代码行为写反的结论。

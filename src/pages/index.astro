@@ -9,22 +9,25 @@ const groups = [
   { key: 'todo', zh: '待研究', en: 'To explore' },
 ].map((g) => ({ ...g, items: all.filter((n) => n.data.status === g.key) })).filter((g) => g.items.length);
 ---
-<Base title="pixel notes · 源码级学习笔记" description="对照源码写成的 Agent 工程学习笔记，每个结论锁定到具体提交。">
+<Base title="pixel notes · 对照源码的学习笔记" description="对照源码写成的 Agent 工程笔记：每个结论固定到具体提交，写清设计取舍与边界情况。">
   <div class="wrap">
     <section class="hero">
       <div class="eyebrow">Source-level notes</div>
       <h1 data-zh="学习笔记" data-en="Learning notes">学习笔记</h1>
-      <p data-zh="对照源码写成的 Agent 工程笔记：每个结论锁定到具体提交，写清设计取舍与边界情况。" data-en="Agent-engineering notes written against the source. Every claim is pinned to a commit, with design trade-offs and edge cases spelled out.">对照源码写成的 Agent 工程笔记：每个结论锁定到具体提交，写清设计取舍与边界情况。</p>
+      <p data-zh="对照源码写成的 Agent 工程笔记。每个结论固定到具体提交，写清设计取舍、边界情况和尚未弄清的地方。" data-en="Agent-engineering notes written against the source. Every claim is pinned to a commit, with the trade-offs, edge cases and open questions spelled out.">对照源码写成的 Agent 工程笔记。每个结论固定到具体提交，写清设计取舍、边界情况和尚未弄清的地方。</p>
     </section>
-    <section id="notes" class="list">
+    <section id="notes" class="list" aria-label="notes">
       {groups.map((g) => (
         <>
           <div class="group-title"><span data-zh={g.zh} data-en={g.en}>{g.zh}</span></div>
           {g.items.map((n) => (
-            <a class="card" href={`/notes/${n.id}/`}>
-              <div class="meta"><time datetime={n.data.date}>{n.data.date}</time><span>{n.data.topic}</span>{n.data.pinned && <span class="tag">{n.data.pinned}</span>}</div>
-              <h3 data-zh={n.data.title} data-en={n.data.titleEn ?? n.data.title}>{n.data.title}</h3>
-              <p data-zh={n.data.summary} data-en={n.data.summaryEn ?? n.data.summary}>{n.data.summary}</p>
+            <a class={`entry ${n.data.status}`} href={`/notes/${n.id}/`}>
+              <time datetime={n.data.date}>{n.data.date}</time>
+              <div>
+                <h3><span data-zh={n.data.title} data-en={n.data.titleEn ?? n.data.title}>{n.data.title}</span><span class="arrow" aria-hidden="true">→</span></h3>
+                <p data-zh={n.data.summary} data-en={n.data.summaryEn ?? n.data.summary}>{n.data.summary}</p>
+                <div class="meta"><span>{n.data.topic}</span>{n.data.pinned && <span class="tag">{n.data.pinned}</span>}</div>
+              </div>
             </a>
           ))}
         </>

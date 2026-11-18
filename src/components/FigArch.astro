@@ -2,7 +2,7 @@
 // 图 1：三类存储、三条写入路径、读取时机。纯 SVG，颜色取自站点主题变量。
 ---
 <figure class="fig">
-<svg viewBox="0 0 760 360" role="img" aria-label="Hermes 记忆与 Skill 的整体结构：前台会话、后台复盘、三类存储与 curator">
+<div class="fig-scroll"><svg viewBox="0 0 760 360" role="img" aria-label="Hermes 记忆与 Skill 的整体结构：前台会话、后台复盘、三类存储与 curator">
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
     <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
@@ -52,7 +52,7 @@
     <text x="616" y="236" class="g">归档 / 整合</text>
   </g>
   <text x="12" y="346" class="m s">新会话启动时读取文件；已运行的会话只在 invalidate_system_prompt() 时重读，普通写入不改变当前 prompt。</text>
-</svg>
+</svg></div>
 <figcaption>图 1　三类存储与写入路径。实线是写入，虚线是读取，白金色箭头是触发关系。</figcaption>
 </figure>
 <style>

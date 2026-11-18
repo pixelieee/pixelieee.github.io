@@ -2,7 +2,7 @@
 // 图 3：curator 的状态转换。数值来自 agent/curator.py 的默认配置。
 ---
 <figure class="fig3">
-<svg viewBox="0 0 760 244" role="img" aria-label="curator 的 active、stale、archived 状态转换">
+<div class="fig-scroll"><svg viewBox="0 0 760 244" role="img" aria-label="curator 的 active、stale、archived 状态转换">
   <defs>
     <marker id="c3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
     <marker id="c3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
@@ -27,7 +27,7 @@
     <path d="M380 152 V172 H110 V152" marker-end="url(#c3)"/>
     <path d="M650 152 V210 H110 V152" marker-end="url(#c3g)" class="gd"/>
   </g>
-</svg>
+</svg></div>
 <figcaption>图 3　curator 的状态转换。「活动时间」取 last_used_at、last_viewed_at、last_patched_at 中最新的一个，没有记录时退回 created_at。</figcaption>
 <style>
 .fig3 svg{width:100%;height:auto;display:block}

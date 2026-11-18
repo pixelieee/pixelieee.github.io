@@ -10,7 +10,7 @@ const steps = [
 const H = 56;
 ---
 <figure class="fig2">
-<svg viewBox={`0 0 760 ${steps.length * H + 8}`} role="img" aria-label="Background Review 的五个步骤">
+<div class="fig-scroll"><svg viewBox={`0 0 760 ${steps.length * H + 8}`} role="img" aria-label="Background Review 的五个步骤">
   <path d={`M24 ${H / 2 + 4} V${(steps.length - 1) * H + H / 2 + 4}`} class="rail" />
   {steps.map((s, i) => (
     <g transform={`translate(0,${i * H + 4})`}>
@@ -21,7 +21,7 @@ const H = 56;
       {i < steps.length - 1 && <path d={`M56 ${H} H752`} class="sep" />}
     </g>
   ))}
-</svg>
+</svg></div>
 <figcaption>图 2　一次 Background Review 的路径。第 5 步中 patch / remove 暂存后，要用户执行 <code>/memory approve</code> 才会生效。</figcaption>
 <style>
 .fig2 svg{width:100%;height:auto;display:block}
