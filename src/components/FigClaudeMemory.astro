@@ -1,0 +1,48 @@
+---
+interface Props { lang?: 'zh' | 'en' }
+const en = Astro.props.lang === 'en';
+const labels = en
+  ? { source: 'Index on disk', target: 'First request', body: 'Index body', quote: 'Warning excerpt only', absent: 'Absent', caption: 'Where three adjacent markers from a 202-line MEMORY.md appeared in Claude Code 2.1.327.' }
+  : { source: '磁盘上的索引', target: '首次请求', body: '索引正文', quote: '仅见于告警摘引', absent: '未出现', caption: '同一份 202 行的 MEMORY.md 中，相邻三行的标记在 Claude Code 2.1.327 首次请求里的去向。' };
+const rows = [
+  { line: 200, state: 'body', label: labels.body },
+  { line: 201, state: 'excerpt', label: labels.quote },
+  { line: 202, state: 'absent', label: labels.absent },
+];
+---
+<figure class="memory-trace" lang={en ? 'en' : 'zh-CN'}>
+  <div class="trace-head" aria-hidden="true"><span>{labels.source}</span><span>{labels.target}</span></div>
+  <div class="trace-body">
+    {rows.map(({ line, state, label }) => (
+      <div class:list={['trace-row', state]}>
+        <span class="origin">
+          <span class="line-number"><span class="line-prefix">L</span>{line}</span>
+          <span class="leader" aria-hidden="true"></span>
+        </span>
+        <strong>{label}</strong>
+      </div>
+    ))}
+  </div>
+  <figcaption>{labels.caption}</figcaption>
+</figure>
+<style>
+  .trace-head, .trace-row { display: grid; grid-template-columns: minmax(6rem, 1fr) minmax(0, 1.35fr); }
+  .trace-head { padding: 0 .6rem .6rem; border-bottom: 1px solid var(--line); font: 500 .75rem/1.4 var(--sans); color: var(--mute); }
+  .trace-row { align-items: center; min-height: 2.7rem; padding: 0 .6rem; color: var(--fg); }
+  .origin { display: flex; align-items: center; }
+  .trace-body { padding: .3rem 0; border-bottom: 1px solid var(--line); }
+  .line-number { font: 500 .95rem/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+  .line-prefix { color: var(--mute); }
+  .leader { flex: 1; margin-inline: .8rem 1rem; border-bottom: 1px solid var(--plat-lo); position: relative; }
+  .leader::after { content: ''; position: absolute; right: 0; top: -.15rem; width: .36rem; height: .36rem; border-radius: 50%; background: var(--plat-lo); }
+  .excerpt .leader { border-bottom-style: dashed; }
+  .excerpt .leader::after { background: var(--bg); border: 1px solid var(--plat-lo); }
+  .absent .leader { border-bottom: 1px dotted var(--mute); }
+  .absent .leader::after { width: 1px; height: .55rem; top: -.24rem; border-radius: 0; background: var(--mute); }
+  .trace-row strong { font: 550 .94rem/1.5 var(--sans); }
+  .absent strong { color: var(--mute); font-weight: 400; }
+  @media (max-width: 480px) {
+    .trace-head, .trace-row { padding-inline: .15rem; }
+    .leader { margin-inline: .55rem .75rem; }
+  }
+</style>

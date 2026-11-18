@@ -1,0 +1,40 @@
+---
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const description = en
+  ? "Two leaves descend from base. The checkpoint on B retains attempt B. Returning to A follows a different ancestry."
+  : "base 分出 A 和 B。B 的压缩记录指回要保留的 attempt B。切回 A 时走另一条祖先路径。";
+---
+<figure class="branch">
+  <svg width="100%" height="168" role="img" aria-label={description}>
+    <g class="edge">
+      <line x1="13%" y1="65" x2="43%" y2="29" />
+      <line x1="13%" y1="65" x2="43%" y2="100" />
+      <line x1="43%" y1="100" x2="82%" y2="100" />
+    </g>
+    <g class="retained">
+      <line x1="82%" y1="108" x2="82%" y2="142" />
+      <line x1="82%" y1="142" x2="43%" y2="142" />
+      <line x1="43%" y1="142" x2="43%" y2="109" />
+    </g>
+    <g class="node">
+      <circle cx="13%" cy="65" r="5" /><circle cx="43%" cy="29" r="5" />
+      <circle cx="43%" cy="100" r="5" /><circle class="checkpoint" cx="82%" cy="100" r="5" />
+    </g>
+    <g class="label" text-anchor="middle">
+      <text x="13%" y="46">base</text><text x="43%" y="15">attempt A</text>
+      <text x="43%" y="85">attempt B</text><text x="82%" y="85">checkpoint</text>
+      <text class="ref" x="62.5%" y="162">firstKeptEntryId</text>
+    </g>
+  </svg>
+  <figcaption>{en ? 'Figure 1. Solid lines follow parent links. The dashed link shows which older entry the checkpoint retains.' : '图 1　实线连接父子条目。虚线标出 B 上的压缩记录从哪一条旧消息开始保留原文。'}</figcaption>
+</figure>
+<style>
+  .branch svg { display: block; overflow: visible; }
+  .edge { stroke: var(--mute); stroke-width: 1.4; }
+  .retained { stroke: var(--mute); stroke-dasharray: 3 3; }
+  .node { fill: var(--bg); stroke: var(--fg); stroke-width: 1.7; }
+  .checkpoint { fill: var(--plat); }
+  .label { fill: var(--fg); font: 13px var(--mono); }
+  .ref { fill: var(--mute); font-size: 11px; }
+</style>

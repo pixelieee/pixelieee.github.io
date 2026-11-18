@@ -1,0 +1,116 @@
+---
+title: "What OpenCode remembers: project rules, compaction and skills"
+dek: "Two runs in the same repository can inherit the same rules and send different histories to the model."
+summary: "Trace project rules, SQLite sessions and on-demand skills through a real request, then reproduce a collision between two skills with the same name."
+date: "2026-11-18"
+topic: "Agent engineering"
+status: "published"
+pinned: "opencode v1.18.33 @ 51ef4be"
+---
+import Src from '../../components/Src.astro';
+import FigOpenCodeMemory from '../../components/FigOpenCodeMemory.astro';
+
+I started OpenCode in a Git repository containing an `AGENTS.md` file. Its rules appeared in the outbound system message. A skill in the same repository initially contributed three fields: its name, description and path. **The body reached the model in a tool message on the next request**, after the local test service returned a call to `skill("probe")`. When the process exited, a third kind of record survived: the conversation in SQLite, keyed by session ID.
+
+This note follows **`opencode run` in v1.18.33**. The evidence comes from the release binary, source and tests at the matching tag. A loopback HTTP service supplied deterministic replies in the request experiments. The traces show what OpenCode sent; they do not measure a model's skill selection. [Pinned release](https://github.com/anomalyco/opencode/tree/51ef4be1d3c122f18fefb510dca8d778571f4f18)
+
+## Three paths into the next request
+
+| Information to retain | Who writes it | How it reaches a future request |
+| --- | --- | --- |
+| “This repository uses pnpm” | A maintainer, an authorized file edit, or an explicit `/init` run | The instruction loader reads matching files into the system prompt |
+| “Which command did we try?” | The runtime records messages and their parts | Continuing the session reconstructs its history, possibly with a summary in place of older turns |
+| “How to verify a release” | A skill author writes a `SKILL.md` file | The agent gets a catalog first. A permitted `skill` call returns the procedure |
+
+All three paths meet in the prompt loop. It reads the compacted view of one session, then builds the skill catalog, environment, instructions and model messages separately. Rules and skill metadata enter `system`. The reconstructed history enters `messages`. Deleting a session, editing a rule and replacing a skill therefore affect different inputs. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/prompt.ts" l="1089-1099" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/prompt.ts" l="1255-1285" />
+
+## When a project rule takes effect
+
+The global search starts with `AGENTS.md` in the config directory, with `~/.claude/CLAUDE.md` as a compatibility fallback. The project search tries `AGENTS.md`, the compatible `CLAUDE.md`, then the deprecated `CONTEXT.md`. The `break` in this search exits **the loop over filenames**. For the chosen filename, `findUp` gathers matches from the working directory up to the worktree root. Starting in a subdirectory can therefore select both its `AGENTS.md` and the root's. Once the project search has found that filename, it skips the `CLAUDE.md` pass. A global rule and a project rule may both apply. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="60-68" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="110-150" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/fs-util.ts" l="154-166" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/instruction.test.ts" l="213-229" />
+
+A root-level session need not start with every nested package's rules. When the `read` tool opens a source file, a second lookup walks upward from that file. It skips instruction files already in the system set, already attached in the history, or already claimed by this assistant message. This explains why opening a package file can introduce a convention halfway through a conversation. Configuration can also add explicit files, globs and URLs through `instructions`. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/read.ts" l="294-314" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="179-220" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/instruction.test.ts" l="115-143" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/rules.mdx" l="109-131" />
+
+## Fresh sessions, resumed sessions and compaction
+
+A session row records its project, working directory and optional parent. Messages belong to a session through `session_id`; their parts, including tool calls and results, additionally reference the message. Event projectors write the rows. The CLI can select a specific session, continue the most recent top-level session or create a new one. Loading messages filters the database query by **one session ID**. A fresh run in the same checkout can read the same project rules while starting with a different message history. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/sql.ts" l="22-36" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/sql.ts" l="68-98" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/projector.ts" l="260-279" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/projector.ts" l="308-329" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/cli/cmd/run.ts" l="452-528" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/message-v2.ts" l="433-448" />
+
+**Conversation compaction changes the sequence sent on a later model call.** Automatic compaction checks the configuration and a threshold derived from the model's input/output limits. The compaction agent summarizes older history, can draw on a previous successful summary and reserves a token budget for recent turns. When a tail fits, OpenCode records its first message ID as `tail_start_id`. A subsequent read orders the compaction request, completed summary, retained original messages and later messages for the model. Upstream tests cover two important cases: falling back to a full summary when a turn will not fit, and preserving only a suffix when a later portion of an oversized turn fits. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/overflow.ts" l="8-34" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="228-268" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="358-405" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/message-v2.ts" l="525-575" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/compaction.test.ts" l="939-1017" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/compaction.test.ts" l="1055-1097" />
+
+**Pruning old tool results takes a different path.** The backward scan skips recent turns and protects the `skill` tool. It retains roughly 40,000 estimated tool-output tokens, then checks whether the eligible older outputs exceed a 20,000-token minimum. If so, it sets `state.time.compacted`. The converter emits `[Old tool result content cleared]` when it sees the timestamp. That placeholder alone tells you nothing about the original string having been erased from SQLite. Likewise, protecting `skill` here does not exempt an entire conversation from subsequent summarization. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="28-33" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="271-315" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/message-v2.ts" l="290-302" />
+
+## Skills are discovered, advertised and authorized separately
+
+With compatibility enabled, discovery checks user and project `.claude/skills` and `.agents/skills` directories. It also scans OpenCode's config directories for `skill/` or `skills/`, explicit `skills.paths`, and directories pulled from `skills.urls`. Parsing a discovered file puts its frontmatter **and content** in an instance-local registry. “On demand” refers to when the **model** receives the body. The application may already have read it from disk. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="105-139" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="183-229" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="258-285" />
+
+Two checks stand between that registry and the model. The catalog respects the agent's permissions and omits entries without a description. On execution, the tool resolves the name, asks for the `skill` permission and, if allowed, returns the body, base directory and a sample of **at most ten** auxiliary paths. Listing a script does not execute it or include its contents in the result. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="310-337" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/system.ts" l="107-118" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/skill.ts" l="21-65" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/skill/skill.test.ts" l="214-240" />
+
+The guide at this tag describes the catalog as part of the `skill` tool description. In the captured request, the **system message** contained `<available_skills>`. The tool description directed the model there. The guide also requires a description. That is a useful authoring constraint, though the parser in this release accepts a skill without one. When diagnosing a missing skill, check three different things: what discovery found, what this agent was shown and what the call was allowed to load. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/skills.mdx" l="35-44" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/skills.mdx" l="103-124" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/skill.txt" l="1-5" />
+
+## Offline experiment: the same name in two directories
+
+I used the Windows release binary reporting `opencode --version` = `1.18.33`. Two files declared the frontmatter name `probe` with different body markers. A third, `quiet`, omitted its description. To repeat the discovery test, put that OpenCode version on PATH, save the following as `probe.py` and run `python probe.py`. It uses Git and a fresh temporary directory. No model endpoint or credentials are required.
+
+```python title="probe.py"
+import json, os, pathlib, subprocess, tempfile
+
+root = pathlib.Path(tempfile.mkdtemp())
+repo = root / "project"
+repo.mkdir()
+subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+env = os.environ.copy()
+for key, folder in [("OPENCODE_TEST_HOME", "home"), ("XDG_CONFIG_HOME", "config"),
+                    ("XDG_DATA_HOME", "data"), ("XDG_CACHE_HOME", "cache"),
+                    ("XDG_STATE_HOME", "state")]:
+    folder = root / folder
+    folder.mkdir()
+    env[key] = str(folder)
+env.update(OPENCODE_DISABLE_MODELS_FETCH="1", OPENCODE_DISABLE_AUTOUPDATE="1",
+           OPENCODE_DISABLE_DEFAULT_PLUGINS="1")
+
+def skill(folder, name, description, body):
+    path = repo / folder / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    field = f"description: {description}\n" if description else ""
+    path.write_text(f"---\nname: {name}\n{field}---\n{body}\n", encoding="utf8")
+
+skill(".opencode/skills/a", "probe", "repo description", "BODY_REPO_MARKER")
+skill("extra/b", "probe", "extra description", "BODY_EXTRA_MARKER")
+skill("extra/quiet", "quiet", "", "BODY_QUIET_MARKER")
+(repo / "opencode.json").write_text('{"skills":{"paths":["extra"]}}', encoding="utf8")
+for _ in range(8):
+    out = subprocess.check_output(["opencode", "debug", "skill"], cwd=repo, env=env)
+    skills = {s["name"]: s for s in json.loads(out)}
+    print(skills["probe"]["content"].strip(), skills["quiet"].get("description"))
+```
+
+Across eight cold starts, `probe` returned **`BODY_EXTRA_MARKER` seven times and `BODY_REPO_MARKER` once**. The raw inventory included `quiet` with no description. The ratio is incidental; repeated runs can also all choose the same file. The source explains both possible outcomes. It parses matching files concurrently, warns about duplicates, then assigns to a shared key taken from frontmatter. A later completion can overwrite its predecessor. The order in which directories were scanned does not establish a reliable override contract. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="235-245" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/cli/cmd/debug/skill.ts" l="6-13" />
+
+For a second observation I added different markers to a repository `AGENTS.md` and `CLAUDE.md`, then ran the release CLI against an OpenAI-compatible HTTP service on loopback. It returned one `skill({"name":"probe"})` call followed by `OK`. A separate title-generation request was excluded.
+
+| Where I looked | What arrived |
+| --- | --- |
+| First system message | The `AGENTS.md` marker, `probe`, `repo description` and its source path. No sibling `CLAUDE.md` marker, catalog entry for `quiet`, or skill body marker |
+| First tool definition | The `skill` description referred to the catalog in the system prompt and accepted a name |
+| Second request, tool message | `BODY_REPO_MARKER` inside `<skill_content name="probe">`, followed by the base directory and file list |
+
+A separate three-run sequence in the same Git directory made the session boundary visible on the wire. I passed the session ID emitted by the first run to the third. These were the actual user turns received by the loopback service:
+
+```text title="opencode run --format json --model localprobe/probe · user turns"
+run PIXEL_REQUEST_MARKER                     -> [PIXEL_REQUEST_MARKER]
+run PIXEL_FRESH_MARKER                       -> [PIXEL_FRESH_MARKER]
+run --session <first-id> PIXEL_RESUME_MARKER -> [PIXEL_REQUEST_MARKER, PIXEL_RESUME_MARKER]
+```
+
+In the resumed request, the current catalog said `repo description` while the retained tool message still contained `BODY_EXTRA_MARKER`. These describe different events. **The catalog identifies what this process found; the tool message records what the earlier process read.** A name shared by two files can refer to different sources within the very same outbound request.
+
+<FigOpenCodeMemory lang="en" />
+
+## Which changes can outlive the session?
+
+`/init` is an explicit write path. Its template asks the agent to inspect a repository and create or improve the root `AGENTS.md`, preserving verified guidance when the file exists. Authorized editing tools can also write a procedure into a skill when requested. The evidence for cross-session learning is a **persisted file in a discoverable location**. A successful skill call, by itself, shows no subsequent revision. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/rules.mdx" l="10-28" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/command/template/initialize.txt" l="33-66" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/registry.ts" l="211-246" />
+
+It would also be too broad to say “OpenCode has no memory file.” In the absence of a custom agent prompt, certain model names select `PROMPT_BEAST`. That template tells the model to update `.github/instructions/memory.instruction.md` when the user asks it to remember something. This is a model-specific, prompt-directed file workflow. The default rule loader does not list that filename, so it cannot establish an automatic re-read for every model and future run. <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/llm/request.ts" l="53-67" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/system.ts" l="28-43" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/prompt/beast.txt" l="114-134" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="60-68" />
+
+Plugins provide another explicit extension point. `experimental.session.compacting` can supply context or replace the default summary prompt. Persisting long-term knowledge, deduplicating it or evaluating new skills would require a concrete implementation. On the path examined here I found evidence of session summarization, instruction reads and skill loading, but no end-of-turn curator automatically writing a new `SKILL.md`. To evaluate a particular installation, follow the write and subsequent read: **which persistent object changed, and which later model request consumed it?** <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/plugin/src/index.ts" l="291-316" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="372-391" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/plugins.mdx" l="350-389" />
+
+Hermes has a curator for managed skills. OpenCode’s collision illustrates a separate possibility when a catalog changes: the selected file may be different even though neither file was edited. [Compare the Hermes implementation](/notes/hermes-memory-skills/#skills-know-how-loaded-on-demand)

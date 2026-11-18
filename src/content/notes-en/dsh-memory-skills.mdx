@@ -1,0 +1,114 @@
+---
+title: "DeepSeek Harness: Session Events, Skill Catalogs and External Memory"
+dek: "A model can load a new procedure without a new catalog message. It can also lose an instruction that still exists on disk. The two outcomes have different owners."
+summary: "Follow a skill edit into the next request and identify who owns session replay, historical search, workspace instructions and long-term memory."
+date: "2026-11-18"
+topic: "Agent engineering"
+status: "published"
+pinned: "deepseek-harness @ 2e39e70"
+---
+import Src from '../../components/Src.astro';
+import FigDshSurface from '../../components/FigDshSurface.astro';
+import Infer from '../../components/Infer.astro';
+
+export const source = { repo: "deepseek-ai/deepseek-harness", rev: "2e39e70496aa02986ca6a820c5d497e816b69d7e" };
+
+“Check the artifact before shipping” can live in a DSH conversation, a project's `AGENTS.md` or a callable skill. All three preserve text. Different sessions can carry it forward. DeepSeek Harness composes plugins through Cordis. To establish what a deployment remembers, identify its plugins, then follow the **write, the durable record and the next request**. This note pins the official repository at `2e39e70` and identifies optional components where they matter.
+
+## Four destinations for the same lesson
+
+| Destination | Owner and scope | How it reaches a later request |
+|---|---|---|
+| Session events and checkpoints | Session appends events. The persistence provider stores the log. | Continuing or resuming the session reconstructs its effective message sequence. |
+| User and project instructions | `agent-instructions` reads files from the user roots and project hierarchy. | The first request gets a baseline. Relevant file activity or a working-directory change can produce updates. |
+| Skills | `ctx.skills` merges providers. Filesystem-backed procedures live in directories and files. | The model gets a callable catalog, then loads the body. Explicit user invocation takes a separate route. |
+| External long-term memory | The selected MCP service owns storage, search and write semantics. | The service must be installed, enabled and exposed through tools that a caller actually uses. |
+
+Two kinds of lookup are easy to confuse. `ctx.sessionQuery` serves an application's session history. A third-party memory MCP configuration connects a separately maintained dataset. Finding a fact in the former tells us nothing about whether it was written into the latter. <Src {...source} p="packages/session-query/session-query/README.md" l="28-49" /> <Src {...source} p="docs/user/guide/mcp-memory.md" l="5-21" />
+
+## Compaction replaces part of the model's view
+
+DSH offers distinct reads of the log and the current sequence of model-visible messages, called the *surface*. The JSONL backend appends logical events per session and can store them as checksummed Zstandard frames by default. An optional SQLite persistence backend also exists. `readSession` returns replay-validated raw events. `readSurface` returns the current sequence. History queries prefer a live session and can read a persisted copy without reviving it. <Src {...source} p="docs/subsystems/persistence.md" l="341-346" /> <Src {...source} p="packages/session-query/session-query/README.md" l="9-13" /> <Src {...source} p="packages/session-query/session-query/README.md" l="36-49" />
+
+The basic compaction backend checks pressure at step boundaries and has a recovery path for a provider-confirmed overflow. Selection retains an appropriate recent tail and avoids splitting a tool call from its result. A `compaction/summary` event records the summary and the events it shadows. A subsequent message applies the replacement and links back to the summary and its source events. <Src {...source} p="packages/compaction/compaction-basic/src/index.ts" l="155-182" /> <Src {...source} p="packages/compaction/compaction-basic/src/index.ts" l="228-251" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="115-156" />
+
+```ts title="compaction-basic/src/region.ts · 507–510"
+  session.append('user/message', checkpointMessage, {
+    surfaceOp: { op: 'replace', startSeq: start, endSeq: end },
+    sourceEventSeqs: [startEvent.seq, summaryEvent.seq, ...shadowedSeqs],
+  })
+```
+
+`startSeq` and `endSeq` are event IDs. The backend locates each ID on the current surface and slices the inclusive interval **between those positions**. After an earlier replacement, selecting all log rows whose numbers fall between the endpoints can collect the wrong material. The transaction writes a start marker, records the summary and replacement, then closes. A framed summary that fails to shrink the selected content is an error. Recovery can distinguish an attempted compaction from a committed replacement. <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="200-250" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="411-426" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="492-510" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="337-358" />
+
+<FigDshSurface lang="en" />
+
+**Can a new session look up an old one?** The experimental `tool-session-query` consumer is opt-in. Its five read-only tools can find events, read source records and trace relationships. Cross-session access requires an exact match between the target and caller's `cwd`. A caller with no `cwd` can inspect only itself. The SQLite query backend can search current, shadowed and log-only material by default. A phrase can disappear from the current request and still be retrievable from history. <Src {...source} p="packages/experimental/tool-session-query/README.md" l="9-14" /> <Src {...source} p="packages/experimental/tool-session-query/src/workspace-access.ts" l="74-99" /> <Src {...source} p="packages/session-query/session-query-sqlite/README.md" l="59-69" />
+
+## Workspace rules still have to fit
+
+The base composition enables `agent-instructions`. For the first request it reads user roots (`$DSH_HOME` and the shared agents root), then the project chain from its root down to the working directory. `AGENTS.md`, `CLAUDE.md` and their `.local.md` variants can contribute. Files with identical trimmed content in one candidate group are presented once. The base budget is 65,536 **bytes per chain**. A file's presence does not guarantee that every byte of it reaches the request. <Src {...source} p="packages/context/agent-instructions/README.md" l="27-44" /> <Src {...source} p="packages/context/agent-instructions/src/files.ts" l="430-450" />
+
+Successful relevant file operations can introduce a deeper directory's rule, replace an earlier rule or generate a removal notice for the next request. Resuming reconciles the baseline. A save in an external editor is not an immediate message in a running chat. The plugin considers whether a tool operation succeeded, waits for pending projections and composes the instructions at a step that actually proceeds. <Src {...source} p="packages/context/agent-instructions/README.md" l="9-13" /> <Src {...source} p="packages/context/agent-instructions/src/index.ts" l="330-369" />
+
+## A skill passes three selection points
+
+The registry first picks a winner for each name **within each scope layer**, then merges layers. A layer closer to the agent can override a more distant one. Numeric rank settles competition within a layer. The filesystem provider ranks project `.dsh/skills` at 100, project `.agents/skills` at 200, custom directories at 300, user DSH at 400, user agents at 500 and bundled skills at 600. Treating these as a process-wide ordering would give the wrong answer for a same-name provider mounted by an agent preset in its own layer. <Src {...source} p="packages/skill/skill/src/index.ts" l="553-586" /> <Src {...source} p="packages/skill/skill/src/index.ts" l="810-815" /> <Src {...source} p="packages/skill/skill-filesystem/README.md" l="44-58" />
+
+Before a step, the tool plugin requests a snapshot for the current agent scope and working directory. It filters model-invocable entries and publishes **names and descriptions** in a message carrying source metadata. A `skill` call checks model invocation policy both before and after loading the definition. The filesystem provider rereads the body. An explicit `/<name>` in an actual user message takes a different route: it checks `userInvocable` and appends the instructions to the step. These independent policy bits let an author require an explicit user gesture for a skill. <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="133-159" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="166-207" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="222-255" /> <Src {...source} p="packages/skill/skill-filesystem/src/index.ts" l="212-234" />
+
+Why can editing the body leave the catalog quiet? Its digest includes the names, descriptions and completeness of discovery. Changing only a procedure can affect the next load without changing what the catalog advertises. Editing a description, deleting an entry or recovering from partial discovery can instead produce a replacement catalog. Even an **empty catalog** has two meanings: a successful discovery found none, or discovery could not confirm any this time. An incomplete observation is not cached as authoritative and old catalog entries are no longer a license to call those names. <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="290-329" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="344-356" /> <Src {...source} p="docs/subsystems/skills.md" l="11-17" /> <Src {...source} p="docs/subsystems/skills.md" l="77-83" />
+
+## Who owns an external memory write?
+
+The official guide has three default-off reference configurations: Memorix, MCP Reference Memory and Engram. DSH launches an installed stdio process or connects to a running HTTP service, discovers its tools and makes them callable. The selected server owns indexing, project identity, migrations, conflict handling and forgetting policies. Enabling its tools does not establish that an ordinary chat message calls a writer. <Src {...source} p="docs/user/guide/mcp-memory.md" l="5-33" />
+
+For Reference Memory, the example sets `MEMORY_FILE_PATH` to a local JSONL knowledge graph of entities, relations and observations. Search performs case-insensitive substring matching over entity names, types and observations. If a semantic paraphrase fails to retrieve a record, check whether a write tool ran, whether both processes target the same file and whether the literal search term occurs in an indexed field. <Src {...source} p="apps/cli/config/examples/mcp-memory/mcp-reference-memory.cordis.yml" l="1-13" /> <Src {...source} p="docs/user/guide/mcp-memory.md" l="48-59" />
+
+## Experiment: why can a 600-byte budget yield 879 bytes?
+
+This calls the pinned instruction renderer with synthetic, already-read files. The measured output is the text that layer supplies to its caller. There is no chat, model or user configuration in the experiment. With Node 22.23.1, save this as `probe.mjs` in the DSH repository root and run `node probe.mjs`. The resolution hook maps one workspace dependency to its TypeScript source in the same checkout.
+
+```js title="probe.mjs"
+import {registerHooks} from 'node:module';
+import {pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+const homePaths = pathToFileURL(resolve('packages/util/home-paths/src/index.ts')).href;
+registerHooks({resolve(name, ctx, next) {
+  return name === '@deepseek-ai/dsh-home-paths'
+    ? {url: homePaths, shortCircuit: true} : next(name, ctx);
+}});
+const {renderAgentInstructions} = await import('./packages/context/agent-instructions/src/render.ts');
+const file = (path, content) => ({absolutePath: resolve(path), displayPath: path, content});
+const globalRule = file('~/.dsh/AGENTS.md', 'G'.repeat(240));
+const rootRule = file('AGENTS.md', 'R'.repeat(800));
+const nestedRule = file('app/AGENTS.md', 'N'.repeat(240));
+
+for (const [maxBytes, files] of [
+  [600, [rootRule, nestedRule]],
+  [600, [globalRule, rootRule, nestedRule]],
+  [2000, [globalRule, rootRule, nestedRule]],
+]) {
+  const {text, omitted, truncated} = renderAgentInstructions(files, {maxBytes});
+  console.log(Buffer.byteLength(text), omitted.map(f => f.displayPath),
+    truncated.map(f => [f.displayPath, f.includedBytes]));
+}
+```
+
+| Input and per-chain budget | Output bytes | Fully omitted | Truncated |
+|---|---:|---|---|
+| Project root and nested file, 600 | 600 | `AGENTS.md` | 186 body bytes retained from `app/AGENTS.md` |
+| Add the user rule, 600 | 879 | `AGENTS.md` | The same 186 bytes of the nested file |
+| All three, 2,000 | 1,659 | None | None |
+
+The totals include headings and explanatory text. Adding the user file raised the total above 600 because the user and project chains each have a budget. It did not displace more of the nested rule. Within a single project chain the broader root file was omitted first, then the more specific file was truncated. When an instruction is missing, inspect the rendered omission and truncation records as well as the filesystem. <Src {...source} p="packages/context/agent-instructions/src/render.ts" l="363-420" /> <Src {...source} p="packages/context/agent-instructions/src/render.ts" l="427-480" />
+
+## Where evolution actually happens
+
+The pinned version shows three distinct changes: a session can acquire a checkpoint, a provider can expose an updated skill, and maintainers can revise and release a skill in response to a failure. The last has a documented example. The shipped Cordis plugin-development skill grew large enough for the standard preset's tool-result pruner to remove its middle. Maintainers moved recipes into `references/` and templates into `templates/`, and added tests for entry length and reference integrity. The failure, edit and acceptance condition are all identifiable. A maintainer owned the write. <Src {...source} p=".agents/notes/archived/architecture/2026-09-21-creator-skills-progressive-disclosure.md" l="8-26" />
+
+The experimental `ralph` tool illustrates a different kind of iteration. When the user explicitly asks for fresh-agent rounds, each child starts with a fixed objective, a shared workspace and the previous child's bounded report. Parent chat and older child sessions are not seeded. A worker-reported completion ends the loop without independent verification. The files and the one-round handoff carry progress across attempts. They establish neither a revised Skill nor a measured improvement in the next task. <Src {...source} p="packages/experimental/tool-ralph/README.md" l="28-38" />
+
+In the base composition, registry and consumer inspected here, I found no end-of-session worker that automatically distills ordinary conversations into skills, revises them and archives older versions by usage. A user-directed edit, a deployment-specific plugin or the selected external memory service can change that answer. <Infer lang="en" /> DSH makes it possible to identify which call, scope and material produced a change. The trade-off is that text seen once in a client reveals little about its visibility elsewhere. To establish cross-session reuse, inspect the **message actually delivered or tool result actually returned** in the new session. <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="222-255" /> <Src {...source} p="docs/user/guide/mcp-memory.md" l="65-72" />
+
+Hermes connects historical material to background review and file writes. DSH hot reload establishes that a reader can observe an edit. A claim about learning from history also needs the origin of that write. [Compare the Hermes implementation](/notes/hermes-memory-skills/#background-review-what-ties-the-three-together)
