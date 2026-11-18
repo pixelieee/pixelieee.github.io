@@ -1,9 +1,5 @@
----
-// 代码注释翻译：默认插槽放原文，slot="tr" 放注释译成中文的版本（代码行保持一字不差）。
-// 开关是全站共享的，状态存在 <html data-codetr>。
----
 <div class="code-tr">
-  <button class="tr-toggle" type="button" aria-pressed="false" title="切换代码注释的语言，代码本身不变"><span class="t-en">原文</span><span class="t-zh">中文注释</span></button>
+  <button class="tr-toggle" type="button" aria-pressed="false" aria-label="显示所有代码块的中文译注" title="切换注释和文档字符串的中文译文">中文译注</button>
   <div class="tr-orig"><slot /></div>
-  <div class="tr-zh" aria-hidden="false"><slot name="tr" /></div>
+  <div class="tr-zh"><slot name="tr" /></div>
 </div>

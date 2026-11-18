@@ -1,6 +1,7 @@
 ---
 import { getCollection, getEntry } from 'astro:content';
 import Base from '../layouts/Base.astro';
+import AsciiPortrait from '../components/AsciiPortrait.astro';
 
 const all = (await getCollection('notes')).sort((a, b) => b.data.date.localeCompare(a.data.date));
 const en = Object.fromEntries(await Promise.all(all.map(async (n) => [n.id, (await getEntry('notesEn', n.id))?.data])));
@@ -13,9 +14,12 @@ const groups = [
 <Base title="pixel notes · 对照源码的学习笔记" titleEn="pixel notes · notes written against the source" description="对照源码写成的 Agent 工程笔记：每个结论固定到具体提交，写清设计取舍与边界情况。">
   <div class="wrap">
     <section class="hero">
-      <div class="eyebrow">Source-level notes</div>
-      <h1 data-zh="学习笔记" data-en="Learning notes">学习笔记</h1>
-      <p data-zh="阅读 Agent 源码时写的笔记，记录它们的设计和尚未弄清的问题。" data-en="Notes from reading the source of AI agents: how they are designed, and what is still unclear.">阅读 Agent 源码时写的笔记，记录它们的设计和尚未弄清的问题。</p>
+      <div class="intro">
+        <div class="eyebrow">Source-level notes</div>
+        <h1 data-zh="学习笔记" data-en="Learning notes">学习笔记</h1>
+        <p data-zh="阅读 Agent 源码时写的笔记，记录它们的设计和尚未弄清的问题。" data-en="Notes from reading the source of AI agents: how they are designed, and what is still unclear.">阅读 Agent 源码时写的笔记，记录它们的设计和尚未弄清的问题。</p>
+      </div>
+      <div class="art"><AsciiPortrait /></div>
     </section>
     <section id="notes" class="list" aria-label="notes">
       {groups.map((g) => (
@@ -36,3 +40,25 @@ const groups = [
     </section>
   </div>
 </Base>
+
+<style>
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 50%);
+    align-items: center;
+    column-gap: clamp(24px, 5vw, 72px);
+    padding: 52px 0 22px;
+  }
+
+  @media (max-width: 600px) {
+    .hero {
+      grid-template-columns: 1fr;
+      gap: 20px;
+      padding: 36px 0 0;
+    }
+    .art {
+      width: min(84%, 300px);
+      justify-self: center;
+    }
+  }
+</style>
