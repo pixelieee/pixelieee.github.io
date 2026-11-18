@@ -37,13 +37,6 @@ export default defineConfig({
         frames: {
           shadowColor: 'transparent',
           frameBoxShadowCssValue: 'none',
-          editorTabBarBackground: 'var(--card)',
-          editorTabBarBorderBottomColor: 'var(--line)',
-          editorActiveTabBackground: 'var(--code)',
-          editorActiveTabForeground: 'var(--mute)',
-          editorActiveTabBorderColor: 'var(--line)',
-          editorActiveTabIndicatorTopColor: 'var(--plat)',
-          editorActiveTabIndicatorBottomColor: 'transparent',
           inlineButtonForeground: 'var(--mute)',
           inlineButtonBorder: 'var(--line)',
         },

@@ -1,4 +1,11 @@
 ---
-const { size = 28 } = Astro.props;
+const { size = 38 } = Astro.props;
 ---
-<img src="/pixel-avatar.png" width={size} height={size} alt="" class="logo" />
+<img src="/pixel-portrait.svg" width={size} height={size} alt="" class="logo" />
+
+<style>
+  .logo {
+    display: block;
+    border-radius: 20%;
+  }
+</style>

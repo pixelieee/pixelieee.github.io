@@ -1,0 +1,280 @@
+﻿---
+import artwork from '../../public/pixel-portrait.txt?raw';
+
+const portrait = artwork.trimEnd().replace(/\r\n/g, '\n');
+---
+<div class="ascii-portrait">
+  <pre role="img" aria-label="pixel notes ASCII portrait">{portrait}</pre>
+  <div class="scan" aria-hidden="true"></div>
+  <div class="cursor-glow" aria-hidden="true"></div>
+</div>
+
+<style>
+  .ascii-portrait {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    container-type: inline-size;
+    color: var(--fg-2);
+  }
+
+  pre, .scan, .cursor-glow {
+    margin: 0;
+    font: 400 calc(100cqi / 72 / .6) / 1 var(--mono);
+    white-space: pre;
+    letter-spacing: 0;
+    font-variant-ligatures: none;
+  }
+
+  .scan, .cursor-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .ascii-portrait :global(span) {
+    position: absolute;
+    width: 1ch;
+    height: 1em;
+    background: var(--bg);
+  }
+
+  .scan {
+    color: white;
+  }
+
+  /* A stationary mask covers the source glyph; only the white type lifts. */
+  .scan :global(i) {
+    display: block;
+    font-style: normal;
+    text-shadow: 0 0 .12em light-dark(#252b32, #788492),
+                 0 .08em .08em light-dark(#47505a, transparent);
+  }
+
+  .cursor-glow {
+    overflow: clip;
+    color: light-dark(#9c6b13, #ffe19a);
+    --cursor-glint: light-dark(#c39333, #cda856);
+    opacity: 0;
+    transition: opacity 440ms ease-out 120ms;
+  }
+
+  .cursor-glow.active {
+    opacity: 1;
+    transition: none;
+  }
+
+  .cursor-glow :global(.flicker) {
+    color: var(--cursor-glint);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cursor-glow.active:not(:empty)::after {
+      content: '';
+      position: absolute;
+      left: var(--flash-left);
+      top: var(--flash-top);
+      width: 10ch;
+      height: 6em;
+      background: white;
+      animation: cursor-flash 350ms ease-out infinite;
+    }
+  }
+
+  @keyframes cursor-flash {
+    0%, 16%, 43%, 100% { opacity: 0; }
+    4%, 9% { opacity: .94; }
+    25%, 30% { opacity: .78; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scan { display: none; }
+    .cursor-glow { transition: none; }
+  }
+
+  @media print {
+    .scan, .cursor-glow { display: none; }
+  }
+</style>
+
+<script>
+  function mountPortrait(art: HTMLElement) {
+    const base = art.querySelector('pre')!;
+    const scan = art.querySelector<HTMLElement>('.scan')!;
+    const glow = art.querySelector<HTMLElement>('.cursor-glow')!;
+    const rows = (base.textContent ?? '').split('\n');
+    const columns = 72;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+    const duration = 2200;
+    const dwell = 260;
+    const interval = 7000;
+    const marks = '/\\|:+01%';
+
+    function cell(x: number, y: number, opacity: number) {
+      const span = document.createElement('span');
+      span.style.left = x + 'ch';
+      span.style.top = y + 'em';
+      span.style.opacity = String(opacity);
+      return span;
+    }
+
+    const width = columns * .6;
+    const centerX = width * .55;
+    const centerY = rows.length * .44;
+    const reach = [
+      width + rows.length,
+      rows.length,
+      Math.hypot(centerX, Math.max(centerY, rows.length - centerY)),
+    ];
+    // Arrival times for a diagonal pass, a rising horizontal pass and a ripple.
+    const ink = rows.flatMap((row, y) => Array.from(row, (glyph, x) => ({
+      x, y, glyph, seed: x * 31 + y * 13,
+      arrival: [x * .6 + y, rows.length - 1 - y, Math.hypot(.6 * x - centerX, y - centerY)]
+        .map((distance, index) => distance / reach[index] * (duration - dwell)),
+    })).filter(({ glyph }) => glyph !== ' '));
+
+    let pass = -1;
+    let start = 0;
+    let scanTimer = 0;
+    let visible = false;
+
+    function paintScan() {
+      const elapsed = performance.now() - start;
+      if (elapsed >= duration) {
+        scan.replaceChildren();
+        scanTimer = window.setTimeout(begin, interval - duration);
+        return;
+      }
+      const cells = document.createDocumentFragment();
+      for (const { x, y, seed, arrival } of ink) {
+        const age = elapsed - arrival[pass];
+        if (age < 0 || age >= dwell || (seed + pass) % 7 > 2) continue;
+        const phase = age / dwell;
+        const lift = Math.sin(Math.PI * phase);
+        const tick = Math.floor((age + seed % 64) / 32);
+        const glint = tick % 2 === 0 ? 1 : .72;
+        const slot = cell(x, y, (.4 + .6 * lift) * glint);
+        const glyph = document.createElement('i');
+        glyph.textContent = marks[(tick + seed) % marks.length];
+        const dx = lift * Math.sin(seed + phase * Math.PI) * .18;
+        const dy = -lift * (.26 + seed % 4 * .045);
+        glyph.style.transform = `translate(${dx.toFixed(3)}em, ${dy.toFixed(3)}em)`;
+        slot.append(glyph);
+        cells.append(slot);
+      }
+      scan.replaceChildren(cells);
+      scanTimer = window.setTimeout(paintScan, 24);
+    }
+
+    function begin() {
+      pass = (pass + 1) % reach.length;
+      start = performance.now();
+      paintScan();
+    }
+
+    let pointer: { x: number; y: number } | null = null;
+    let lastCell = -1;
+    let pointerTimer = 0;
+    let lit: { span: HTMLSpanElement; glyph: string; nextChange: number }[] = [];
+
+    function paintPointer() {
+      const time = performance.now();
+      for (const character of lit) {
+        if (time < character.nextChange) continue;
+        const { span, glyph } = character;
+        if (reduced.matches) {
+          span.textContent = glyph;
+          continue;
+        }
+        span.textContent = Math.random() < .2 ? glyph : marks[Math.floor(Math.random() * marks.length)];
+        span.classList.toggle('flicker', Math.random() < .35);
+        character.nextChange = time + 45 + Math.random() * 65;
+      }
+      if (lit.length && !reduced.matches) pointerTimer = window.setTimeout(paintPointer, 32);
+    }
+
+    function leave() {
+      clearTimeout(pointerTimer);
+      pointer = null;
+      lastCell = -1;
+      lit = [];
+      glow.classList.remove('active');
+    }
+
+    function lightPointer() {
+      if (!pointer || document.hidden) return;
+      const rect = base.getBoundingClientRect();
+      const xPos = (pointer.x - rect.left) / rect.width * columns;
+      const yPos = (pointer.y - rect.top) / rect.height * rows.length;
+      if (xPos < 0 || xPos >= columns || yPos < 0 || yPos >= rows.length) {
+        leave();
+        return;
+      }
+      const col = Math.round(xPos);
+      const row = Math.round(yPos);
+      const id = row * (columns + 1) + col;
+      if (id === lastCell) return;
+      lastCell = id;
+      clearTimeout(pointerTimer);
+      lit = [];
+      const cells = document.createDocumentFragment();
+      // Ten columns and six rows both span 6em, centered on a grid intersection.
+      const left = col - 5;
+      const top = row - 3;
+      glow.style.setProperty('--flash-left', left + 'ch');
+      glow.style.setProperty('--flash-top', top + 'em');
+      for (let y = Math.max(0, top); y < Math.min(rows.length, top + 6); y++) {
+        for (let x = Math.max(0, left); x < Math.min(rows[y].length, left + 10); x++) {
+          const glyph = rows[y][x];
+          if (glyph === ' ') continue;
+          const span = cell(x, y, 1);
+          lit.push({ span, glyph, nextChange: 0 });
+          cells.append(span);
+        }
+      }
+      glow.replaceChildren(cells);
+      glow.classList.add('active');
+      paintPointer();
+    }
+
+    function follow(event: PointerEvent) {
+      if (!event.isPrimary) return;
+      pointer = { x: event.clientX, y: event.clientY };
+      lightPointer();
+    }
+
+    function sync() {
+      clearTimeout(scanTimer);
+      scan.replaceChildren();
+      if (!visible || document.hidden) {
+        leave();
+        glow.replaceChildren();
+        return;
+      }
+      lastCell = -1;
+      lightPointer();
+      if (!reduced.matches) scanTimer = window.setTimeout(begin, 1000);
+    }
+
+    art.addEventListener('pointermove', follow, { passive: true });
+    art.addEventListener('pointerdown', follow, { passive: true });
+    art.addEventListener('pointerleave', leave);
+    art.addEventListener('pointercancel', leave);
+    art.addEventListener('pointerup', (event) => {
+      if (event.pointerType === 'touch') leave();
+    });
+    window.addEventListener('scroll', lightPointer, { passive: true });
+    window.addEventListener('resize', lightPointer);
+    new ResizeObserver(lightPointer).observe(base);
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      sync();
+    }).observe(art);
+    document.addEventListener('visibilitychange', sync);
+    reduced.addEventListener('change', sync);
+  }
+
+  const art = document.querySelector<HTMLElement>('.ascii-portrait');
+  if (art) mountPortrait(art);
+</script>
