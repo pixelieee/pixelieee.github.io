@@ -1,34 +1,60 @@
 ---
 // 图 3：curator 的状态转换。数值来自 agent/curator.py 的默认配置。
+const { lang = 'zh' } = Astro.props;
+const T = {
+ zh: {
+  k0: 'curator 的 active、stale、archived 状态转换',
+  k1: '图 3\u3000curator 的状态转换。「活动时间」取 last_used_at、last_viewed_at、last_patched_at 中最新的一个，没有记录时退回 created_at。',
+  k2: '距最近活动 ≥ 30 天，active 也直接归档',
+  k3: 'hermes curator restore <skill>（保留原活动时间）',
+  k4: '最近活动不到 14 天',
+  k5: '正常出现在 Skill 目录',
+  k6: '仍可读取、可使用',
+  k7: '≥ 14 天',
+  k8: '≥ 30 天'
+ },
+ en: {
+  k0: 'Curator state transitions between active, stale and archived',
+  k1: 'Figure 3. Curator state transitions. "Activity" is the latest of last_used_at, last_viewed_at and last_patched_at, falling back to created_at.',
+  k2: '≥ 30 days since last activity: active is archived directly',
+  k3: 'hermes curator restore <skill> (keeps the old activity time)',
+  k4: 'active again within 14 days',
+  k5: 'listed in the skill index',
+  k6: 'still readable and usable',
+  k7: '≥ 14 days',
+  k8: '≥ 30 days'
+ },
+};
+const t = T[lang] ?? T.zh;
 ---
-<figure class="fig3">
-<div class="fig-scroll"><svg viewBox="0 0 760 244" role="img" aria-label="curator 的 active、stale、archived 状态转换">
+<figure class="fig3" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+<div class="fig-scroll"><svg viewBox="0 0 760 244" role="img" aria-label={t.k0}>
   <defs>
-    <marker id="c3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
-    <marker id="c3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
+    <marker id={`c3-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
+    <marker id={`c3g-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
   </defs>
   <g class="b">
     <rect x="10" y="84" width="200" height="68" rx="10"/><rect x="280" y="84" width="200" height="68" rx="10"/><rect x="550" y="84" width="200" height="68" rx="10"/>
   </g>
   <g class="t">
-    <text x="26" y="114" class="h mono">active</text><text x="26" y="137" class="m">正常出现在 Skill 目录</text>
-    <text x="296" y="114" class="h mono">stale</text><text x="296" y="137" class="m">仍可读取、可使用</text>
+    <text x="26" y="114" class="h mono">active</text><text x="26" y="137" class="m">{t.k5}</text>
+    <text x="296" y="114" class="h mono">stale</text><text x="296" y="137" class="m">{t.k6}</text>
     <text x="566" y="114" class="h mono">archived</text><text x="566" y="137" class="m">skills/.archive/</text>
-    <text x="245" y="104" class="m" text-anchor="middle">≥ 14 天</text>
-    <text x="515" y="104" class="m" text-anchor="middle">≥ 30 天</text>
-    <text x="380" y="30" class="m" text-anchor="middle">距最近活动 ≥ 30 天，active 也直接归档</text>
-    <text x="245" y="190" class="m" text-anchor="middle">最近活动 &lt; 14 天</text>
-    <text x="380" y="234" class="g" text-anchor="middle">hermes curator restore &lt;skill&gt;（保留原活动时间）</text>
+    <text x="245" y="104" class="m" text-anchor="middle">{t.k7}</text>
+    <text x="515" y="104" class="m" text-anchor="middle">{t.k8}</text>
+    <text x="380" y="30" class="m" text-anchor="middle">{t.k2}</text>
+    <text x="245" y="190" class="m" text-anchor="middle">{t.k4}</text>
+    <text x="380" y="234" class="g" text-anchor="middle">{t.k3}</text>
   </g>
   <g class="ln">
-    <path d="M210 118 H280" marker-end="url(#c3)"/>
-    <path d="M480 118 H550" marker-end="url(#c3)"/>
-    <path d="M110 84 V46 H650 V84" marker-end="url(#c3)"/>
-    <path d="M380 152 V172 H110 V152" marker-end="url(#c3)"/>
-    <path d="M650 152 V210 H110 V152" marker-end="url(#c3g)" class="gd"/>
+    <path d="M210 118 H280" marker-end={`url(#c3-${lang})`}/>
+    <path d="M480 118 H550" marker-end={`url(#c3-${lang})`}/>
+    <path d="M110 84 V46 H650 V84" marker-end={`url(#c3-${lang})`}/>
+    <path d="M380 152 V172 H110 V152" marker-end={`url(#c3-${lang})`}/>
+    <path d="M650 152 V210 H110 V152" marker-end={`url(#c3g-${lang})`} class="gd"/>
   </g>
 </svg></div>
-<figcaption>图 3　curator 的状态转换。「活动时间」取 last_used_at、last_viewed_at、last_patched_at 中最新的一个，没有记录时退回 created_at。</figcaption>
+<figcaption>{t.k1}</figcaption>
 <style>
 .fig3 svg{width:100%;height:auto;display:block}
 .fig3 .b rect{fill:var(--card);stroke:var(--line)}

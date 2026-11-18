@@ -1,27 +1,52 @@
 ---
 // 一条事实与一个 Skill 的完整旅程：HTML 时间线，窄屏自然换行。
-const steps = [
-  { when: '会话 A · 第 3 轮', lane: 'mem', title: '用户说「这个仓库以后都用 pnpm」',
-    body: '前台模型调用 memory add，MEMORY.md 立刻落盘；工具返回值让模型本轮就知道写成了。记忆计数随之清零；不过本轮要不要做记忆复盘，在回合开头就已经定了，这次写入改变不了。' },
-  { when: '会话 A · 第 3 轮', lane: 'mem', title: 'system prompt 里仍是旧快照',
-    body: '快照在会话启动时冻结，这次写入不改它。由于这条事实就来自本会话的对话，模型的上下文里本来就有它，所以这段「过期」基本无害。' },
-  { when: '会话 A · 第 9 轮', lane: 'skill', title: '一次反复试错的任务累计到 10 次模型请求',
-    body: '回合末检查 Skill 计数达标，答复送出后启动 Background Review。fork 先浏览已有 Skill，确认没有可以就地修补的，再用 skill_manage 新建 pnpm-workspace-test，并标记为 created_by: agent。' },
-  { when: '会话 A · 第 40 轮', lane: 'mem', title: '上下文压缩触发重建',
-    body: 'invalidate_system_prompt() 从磁盘重读记忆，新的快照写着 pnpm。重建本来就要重新写入缓存，顺带刷新记忆几乎没有额外代价（这一句是我的推断）。' },
-  { when: '会话 B · 启动', lane: 'both', title: '新会话直接看到两样东西',
-    body: 'MEMORY.md 进入 system prompt；Skill 目录里出现 pnpm-workspace-test，但正文要等模型用 skill_view 打开才会读入。' },
-  { when: '此后 30 天无人使用', lane: 'skill', title: 'curator 把它归档',
-    body: '14 天后标 stale，仍可用；超过 30 天移入 skills/.archive/。没有任何东西被删除。' },
-  { when: '用户执行 restore', lane: 'skill', title: '回到 active，但时钟没有重置',
-    body: '如果接下来一个运行间隔内没有读取、使用或修改，下一次 curator 运行会立刻把它再次归档。这一点我用实验确认过，见下文。' },
-];
-const label = { mem: '记忆', skill: 'Skill', both: '记忆 + Skill' };
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    label: { mem: '记忆', skill: 'Skill', both: '记忆 + Skill' },
+    steps: [
+      { when: '会话 A · 第 3 轮', lane: 'mem', title: '用户说「这个仓库以后都用 pnpm」',
+        body: '前台模型调用 memory add，MEMORY.md 立刻落盘；工具返回值让模型本轮就知道写成了。记忆计数随之清零；不过本轮要不要做记忆复盘，在回合开头就已经定了，这次写入改变不了。' },
+      { when: '会话 A · 第 3 轮', lane: 'mem', title: 'system prompt 里仍是旧快照',
+        body: '快照在会话启动时冻结，这次写入不改它。由于这条事实就来自本会话的对话，模型的上下文里本来就有它，所以这段「过期」基本无害。' },
+      { when: '会话 A · 第 9 轮', lane: 'skill', title: '一次反复试错的任务累计到 10 次模型请求',
+        body: '回合末检查 Skill 计数达标，答复送出后启动 Background Review。fork 先浏览已有 Skill，确认没有可以就地修补的，再用 skill_manage 新建 pnpm-workspace-test，并标记为 created_by: agent。' },
+      { when: '会话 A · 第 40 轮', lane: 'mem', title: '上下文压缩触发重建',
+        body: 'invalidate_system_prompt() 从磁盘重读记忆，新的快照写着 pnpm。重建本来就要重新写入缓存，顺带刷新记忆几乎没有额外代价（这一句是我的推断）。' },
+      { when: '会话 B · 启动', lane: 'both', title: '新会话直接看到两样东西',
+        body: 'MEMORY.md 进入 system prompt；Skill 目录里出现 pnpm-workspace-test，但正文要等模型用 skill_view 打开才会读入。' },
+      { when: '此后 30 天无人使用', lane: 'skill', title: 'curator 把它归档',
+        body: '14 天后标 stale，仍可用；超过 30 天移入 skills/.archive/。没有任何东西被删除。' },
+      { when: '用户执行 restore', lane: 'skill', title: '回到 active，但时钟没有重置',
+        body: '如果接下来一个运行间隔内没有读取、使用或修改，下一次 curator 运行会立刻把它再次归档。这一点我用实验确认过，见下文。' },
+    ],
+  },
+  en: {
+    label: { mem: 'memory', skill: 'skill', both: 'memory + skill' },
+    steps: [
+      { when: 'Session A · turn 3', lane: 'mem', title: 'The user says "always use pnpm in this repo"',
+        body: 'The foreground model calls memory add and MEMORY.md is written at once; the tool result tells the model it worked. The memory counter resets, but whether this turn runs a memory review was decided when the turn began, and this write cannot change that.' },
+      { when: 'Session A · turn 3', lane: 'mem', title: 'The system prompt still shows the old snapshot',
+        body: 'The snapshot was frozen at session start and this write leaves it alone. The fact came from this very conversation, so the model already has it in context; the "staleness" is mostly harmless.' },
+      { when: 'Session A · turn 9', lane: 'skill', title: 'A trial-and-error task reaches 10 model requests',
+        body: 'At turn end the skill counter fires, and a background review starts once the reply is out. The fork looks through existing skills, finds nothing to patch in place, and creates pnpm-workspace-test with skill_manage, marked created_by: agent.' },
+      { when: 'Session A · turn 40', lane: 'mem', title: 'Context compression triggers a rebuild',
+        body: 'invalidate_system_prompt() reloads memory from disk, and the new snapshot says pnpm. A rebuild rewrites the cache anyway, so refreshing memory then costs almost nothing extra (that last part is my inference).' },
+      { when: 'Session B · start', lane: 'both', title: 'A new session sees both',
+        body: 'MEMORY.md goes into the system prompt; pnpm-workspace-test appears in the skill index, but its body is read only when the model opens it with skill_view.' },
+      { when: 'Unused for 30 days', lane: 'skill', title: 'The curator archives it',
+        body: 'Marked stale after 14 days and still usable; moved to skills/.archive/ after 30. Nothing is deleted.' },
+      { when: 'The user runs restore', lane: 'skill', title: 'Active again, but the clock is not reset',
+        body: 'If nobody reads, uses or patches it before the next curator run, that run archives it again straight away. I confirmed this with an experiment, described below.' },
+    ],
+  },
+};
+const t = T[lang] ?? T.zh;
 ---
-<ol class="journey">
-  {steps.map((s) => (
+<ol class="journey" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  {t.steps.map((s) => (
     <li class={s.lane}>
-      <div class="j-when">{s.when}<span class="j-lane">{label[s.lane]}</span></div>
+      <div class="j-when">{s.when}<span class="j-lane">{t.label[s.lane]}</span></div>
       <div class="j-title">{s.title}</div>
       <p class="j-body">{s.body}</p>
     </li>
@@ -33,7 +58,7 @@ const label = { mem: '记忆', skill: 'Skill', both: '记忆 + Skill' };
 .journey li:last-child{padding-bottom:.2em}
 .journey li::before{content:"";position:absolute;left:-26.5px;top:.55em;width:8px;height:8px;background:var(--bg);border:1.5px solid var(--mute);border-radius:1px}
 .journey li.skill::before{border-color:var(--plat)}
-.journey li.both::before{background:linear-gradient(135deg,#F6EFD9,var(--plat) 55%,#EBDDB4);border-color:var(--plat)}
+.journey li.both::before{background:linear-gradient(135deg,var(--plat-hi),var(--plat) 55%,var(--plat-lo));border-color:var(--plat)}
 .j-when{font:12px/1.6 var(--mono);color:var(--mute);display:flex;gap:10px;flex-wrap:wrap}
 .j-lane{color:var(--plat-ink)}
 .j-title{font-weight:600;margin:2px 0 4px;line-height:1.6}

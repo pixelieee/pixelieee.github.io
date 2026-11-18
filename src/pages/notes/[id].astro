@@ -1,5 +1,5 @@
 ---
-import { getCollection, render } from 'astro:content';
+import { getCollection, getEntry, render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 
 export async function getStaticPaths() {
@@ -11,73 +11,98 @@ export async function getStaticPaths() {
   });
 }
 const { note, prev, next } = Astro.props;
-const { Content, headings } = await render(note);
-const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
-// 字数：去掉代码块、import 和组件标签；汉字逐个计，英文/数字按词计。
-const text = (note.body ?? '')
-  .replace(/```[\s\S]*?```/g, '')
-  .replace(/^import .*$/gm, '')
-  .replace(/<[^>]+>/g, '');
-const words = text.match(/[一-鿿]|[A-Za-z0-9_]+/g)?.length ?? 0;
-const minutes = Math.max(1, Math.round(words / 450));
-let sec = -1;
-const tocLinks = toc.map((h) => {
-  if (h.depth === 2) sec += 1;
-  return { cls: h.depth === 2 ? 'd2' : 'd3', href: `#${h.slug}`, text: h.text, sec };
-});
+const noteEn = await getEntry('notesEn', note.id);
+const prevEn = prev ? await getEntry('notesEn', prev.id) : null;
+const nextEn = next ? await getEntry('notesEn', next.id) : null;
+
+// 字数：去掉代码块、import 和组件标签。中文按字计、每分钟约 450 字；英文按词计、每分钟约 230 词。
+function stats(body, lang) {
+  const text = (body ?? '').replace(/```[\s\S]*?```/g, '').replace(/^import .*$/gm, '').replace(/<[^>]+>/g, '');
+  if (lang === 'zh') {
+    const n = text.match(/[一-鿿]|[A-Za-z0-9_]+/g)?.length ?? 0;
+    return { n, min: Math.max(1, Math.round(n / 450)) };
+  }
+  const n = text.match(/[A-Za-z0-9_'’-]+/g)?.length ?? 0;
+  return { n, min: Math.max(1, Math.round(n / 230)) };
+}
+function tocOf(headings) {
+  let sec = -1;
+  return headings.filter((h) => h.depth === 2 || h.depth === 3).map((h) => {
+    if (h.depth === 2) sec += 1;
+    return { cls: h.depth === 2 ? 'd2' : 'd3', href: `#${h.slug}`, text: h.text, sec };
+  });
+}
+const zh = await render(note);
+const en = noteEn ? await render(noteEn) : null;
+const versions = [
+  { l: 'zh', lang: 'zh-CN', entry: note, Content: zh.Content, toc: tocOf(zh.headings), st: stats(note.body, 'zh'),
+    back: '所有笔记', words: '字', read: (m) => `约 ${m} 分钟`, tocTitle: '目录', topic: note.data.topic,
+    prev: prev && { id: prev.id, title: prev.data.title }, next: next && { id: next.id, title: next.data.title } },
+  ...(noteEn && en ? [{ l: 'en', lang: 'en', entry: noteEn, Content: en.Content, toc: tocOf(en.headings), st: stats(noteEn.body, 'en'),
+    back: 'All notes', words: 'words', read: (m) => `${m} min read`, tocTitle: 'Contents', topic: noteEn.data.topic,
+    prev: prev && { id: prev.id, title: prevEn?.data.title ?? prev.data.title }, next: next && { id: next.id, title: nextEn?.data.title ?? next.data.title } }] : []),
+];
 ---
-<Base title={`${note.data.title} · pixel notes`} description={note.data.summary} type="article" published={note.data.date}>
+<Base title={`${note.data.title} · pixel notes`} titleEn={`${noteEn?.data.title ?? note.data.titleEn ?? note.data.title} · pixel notes`}
+      description={note.data.summary} descriptionEn={noteEn?.data.summary} type="article" published={note.data.date}>
   <div id="progress" aria-hidden="true"></div>
-  <div class="wrap article-grid">
-    <article lang="zh-CN">
-      <header>
-        <a class="back" href="/#notes">← <span data-zh="所有笔记" data-en="All notes">所有笔记</span></a>
-        <div class="eyebrow" style="margin-top:22px">{note.data.topic}{note.data.pinned ? ` · ${note.data.pinned}` : ''}</div>
-        <h1>{note.data.title}</h1>
-        {note.data.dek && <p class="dek">{note.data.dek}</p>}
-        <div class="meta"><time datetime={note.data.date}>{note.data.date}</time><span>{words.toLocaleString('en-US')} <span data-zh="字" data-en="words">字</span></span><span data-zh={`约 ${minutes} 分钟`} data-en={`${minutes} min read`}>{`约 ${minutes} 分钟`}</span></div>
-        {tocLinks.length > 0 && (
-          <details class="toc-inline">
-            <summary><span data-zh="目录" data-en="Contents">目录</span></summary>
-            <nav aria-label="contents">{tocLinks.map((l) => <a class={l.cls} href={l.href}>{l.text}</a>)}</nav>
-          </details>
-        )}
-      </header>
-      <div class="prose"><Content /></div>
-      <nav class="pager" aria-label="pagination">
-        {prev ? <a href={`/notes/${prev.id}/`}>← <span data-zh={prev.data.title} data-en={prev.data.titleEn ?? prev.data.title}>{prev.data.title}</span></a> : <span />}
-        {next ? <a class="next" href={`/notes/${next.id}/`}><span data-zh={next.data.title} data-en={next.data.titleEn ?? next.data.title}>{next.data.title}</span> →</a> : <span />}
-      </nav>
-    </article>
-    {tocLinks.length > 0 && (
-      <nav class="toc" aria-label="contents">
-        <p class="toc-title" data-zh="目录" data-en="Contents">目录</p>
-        {tocLinks.map((l) => <a class={l.cls} href={l.href} data-sec={l.sec}>{l.text}</a>)}
-      </nav>
-    )}
-  </div>
+  {versions.map((v) => (
+    <div class="wrap article-grid" data-l={v.l}>
+      <article lang={v.lang}>
+        <header>
+          <a class="back" href="/#notes">← {v.back}</a>
+          <div class="eyebrow" style="margin-top:22px">{v.topic}{v.entry.data.pinned ? ` · ${v.entry.data.pinned}` : ''}</div>
+          <h1>{v.entry.data.title}</h1>
+          {v.entry.data.dek && <p class="dek">{v.entry.data.dek}</p>}
+          <div class="meta"><time datetime={v.entry.data.date}>{v.entry.data.date}</time><span>{v.st.n.toLocaleString('en-US')} {v.words}</span><span>{v.read(v.st.min)}</span></div>
+          {v.toc.length > 0 && (
+            <details class="toc-inline">
+              <summary>{v.tocTitle}</summary>
+              <nav aria-label={v.tocTitle}>{v.toc.map((l) => <a class={l.cls} href={l.href}>{l.text}</a>)}</nav>
+            </details>
+          )}
+        </header>
+        <div class="prose"><v.Content /></div>
+        <nav class="pager" aria-label="pagination">
+          {v.prev ? <a href={`/notes/${v.prev.id}/`}>← {v.prev.title}</a> : <span />}
+          {v.next ? <a class="next" href={`/notes/${v.next.id}/`}>{v.next.title} →</a> : <span />}
+        </nav>
+      </article>
+      {v.toc.length > 0 && (
+        <nav class="toc" aria-label={v.tocTitle}>
+          <p class="toc-title">{v.tocTitle}</p>
+          {v.toc.map((l) => <a class={l.cls} href={l.href} data-sec={l.sec}>{l.text}</a>)}
+        </nav>
+      )}
+    </div>
+  ))}
   <script is:inline>
   (function(){
-    var bar=document.getElementById('progress'),art=document.querySelector('article');
-    var toc=document.querySelector('.toc');
-    var links=[].slice.call(document.querySelectorAll('.toc a'));
-    var heads=links.map(function(a){return document.getElementById(decodeURIComponent(a.hash.slice(1)))});
-    var ticking=false,last=-2;
+    var root=document.documentElement,bar=document.getElementById('progress');
+    var cur={},ticking=false,last=-2;
+    function bind(){
+      var g=document.querySelector('.article-grid[data-l="'+root.dataset.ui+'"]')||document.querySelector('.article-grid');
+      var toc=g.querySelector('.toc'),links=toc?[].slice.call(toc.querySelectorAll('a')):[];
+      cur={art:g.querySelector('article'),toc:toc,links:links,heads:links.map(function(a){return document.getElementById(decodeURIComponent(a.hash.slice(1)))})};
+      last=-2;tick();
+    }
     function tick(){
-      ticking=false;
-      var r=art.getBoundingClientRect(),total=r.height-innerHeight;
+      ticking=false;if(!cur.art)return;
+      var r=cur.art.getBoundingClientRect(),total=r.height-innerHeight;
       bar.style.width=(total>0?Math.min(1,Math.max(0,-r.top/total))*100:0)+'%';
-      var cur=-1;for(var i=0;i<heads.length;i++){if(heads[i]&&heads[i].getBoundingClientRect().top<140)cur=i}
-      if(cur===last)return;last=cur;
-      links.forEach(function(a,i){a.classList.toggle('on',i===cur)});
-      var sec=cur>=0?links[cur].dataset.sec:'-1';
-      links.forEach(function(a){if(a.classList.contains('d3'))a.classList.toggle('show',a.dataset.sec===sec)});
-      var on=links[cur];
-      if(on&&toc){var y=on.offsetTop-toc.clientHeight/2;if(Math.abs(toc.scrollTop-y)>toc.clientHeight/3)toc.scrollTop=y}
+      var c=-1;for(var i=0;i<cur.heads.length;i++){if(cur.heads[i]&&cur.heads[i].getBoundingClientRect().top<140)c=i}
+      if(c===last)return;last=c;
+      cur.links.forEach(function(a,i){a.classList.toggle('on',i===c)});
+      var sec=c>=0?cur.links[c].dataset.sec:'-1';
+      cur.links.forEach(function(a){if(a.classList.contains('d3'))a.classList.toggle('show',a.dataset.sec===sec)});
+      var on=cur.links[c];
+      if(on&&cur.toc){var y=on.offsetTop-cur.toc.clientHeight/2;if(Math.abs(cur.toc.scrollTop-y)>cur.toc.clientHeight/3)cur.toc.scrollTop=y}
     }
     addEventListener('scroll',function(){if(!ticking){ticking=true;requestAnimationFrame(tick)}},{passive:true});
-    addEventListener('resize',function(){last=-2;tick()});tick();
+    addEventListener('resize',function(){last=-2;tick()});
+    document.addEventListener('ui-change',function(e){if(!(e.detail&&e.detail.initial))scrollTo(0,0);bind()});
     document.querySelectorAll('.toc-inline a').forEach(function(a){a.addEventListener('click',function(){a.closest('details').open=false})});
+    bind();
   })();
   </script>
 </Base>

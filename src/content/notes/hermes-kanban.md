@@ -1,8 +1,8 @@
 ---
 title: "Hermes Kanban：多 Agent 任务派发与交接"
 titleEn: "Hermes Kanban: Multi-Agent Dispatch and Handoff"
-summaryEn: "How Hermes coordinates several profiles through a task board: dispatch, worker tools and handoff."
-summary: "Hermes 如何通过任务看板协调多个 profile？梳理任务分派、worker tools 与交接流程。"
+summaryEn: "When several agents share the work, how does a task get handed out, handed back, and sent back again? Still reading the source; for now this is a list of what I want to find out."
+summary: "几个 Agent 一起干活时，任务怎样派出去、做完怎样交回来、被退回时又发生了什么？这篇还在读源码，先把想弄清的问题记在这里。"
 date: "2026-11-16"
 topic: "Agent 工程"
 status: "todo"

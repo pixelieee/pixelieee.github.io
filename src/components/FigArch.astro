@@ -1,11 +1,55 @@
 ---
 // 图 1：三类存储、三条写入路径、读取时机。纯 SVG，颜色取自站点主题变量。
+const { lang = 'zh' } = Astro.props;
+const T = {
+ zh: {
+  k0: 'Hermes 记忆与 Skill 的整体结构：前台会话、后台复盘、三类存储与 curator',
+  k1: '前台会话 · AIAgent',
+  k2: 'System prompt（加载时冻结的快照）',
+  k3: 'MEMORY.md · USER.md · Skill 目录',
+  k4: '工具：memory · skill_manage',
+  k5: 'Background Review · 临时 fork',
+  k6: '回合收尾、计数达标后启动',
+  k7: '共享 session_id · 不持久化 · 最多 16 轮',
+  k8: 'add 直接写；patch / remove 暂存待批',
+  k9: '全部历史消息 · FTS5 索引',
+  k10: '默认每 168 小时一次：按活动时间',
+  k11: '标 stale（14 天）、归档（30 天）',
+  k12: 'session_search（读）',
+  k13: '写',
+  k14: '回合结束，计数达标',
+  k15: '归档 / 整合',
+  k16: '新会话启动时读取文件；已运行的会话只在 invalidate_system_prompt() 时重读，普通写入不改变当前 prompt。',
+  k17: '图 1\u3000三类存储与写入路径。实线是写入，虚线是读取，白金色箭头是触发关系。'
+ },
+ en: {
+  k0: 'Overview of Hermes memory and skills: foreground session, background review, three stores and the curator',
+  k1: 'Foreground session · AIAgent',
+  k2: 'System prompt (snapshot frozen at load)',
+  k3: 'MEMORY.md · USER.md · skill index',
+  k4: 'Tools: memory · skill_manage',
+  k5: 'Background review · temporary fork',
+  k6: 'Starts at turn end once a counter fires',
+  k7: 'Shares session_id · not persisted · ≤ 16 steps',
+  k8: 'add writes directly; patch / remove are staged',
+  k9: 'Every message · FTS5 index',
+  k10: 'Every 168 h by default, by last activity:',
+  k11: 'stale at 14 days, archived at 30',
+  k12: 'session_search (read)',
+  k13: 'write',
+  k14: 'turn ends, counter fires',
+  k15: 'archive / consolidate',
+  k16: 'New sessions read the files at start; a running session re-reads them only on invalidate_system_prompt().',
+  k17: 'Figure 1. Three stores and their write paths. Solid lines write, the dashed line reads, gold arrows mark what triggers what.'
+ },
+};
+const t = T[lang] ?? T.zh;
 ---
-<figure class="fig">
-<div class="fig-scroll"><svg viewBox="0 0 760 360" role="img" aria-label="Hermes 记忆与 Skill 的整体结构：前台会话、后台复盘、三类存储与 curator">
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+<div class="fig-scroll"><svg viewBox="0 0 760 360" role="img" aria-label={t.k0}>
   <defs>
-    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
-    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
+    <marker id={`ah-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
+    <marker id={`ag-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
   </defs>
   <g class="bx">
     <rect x="12" y="12" width="350" height="156" rx="12"/>
@@ -20,40 +64,40 @@
     <rect x="28" y="112" width="318" height="40" rx="8"/>
   </g>
   <g class="t">
-    <text x="28" y="40" class="h">前台会话 · AIAgent</text>
-    <text x="40" y="76">System prompt（加载时冻结的快照）</text>
-    <text x="40" y="93" class="m">MEMORY.md · USER.md · Skill 目录</text>
-    <text x="40" y="129">工具：memory · skill_manage</text>
+    <text x="28" y="40" class="h">{t.k1}</text>
+    <text x="40" y="76">{t.k2}</text>
+    <text x="40" y="93" class="m">{t.k3}</text>
+    <text x="40" y="129">{t.k4}</text>
     <text x="40" y="145" class="m">skill_view · session_search</text>
-    <text x="28" y="222" class="h">Background Review · 临时 fork</text>
-    <text x="28" y="246" class="m">回合收尾、计数达标后启动</text>
-    <text x="28" y="266" class="m">共享 session_id · 不持久化 · 最多 16 轮</text>
-    <text x="28" y="286" class="m">add 直接写；patch / remove 暂存待批</text>
-    <text x="482" y="36" class="h">state.db</text><text x="482" y="55" class="m">全部历史消息 · FTS5 索引</text>
+    <text x="28" y="222" class="h">{t.k5}</text>
+    <text x="28" y="246" class="m">{t.k6}</text>
+    <text x="28" y="266" class="m">{t.k7}</text>
+    <text x="28" y="286" class="m">{t.k8}</text>
+    <text x="482" y="36" class="h">state.db</text><text x="482" y="55" class="m">{t.k9}</text>
     <text x="482" y="110" class="h">memories/</text><text x="482" y="129" class="m">MEMORY.md ≤ 2200 · USER.md ≤ 1375</text>
     <text x="482" y="184" class="h">skills/</text><text x="482" y="203" class="m">SKILL.md · .usage.json · .archive/</text>
     <text x="482" y="274" class="h">curator</text>
-    <text x="482" y="294" class="m">默认每 168 小时一次：按活动时间</text>
-    <text x="482" y="311" class="m">标 stale（14 天）、归档（30 天）</text>
+    <text x="482" y="294" class="m">{t.k10}</text>
+    <text x="482" y="311" class="m">{t.k11}</text>
   </g>
   <g class="ln">
-    <path d="M466 40 H362" marker-end="url(#ah)" class="rd"/>
-    <path d="M346 132 H410 V114 H466" marker-end="url(#ah)"/>
-    <path d="M410 132 V188 H466" marker-end="url(#ah)"/>
+    <path d="M466 40 H362" marker-end={`url(#ah-${lang})`} class="rd"/>
+    <path d="M346 132 H410 V114 H466" marker-end={`url(#ah-${lang})`}/>
+    <path d="M410 132 V188 H466" marker-end={`url(#ah-${lang})`}/>
     <path d="M362 242 H410 V188" />
     <path d="M410 242 V114" class="stub"/>
-    <path d="M607 248 V216" marker-end="url(#ag)" class="gd"/>
-    <path d="M187 168 V196" marker-end="url(#ag)" class="gd"/>
+    <path d="M607 248 V216" marker-end={`url(#ag-${lang})`} class="gd"/>
+    <path d="M187 168 V196" marker-end={`url(#ag-${lang})`} class="gd"/>
   </g>
   <g class="t s">
-    <text x="414" y="34" class="m" text-anchor="end">session_search（读）</text>
-    <text x="400" y="162" class="m" text-anchor="end">写</text>
-    <text x="198" y="186" class="g">回合结束，计数达标</text>
-    <text x="616" y="236" class="g">归档 / 整合</text>
+    <text x="414" y="34" class="m" text-anchor="end">{t.k12}</text>
+    <text x="400" y="162" class="m" text-anchor="end">{t.k13}</text>
+    <text x="198" y="186" class="g">{t.k14}</text>
+    <text x="616" y="236" class="g">{t.k15}</text>
   </g>
-  <text x="12" y="346" class="m s">新会话启动时读取文件；已运行的会话只在 invalidate_system_prompt() 时重读，普通写入不改变当前 prompt。</text>
+  <text x="12" y="346" class="m s">{t.k16}</text>
 </svg></div>
-<figcaption>图 1　三类存储与写入路径。实线是写入，虚线是读取，白金色箭头是触发关系。</figcaption>
+<figcaption>{t.k17}</figcaption>
 </figure>
 <style>
 .fig svg{width:100%;height:auto;display:block}

@@ -2,8 +2,8 @@
 title: "Hermes Agent：记忆、Skill 与跨会话演进"
 titleEn: "Hermes Agent: Memory, Skills and Cross-Session Evolution"
 dek: "三类存储、三条写入路径，以及把它们串在一起的一条约束：不要弄脏前缀缓存。"
-summary: "三类存储、三条写入路径，以及把它们串在一起的一条约束：不要弄脏前缀缓存。逐条对照源码，附一个复现实验、设计评价和文档与代码的出入。"
-summaryEn: "Three stores, three write paths, and the one constraint that ties them together: never dirty the prefix cache. Checked line by line against the source, with a reproducible experiment, a design review and the places where docs and code disagree."
+summary: "Hermes 怎样记住你，又怎样慢慢学会做事？跟着一条事实和一个 Skill 走完它们的一生，你会发现这套设计里看似别扭的地方，几乎都在为同一件事让路。"
+summaryEn: "How does Hermes remember you, and how does it slowly learn to do things? Follow one fact and one skill through their whole lives, and most of the odd-looking design choices turn out to make way for the same thing."
 date: "2026-11-16"
 updated: "2026-11-18"
 topic: "Agent 工程"
@@ -11,6 +11,7 @@ status: "published"
 pinned: "hermes-agent @ bf0203a"
 ---
 import Src from '../../components/Src.astro';
+import CodeTr from '../../components/CodeTr.astro';
 import Infer from '../../components/Infer.astro';
 import FigArch from '../../components/FigArch.astro';
 import FigReview from '../../components/FigReview.astro';
@@ -27,7 +28,7 @@ import Journey from '../../components/Journey.astro';
 4. Skill 怎样从创建走到归档，**restore 之后为什么可能马上又被归档**？
 5. 同一台机器上的 profile、项目和子 Agent 之间，**谁和谁共享**这些存储？
 
-> 这篇写给熟悉 LLM Agent 的工程师，不解释 tool calling 和 prompt cache 的基本概念。所有行号固定到提交 `bf0203a`（该提交的 `pyproject.toml` 版本号由构建时生成，写作 0.0.0，所以文中不写版本号）。源码和注释没有明说、由我推断的结论，前面都标了 <Infer />。
+> 这篇写给熟悉 LLM Agent 的工程师。文中的源码行号都对应提交 `bf0203a`；标着 <Infer /> 的地方，是源码和注释都没有明说、由我推断的结论。
 
 ## 全景
 
@@ -49,15 +50,31 @@ import Journey from '../../components/Journey.astro';
 
 Hermes 把 system prompt 分成三档，按「重建时变化的可能性」从低到高排列：stable（身份、指引）、context（项目上下文）、volatile（Skill 目录、记忆、时间戳）。记忆被放在最后一档：
 
+<CodeTr>
+
 ```python title="agent/system_prompt.py · 782–785"
 # ── Volatile tier (most likely to differ on a rebuild; kept last so the stable prefix stays reusable) ──
 # Skills are runtime-mutable, so the index leads the volatile band: on a longest-prefix
 # backend an unchanged index stays inside the reused prefix; a changed one re-prefills from here.
 volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
 ```
+
+<div slot="tr">
+
+```python title="agent/system_prompt.py · 782–785"
+# ── Volatile 档（重建时最可能变化；放在最后，让 stable 前缀保持可复用）──
+# Skill 在运行时可变，所以目录排在 volatile 段最前面：在按最长前缀复用的后端上，
+# 目录没变就仍落在复用的前缀里；目录变了，就从这里开始重新预填充。
+volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
+```
+
+</div>
+</CodeTr>
 <Src p="agent/system_prompt.py" l="736-799" />
 
 进入 prompt 的记忆文字是**加载时冻结的快照**，会话中途的写入只改磁盘：
+
+<CodeTr>
 
 ```python title="tools/memory_tool_store.py · 618–621"
 def format_for_system_prompt(self, target: str) -> Optional[str]:
@@ -65,6 +82,18 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
     it, preserving the prefix cache); None if empty."""
     return self._system_prompt_snapshot.get(target, "") or None
 ```
+
+<div slot="tr">
+
+```python title="tools/memory_tool_store.py · 618–621"
+def format_for_system_prompt(self, target: str) -> Optional[str]:
+    """加载时冻结的快照（不是实时状态——会话中途的写入不会改动它，
+    以此保住前缀缓存）；为空时返回 None。"""
+    return self._system_prompt_snapshot.get(target, "") or None
+```
+
+</div>
+</CodeTr>
 <Src p="tools/memory_tool_store.py" l="618-621" />
 
 同一个目标在代码里至少出现了五次，每次都有注释写明理由：
@@ -140,7 +169,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 几处细节：
 
-- 默认只搜 `user` 和 `assistant`，显式传 `role_filter="tool"` 才搜工具结果。<Src p="tools/session_search_tool.py" l="330-385" /> 中日韩文本另有一张 trigram 索引，但工具消息被排除在外：注释估计 trigram 索引约为原文体积的 2.6 倍，而工具输出占消息字节的约 90%。<Src p="hermes_state_common.py" l="1025-1039" />
+- 默认只搜 `user` 和 `assistant`，显式传 `role_filter="tool"` 才搜工具结果。<Src p="tools/session_search_tool.py" l="330-385" /> 中文这类不靠空格分词的文本另有一张 trigram 索引，但工具消息被排除在外：注释估计 trigram 索引约为原文体积的 2.6 倍，而工具输出占消息字节的约 90%。<Src p="hermes_state_common.py" l="1025-1039" />
 - `scroll` 模式围绕命中行读取：`window` 默认 5，**限制在 1 到 20 之间**，返回中心行加前后各最多 5 行，按数据库行顺序，可以带回工具结果。<Src p="tools/session_search_tool.py" l="763-770" /> <Src p="hermes_state_messages.py" l="1407-1424" /> 锚点在**当前会话谱系**内的请求会被拒绝，那部分本来就在上下文里。<Src p="tools/session_search_tool.py" l="542-543" />
 - `read` 模式只传 `session_id`，超过 30 条消息时返回最早 20 条和最近 10 条，单条内容也有长度上限。<Src p="tools/session_search_tool.py" l="447-462" />
 
@@ -176,6 +205,8 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 状态转换只有十几行：
 
+<CodeTr>
+
 ```python title="agent/curator.py · 248–260" {3,7,10,12}
 # use_count == 0 is absence of evidence, not staleness: never archive a
 # never-used skill younger than stale_after_days.
@@ -191,6 +222,27 @@ elif anchor <= stale_cutoff and current == _u.STATE_ACTIVE:
 elif anchor > stale_cutoff and current == _u.STATE_STALE:
     _set(name, _u.STATE_ACTIVE, "reactivated")  # used again after going stale
 ```
+
+<div slot="tr">
+
+```python title="agent/curator.py · 248–260" {3,7,10,12}
+# use_count == 0 只是缺少证据，不代表过时：从未用过、
+# 且还不到 stale_after_days 的 Skill 永远不归档。
+if int(row.get("use_count", 0) or 0) == 0 and anchor > stale_cutoff:
+    if current == _u.STATE_STALE:
+        _set(name, _u.STATE_ACTIVE, "reactivated")
+    continue
+if anchor <= archive_cutoff and current != _u.STATE_ARCHIVED:
+    if _archive_as_curator(_u, name):
+        counts["archived"] += 1
+elif anchor <= stale_cutoff and current == _u.STATE_ACTIVE:
+    _set(name, _u.STATE_STALE, "marked_stale")
+elif anchor > stale_cutoff and current == _u.STATE_STALE:
+    _set(name, _u.STATE_ACTIVE, "reactivated")  # 变成 stale 之后又被用到了
+```
+
+</div>
+</CodeTr>
 <Src p="agent/curator.py" l="209-261" />
 
 三点值得注意：`active` 超过 30 天可以**直接**归档，不必先经过 `stale`；`stale` 在代码里没有被排除出目录，所以仍然可用；归档条件只看「时间够久、当前不是 archived」，**不看它是不是刚被 restore 回来**。最后这一点会在后面的实验里出问题。
@@ -242,6 +294,8 @@ elif ref.name == "skill_manage":
 
 而 Skill 复盘要到回合收尾才检查：
 
+<CodeTr>
+
 ```python title="agent/turn_finalizer.py · 763–770"
 # Skill trigger is checked NOW — based on how many tool iterations THIS turn used.
 _should_review_skills = (
@@ -252,6 +306,22 @@ _should_review_skills = (
 if _should_review_skills:
     agent._iters_since_skill = 0
 ```
+
+<div slot="tr">
+
+```python title="agent/turn_finalizer.py · 763–770"
+# Skill 触发条件在此刻检查——依据的是本回合用了多少次工具迭代。
+_should_review_skills = (
+    agent._skill_nudge_interval > 0
+    and agent._iters_since_skill >= agent._skill_nudge_interval
+    and "skill_manage" in agent.valid_tool_names
+)
+if _should_review_skills:
+    agent._iters_since_skill = 0
+```
+
+</div>
+</CodeTr>
 
 合起来是一个容易忽略的不对称：**本轮前台已经写过 Skill，这一轮的 Skill 复盘就不会发生；本轮前台已经写过记忆，这一轮的记忆复盘照样发生**，因为决定早在写入之前就做了。清零只影响下一个计数窗口。
 
@@ -277,6 +347,8 @@ if _should_review_skills:
 
 默认白名单是 `skills_list`、`skill_view`、`skill_manage`、`read_file`、`search_files`。`memory` 只在这一轮**确实是为记忆而复盘**、并且记忆功能开着时才加入：
 
+<CodeTr>
+
 ```python title="agent/background_review.py · 1094–1098"
 # Gate the built-in memory tool on BOTH the profile's memory flags and the trigger that fired
 # (#105921): a skill-nudge review never gets the memory tool, so an unattended fork cannot
@@ -284,6 +356,19 @@ if _should_review_skills:
 memory_on = review_agent._memory_enabled or review_agent._user_profile_enabled
 review_toolsets = ["memory", "skills"] if memory_on and review_memory else ["skills"]
 ```
+
+<div slot="tr">
+
+```python title="agent/background_review.py · 1094–1098"
+# 内置 memory 工具要同时满足两个条件才放行：profile 的记忆开关，以及本次的触发原因
+# （#105921）：由 Skill 计数触发的复盘永远拿不到 memory 工具，这样无人值守的 fork
+# 就没法顺着 memory 工具里「立即整理」的提示，删掉没人审阅过的条目。
+memory_on = review_agent._memory_enabled or review_agent._user_profile_enabled
+review_toolsets = ["memory", "skills"] if memory_on and review_memory else ["skills"]
+```
+
+</div>
+</CodeTr>
 <Src p="agent/background_review.py" l="1088-1128" />
 
 `terminal`、`write_file`、`patch` 一律拒绝，自动维护只能走 `skill_manage` 的校验；`extra_tools` 只能放行父会话里已有的工具。只读工具必须放行也有现实原因：注释记录了某个部署在两天里出现约 142 次工具拒绝和约 204 次「先读后写」拒绝，模型读不到 `SKILL.md`，几乎没有一次修补能落地。
@@ -293,6 +378,8 @@ review_toolsets = ["memory", "skills"] if memory_on and review_memory else ["ski
 ### 审批：暂存而不是拒绝
 
 无人值守的复盘提交 `patch` 或 `remove` 时，工具不执行，而是返回 `staged: true` 和 `pending_id`；用户用 `/memory pending` 查看、`/memory approve <id>` 应用。为什么是暂存而不是直接拒绝，docstring 讲得最清楚：
+
+<CodeTr>
 
 ```python title="tools/memory_tool.py · 179–186"
 def _background_delete_gate(store, action, operations, target="memory", content=None,
@@ -304,6 +391,21 @@ def _background_delete_gate(store, action, operations, target="memory", content=
     a plain denial would drop the consolidation request with no surfacing path at all. A
     staging failure fails closed to a plain denial."""
 ```
+
+<div slot="tr">
+
+```python title="tools/memory_tool.py · 179–186"
+def _background_delete_gate(store, action, operations, target="memory", content=None,
+                            old_text=None) -> Optional[str]:
+    """面向无人值守后台复盘 fork 的「失败即关闭」操作闸门（#105921）：``add``
+    始终可用（所有复盘提示词要的也只有它），而 ``patch``/``remove``——
+    不论单独提交还是放在批次里——都绝不在无人值守时执行。操作会被暂存到待批区，
+    而不是简单拒绝：fork 自己的复盘总结从不回传，简单拒绝会让这次整理请求
+    无处可见、彻底丢失。暂存本身失败时，退化为普通的拒绝。"""
+```
+
+</div>
+</CodeTr>
 <Src p="tools/memory_tool.py" l="179-219" />
 
 这段注释顺带回答了另一个问题：fork 的总结**从不回传**给前台会话。它对外的产出只有两样：写进存储的东西，以及这里暂存的待批操作。批准时会核对原条目，避免回放时打到一个恰好也包含 `old_text` 的新条目上。<Src p="tools/memory_tool_store.py" l="447-454" />
@@ -371,7 +473,7 @@ def _background_delete_gate(store, action, operations, target="memory", content=
 
 读 curator 的代码时我注意到，`restore_skill()` 最后只调用了 `set_state(ACTIVE)`，不刷新任何时间戳；而归档条件只看「时间够久、当前不是 archived」。<Src p="tools/skill_usage.py" l="586-614" /> 这意味着一个被 restore 的旧 Skill，下一次 curator 运行时应该会被**立刻再次归档**。
 
-光读代码不够，我在固定提交上用一个隔离的 `HERMES_HOME` 跑了一遍：建一个由 Agent 创建、45 天没有活动的 Skill，跑一次自动转换，restore，再跑一次。
+光读代码不够，我在固定提交上用一个临时的 `HERMES_HOME` 跑了一遍：建一个由 Agent 创建、45 天没有活动的 Skill，跑一次自动转换，restore，再跑一次。[完整脚本](/files/restore_rearchive.py)可以直接下载复现，需要 Python 3.11 以上。
 
 ```python title="restore_rearchive.py（节选）"
 u.mark_agent_created("demo")
@@ -446,14 +548,10 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 | `curator.consolidate` | 关 | 是否启动整合 Agent | <Src p="agent/curator.py" l="31-35" /> |
 | `skills.trusted_project_dirs` | 空 | 允许加载项目 Skill 的根目录 | <Src p="agent/skill_utils.py" l="563-568" /> |
 
-### 核实方法
+### 自己核对
 
-本文所有带行号的引用都固定在提交 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`，可以这样逐条复核：
+文中所有带行号的引用都对应提交 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`，代码摘录逐字复制，只去掉了首行缩进。想核对某一段，可以这样取出来：
 
 ```bash title="取出固定提交里的一段源码"
 git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
 ```
-
-文中的代码摘录都是逐字复制，只去掉了首行缩进。restore 实验在 Python 3.12 下运行，`HERMES_HOME` 指向一个临时目录，没有触碰任何真实配置。
-
-和上一版相比，这一版修正了 7 处行号偏移，并补上了原来漏掉的行为：两种复盘的判断时机不同、调用工具会清零计数、fork 与前台共用同一个记忆存储、`/refine` 不受审批限制、curator 首次调用不执行、`session_search` 的窗口上限，以及 restore 之后会被重新归档。没有发现把代码行为写反的结论。

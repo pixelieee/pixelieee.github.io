@@ -1,28 +1,48 @@
 ---
 // 图 2：一次 Background Review 从计数到落盘的路径（纵向时间线）。
-const steps = [
-  { t: '累计计数', d: '用户轮 ≥ 10（记忆），或模型请求 ≥ 10（Skill）' },
-  { t: '回合收尾', d: '最终答复已送出，回合未中断、未被跳过' },
-  { t: '复制消息', d: '当前会话仍保留的全部消息的快照' },
-  { t: '后台 fork', d: '临时 AIAgent，白名单工具，默认不含 terminal' },
-  { t: '落盘', d: 'add 直接写入；patch / remove 暂存，等用户批准' },
-];
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    aria: 'Background Review 的五个步骤',
+    steps: [
+      ['累计计数', '用户轮 ≥ 10（记忆），或模型请求 ≥ 10（Skill）'],
+      ['回合收尾', '最终答复已送出，回合未中断、未被跳过'],
+      ['复制消息', '当前会话仍保留的全部消息的快照'],
+      ['后台 fork', '临时 AIAgent，白名单工具，默认不含 terminal'],
+      ['落盘', 'add 直接写入；patch / remove 暂存，等用户批准'],
+    ],
+    cap: '图 2　一次 Background Review 的路径。第 5 步中 patch / remove 暂存后，要用户执行 /memory approve 才会生效。',
+  },
+  en: {
+    aria: 'The five steps of a background review',
+    steps: [
+      ['Count', 'user turns ≥ 10 (memory) or model requests ≥ 10 (skills)'],
+      ['Turn ends', 'final reply sent, turn not interrupted or skipped'],
+      ['Snapshot', 'copy of every message the session still holds'],
+      ['Fork', 'temporary AIAgent, whitelisted tools, no terminal'],
+      ['Write', 'add lands directly; patch / remove wait for approval'],
+    ],
+    cap: 'Figure 2. One background review, end to end. In step 5, a staged patch or remove takes effect only after /memory approve.',
+  },
+};
+const t = T[lang] ?? T.zh;
 const H = 56;
+const en = lang === 'en';
 ---
-<figure class="fig2">
-<div class="fig-scroll"><svg viewBox={`0 0 760 ${steps.length * H + 8}`} role="img" aria-label="Background Review 的五个步骤">
-  <path d={`M24 ${H / 2 + 4} V${(steps.length - 1) * H + H / 2 + 4}`} class="rail" />
-  {steps.map((s, i) => (
+<figure class="fig2" lang={en ? 'en' : 'zh-CN'}>
+<div class="fig-scroll"><svg viewBox={`0 0 760 ${t.steps.length * H + 8}`} role="img" aria-label={t.aria}>
+  <path d={`M24 ${H / 2 + 4} V${(t.steps.length - 1) * H + H / 2 + 4}`} class="rail" />
+  {t.steps.map(([title, desc], i) => (
     <g transform={`translate(0,${i * H + 4})`}>
       <circle cx="24" cy={H / 2} r="13" class="c" />
       <text x="24" y={H / 2 + 5} class="n" text-anchor="middle">{i + 1}</text>
-      <text x="56" y={H / 2 + 6} class="h">{s.t}</text>
-      <text x="170" y={H / 2 + 6} class="m">{s.d}</text>
-      {i < steps.length - 1 && <path d={`M56 ${H} H752`} class="sep" />}
+      <text x="56" y={H / 2 + 6} class="h">{title}</text>
+      <text x={en ? 168 : 170} y={H / 2 + 6} class="m">{desc}</text>
+      {i < t.steps.length - 1 && <path d={`M56 ${H} H752`} class="sep" />}
     </g>
   ))}
 </svg></div>
-<figcaption>图 2　一次 Background Review 的路径。第 5 步中 patch / remove 暂存后，要用户执行 <code>/memory approve</code> 才会生效。</figcaption>
+<figcaption>{t.cap}</figcaption>
 <style>
 .fig2 svg{width:100%;height:auto;display:block}
 .fig2 .rail{stroke:var(--line);stroke-width:1.5}

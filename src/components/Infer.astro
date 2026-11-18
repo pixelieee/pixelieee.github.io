@@ -1,4 +1,6 @@
 ---
 // 「推断」标记：放在由作者推断、而非源码或注释明说的论断前面。
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
 ---
-<span class="infer" title="作者推断：源码与注释没有明说">推断</span>
+<span class="infer" title={en ? 'My inference: neither the code nor its comments say this' : '作者推断：源码与注释没有明说'}>{en ? 'inference' : '推断'}</span>

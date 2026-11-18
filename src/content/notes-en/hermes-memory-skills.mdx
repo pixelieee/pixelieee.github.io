@@ -1,0 +1,453 @@
+---
+title: "Hermes Agent: Memory, Skills and Cross-Session Evolution"
+dek: "Three stores, three write paths, and the one constraint that ties them together: don't dirty the prefix cache."
+summary: "How does Hermes remember you, and how does it slowly learn to do things? Follow one fact and one skill through their whole lives, and most of the odd-looking design choices turn out to make way for the same thing."
+date: "2026-11-16"
+updated: "2026-11-18"
+topic: "Agent engineering"
+status: "published"
+pinned: "hermes-agent @ bf0203a"
+---
+import Src from '../../components/Src.astro';
+import Infer from '../../components/Infer.astro';
+import FigArch from '../../components/FigArch.astro';
+import FigReview from '../../components/FigReview.astro';
+import FigCurator from '../../components/FigCurator.astro';
+import Journey from '../../components/Journey.astro';
+
+**The short version:** Hermes sorts what it learns into three stores: two tiny Markdown files injected on every turn, a complete history that is only searched on demand, and a set of skills loaded on demand. There are also three ways to write into them: the foreground model writes directly, a background review runs after a turn ends, and a weekly job maintains the skill library. Most of the design choices that look odd at first can be explained by a single constraint: **don't dirty the system prompt's prefix cache.**
+
+By the end you should be able to answer five questions:
+
+1. Once a fact is written to memory, **when** does it become visible, and **to whom**?
+2. **When** does the background review fire, and why do memory and skills fire at different moments?
+3. What **can and can't** the background agent change, and where do the changes it can't make go?
+4. How does a skill travel from creation to the archive, and **why can a restored skill be archived again right away**?
+5. Across profiles, projects and sub-agents on one machine, **who shares** which store?
+
+> Written for engineers who already know LLM agents. Every source line number refers to commit `bf0203a`. Anything marked <Infer lang="en" /> is my own inference: neither the code nor its comments say it outright.
+
+## The big picture
+
+<FigArch lang="en" />
+
+The differences between the three stores shape every mechanism that follows:
+
+| | Memory files | Session history | Skills |
+|---|---|---|---|
+| Location | `memories/MEMORY.md`, `USER.md` | the `messages` table in `state.db` | `skills/<name>/SKILL.md` |
+| Holds | stable facts that hold across tasks | every message, including tool calls and results | reusable know-how for a kind of task |
+| How it reaches the model | injected whole into the system prompt at session start | never injected; fetched with `session_search` | an index sits in the prompt; bodies are read on demand with `skill_view` |
+| Capacity | hard caps of 2200 / 1375 characters | unbounded | unbounded, pruned periodically by the curator |
+| Written by | foreground model, background review | the runtime, automatically | foreground model, background review, curator |
+
+The row that matters most is "how it reaches the model". Memory is present on every turn, so it has to be small. History never shows up unasked, so it can keep everything. Skills sit in between: day to day, only a name and a one-line description are visible. Every later rule about "what belongs where" follows from this.
+
+## One constraint: don't dirty the prefix cache
+
+Hermes splits the system prompt into three tiers, ordered by how likely they are to change on a rebuild: stable (identity, guidance), context (project context), and volatile (the skill index, memory, the timestamp). Memory goes in the last tier:
+
+```python title="agent/system_prompt.py · 782–785"
+# ── Volatile tier (most likely to differ on a rebuild; kept last so the stable prefix stays reusable) ──
+# Skills are runtime-mutable, so the index leads the volatile band: on a longest-prefix
+# backend an unchanged index stays inside the reused prefix; a changed one re-prefills from here.
+volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
+```
+<Src p="agent/system_prompt.py" l="736-799" />
+
+The memory text that enters the prompt is a **snapshot frozen at load time**. Writes made mid-session only touch the disk:
+
+```python title="tools/memory_tool_store.py · 618–621"
+def format_for_system_prompt(self, target: str) -> Optional[str]:
+    """Frozen load-time snapshot (NOT live state — mid-session writes don't touch
+    it, preserving the prefix cache); None if empty."""
+    return self._system_prompt_snapshot.get(target, "") or None
+```
+<Src p="tools/memory_tool_store.py" l="618-621" />
+
+The same goal shows up in the code at least five times, each with a comment explaining why:
+
+- **Memory is frozen**: mid-session writes don't change the prompt, as shown above.
+- **Memory comes last**, so the stable part ahead of it forms the longest reusable prefix.
+- **The background review copies the parent session's `tools[]`** and reuses the same `session_id`. The comment calls this "warm prompt-cache parity" and estimates it saves about 26% of the cost. <Src p="agent/background_review.py" l="965-1008" />
+- **The background agent restricts tools only at dispatch time**, so the tool list sent to the model stays byte-identical. <Src p="agent/background_review.py" l="1088-1092" />
+- **Refreshes happen only when the prompt has to be rebuilt anyway**: after context compression, or when a session is switched or resumed. <Src p="agent/system_prompt.py" l="814-832" />
+
+You can use this thread to predict behavior while reading the source: **anything that would change an already-sent prefix gets deferred to a moment, such as compression or a new session, when the prompt is being rebuilt anyway.**
+
+## Memory files: small, frozen, auditable
+
+### Format, limits and safety scanning
+
+Each file is a sequence of entries separated by a `§` on a line of its own. The delimiter constant is `"\n§\n"`, so a `§` that isn't alone on its line is just text, and a single entry can span several lines. <Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
+
+`MEMORY.md` holds environment facts and conventions, capped at 2200 characters; `USER.md` holds the user profile, capped at 1375. <Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Infer lang="en" />The code doesn't say why the caps count characters rather than tokens. Characters are independent of the tokenizer and cheap to count, which would be a sensible reason.
+
+Two safeguards share one attitude: **when something goes wrong, make it visible rather than quietly fixing it.**
+
+- If a file has been hand-edited past its cap, loading **doesn't truncate it**. It logs a warning and refuses further additions until the file is back under the limit. <Src p="tools/memory_tool_store.py" l="246-252" />
+- Every entry passes a threat scan at load time. A flagged entry appears in the prompt as `[BLOCKED: …]`, while **the file itself is left untouched**. The comment's reasoning: memory enters the system prompt, so a poisoned entry would keep acting across sessions; silently dropping it would hide the attack and leave the user no way to find and delete it. <Src p="tools/memory_tool_store.py" l="221-253" />
+
+### The `memory` tool: one call, one atomic batch
+
+The tool description is a design document in its own right. It asks for every change to a given file to go into a single call's `operations` array, applied atomically, with **the character cap checked only against the final result**. One call can therefore delete old entries to free space and then add new ones, without failing on an intermediate state that is over the limit. When an add is rejected, the tool returns all current entries and nudges the model to resend one merged batch. <Src p="tools/memory_tool.py" l="375-445" />
+
+For a single change, the one-shot form works:
+
+```json title="Single add"
+{
+  "target": "memory",
+  "action": "add",
+  "content": "This repo uses pnpm."
+}
+```
+
+```json title="Single patch: replaces only the matched span"
+{
+  "target": "memory",
+  "action": "patch",
+  "old_text": "This repo uses npm",
+  "content": "This repo uses pnpm"
+}
+```
+
+A few edge cases:
+
+- `add` strips leading and trailing whitespace and skips the entry if it is identical to an existing one; different wording counts as a new entry. <Src p="tools/memory_tool_store.py" l="369-388" />
+- `patch` and `remove` locate their target with `old_text`. Matching several **different** entries returns `ambiguous`; exact duplicates don't count as ambiguous. `replace` is explicitly rejected. <Src p="tools/memory_tool_store.py" l="419-461" /> <Src p="tools/memory_tool.py" l="261-262" />
+- A write takes a lock, re-reads the file, validates, writes a temp file and atomically swaps it in. Because every write re-reads first, two sessions running at once never overwrite each other's changes. <Src p="tools/memory_tool_store.py" l="338-367" /> <Src p="tools/memory_tool_store.py" l="675-683" />
+- A successful response **deliberately omits the entry list**. The comment says echoing the entries tempts the model to "find more to fix" and re-issue the same operations. <Src p="tools/memory_tool_store.py" l="623-636" />
+
+### What belongs in memory, and what belongs in a skill
+
+This is the most important rule in the whole design, and it is stated three times: in the tool description, in the system prompt guidance, and in the background review prompt. <Src p="tools/memory_tool.py" l="375-398" /> <Src p="agent/prompt_builder.py" l="192-230" /> <Src p="agent/background_review.py" l="370-388" />
+
+| | Goes to memory | Goes to a skill | Goes to neither |
+|---|---|---|---|
+| Test | true no matter what the task is | useful only for a certain kind of task | goes stale quickly, or can be looked up again any time |
+| Examples | who the user is, stable environment facts, standing conventions | concrete steps, pitfalls, the user's preferences and corrections for **that kind of task** | task progress, completion logs, temporary to-dos |
+| Phrasing | a statement: "The user prefers short answers" | executable steps | stays in session history; find it with `session_search` |
+
+The tool description gives the reason: memory is **injected on every turn**, so it has to stay small, while skills load only when relevant. That explains a choice that looks backwards at first: the user's corrections on TypeScript tasks go into a skill, not into `USER.md`. A fact shouldn't be written to both places either; the comment says that would make both files hit their caps sooner.
+
+## Session history and `session_search`
+
+Memory only has room for a few dozen distilled facts. Everything else lives in `state.db`, and `session_search` is the only way back to it: it queries the `messages` table with SQLite FTS5, **makes no LLM calls**, and returns raw messages straight from the database. <Src p="tools/session_search_tool.py" l="2-8" />
+
+I found no vector or embedding code anywhere in `hermes_state*`, so there is no comment to cite on why it skips vector search. <Infer lang="en" />What the tool needs to recover is the user's exact words and command output, where exact matching matters more than semantic similarity, and it saves a model call.
+
+Some details:
+
+- By default it searches only `user` and `assistant` messages; passing `role_filter="tool"` explicitly searches tool results. <Src p="tools/session_search_tool.py" l="330-385" /> Text that isn't split into words by spaces, such as Chinese, gets an extra trigram index, but tool messages are left out of it: the comment estimates the trigram index at about 2.6 times the size of the text it covers, while tool output makes up about 90% of message bytes. <Src p="hermes_state_common.py" l="1025-1039" />
+- `scroll` mode reads around a hit: `window` defaults to 5 and is **clamped to between 1 and 20**. It returns the anchor row plus up to 5 rows on each side, in database order, tool results included. <Src p="tools/session_search_tool.py" l="763-770" /> <Src p="hermes_state_messages.py" l="1407-1424" /> A request anchored **inside the current session's lineage** is refused, since that part is already in context. <Src p="tools/session_search_tool.py" l="542-543" />
+- `read` mode takes only a `session_id`. For sessions over 30 messages it returns the first 20 and the last 10, and each message's content is length-capped. <Src p="tools/session_search_tool.py" l="447-462" />
+
+Note that `window` counts **rows**, not conversation turns. If you say just one thing, "find the pnpm version", the table can gain four rows: your question, the assistant's tool call, the tool's result, and the assistant's answer. When one assistant message makes two tool calls, the assistant takes one row and each tool result takes its own. <Src p="hermes_state_common.py" l="531-538" />
+
+## Skills: know-how loaded on demand
+
+### Discovery and reading
+
+A skill's entry point is `SKILL.md`, whose header carries a `name` and a `description`. The system prompt holds only an index: each skill's `load_name` (the `name` you pass to `skill_view`) and its one-line description, with categories marked `[names only]` dropping even the description. <Src p="agent/prompt_builder.py" l="1309-1372" /> The model opens the body on demand with `skill_view`, and passing `file_path` reads a supporting file. <Src p="tools/skills_tool.py" l="592-694" />
+
+That's why a skill can be much "bigger" than memory: its standing cost is a single line in the index.
+
+### When the foreground model writes one
+
+- **Create**: when `skill_manage` is available, the prompt tells the model to record a non-trivial workflow with `skill_manage` once it has worked one out, and to offer to save a skill after a difficult or trial-and-error task. <Src p="agent/prompt_builder.py" l="257-264" /> <Src p="agent/prompt_builder.py" l="1362-1375" />
+- **Patch**: when a loaded skill is missing a step or has a wrong command, the guidance tells the model to fix it with `skill_manage(action='patch')` **before finishing**, without waiting to be asked.
+
+These writes take effect immediately by default; with `skills.write_approval` on they are staged for approval instead, for foreground and background writes alike. <Src p="tools/write_approval.py" l="1-10" /> A skill created through `skill_manage` is stamped `created_by: agent`, which is the only way a skill comes under the curator's management; it is never inferred from where the skill lives. <Src p="tools/skill_usage.py" l="1-6" />
+
+### The curator: archive, never delete
+
+The `curator` maintains the skill library, and its module header states the bottom line: **never delete, only archive (recoverable)**. <Src p="agent/curator.py" l="1-7" />
+
+Its rules are more conservative than you might expect:
+
+- **The first call does nothing.** With no `last_run_at` on record, the first call just stamps the current time and returns, so a fresh install waits a full interval before the curator really runs. <Src p="agent/curator.py" l="169-176" />
+- **The interval defaults to 168 hours.** If the caller passes an idle duration, at least 2 idle hours are also required. <Src p="agent/curator.py" l="31-35" /> <Src p="agent/curator.py" l="1198-1207" />
+- **It only manages skills the agent created.** Skills the user wrote are off limits; bundled skills can be archived only with `curator.prune_builtins` on; pinned skills and skills referenced by cron jobs are skipped. <Src p="tools/skill_usage.py" l="618-628" /> <Src p="agent/curator.py" l="216-230" />
+- **It goes by activity time**, the latest of `last_used_at`, `last_viewed_at` and `last_patched_at`, kept in a sidecar file, `.usage.json`, and falling back to `created_at` when there is no record. Telemetry lives in the sidecar so it never pollutes a user-written `SKILL.md`. <Src p="tools/skill_usage.py" l="121-127" />
+
+<FigCurator lang="en" />
+
+The state transitions fit in about a dozen lines:
+
+```python title="agent/curator.py · 248–260" {3,7,10,12}
+# use_count == 0 is absence of evidence, not staleness: never archive a
+# never-used skill younger than stale_after_days.
+if int(row.get("use_count", 0) or 0) == 0 and anchor > stale_cutoff:
+    if current == _u.STATE_STALE:
+        _set(name, _u.STATE_ACTIVE, "reactivated")
+    continue
+if anchor <= archive_cutoff and current != _u.STATE_ARCHIVED:
+    if _archive_as_curator(_u, name):
+        counts["archived"] += 1
+elif anchor <= stale_cutoff and current == _u.STATE_ACTIVE:
+    _set(name, _u.STATE_STALE, "marked_stale")
+elif anchor > stale_cutoff and current == _u.STATE_STALE:
+    _set(name, _u.STATE_ACTIVE, "reactivated")  # used again after going stale
+```
+<Src p="agent/curator.py" l="209-261" />
+
+Three things stand out. An `active` skill idle for more than 30 days can be archived **directly**, without passing through `stale`. Nothing in the code removes `stale` skills from the index, so they remain usable. And the archive condition checks only "old enough and not already archived"; **it doesn't care whether the skill was just restored**. That last point causes trouble in the experiment later on.
+
+Actual deletion happens only when someone runs `hermes curator purge` by hand, and even that is disabled by default. <Src p="hermes_cli/curator.py" l="420-477" />
+
+### Consolidation: off by default
+
+`curator.consolidate` is off by default. When it is on and there are candidates, the curator spins up a separate agent with only the `skills` toolset, memory switched off and project context files skipped. <Src p="agent/curator.py" l="1105-1140" /> It is given the candidate list and usage statistics, reads bodies as needed, and **never reads the user's conversations**. The prompt asks it to judge overlap by **content** rather than usage counts, favors merging into a class-level "umbrella" skill, and calls archiving the most destructive thing it is allowed to do. <Src p="agent/curator.py" l="296-337" />
+
+Put together, a skill's life runs like this: **created → patched in use** (a patch refreshes its activity time and postpones `stale`) **→ consolidated once enough has accumulated → archived after long neglect → restored if needed.**
+
+## Background review: what ties the three together
+
+The foreground model may forget to save things. The background review is the safety net: after a turn ends, a temporary agent looks back over the conversation and decides what to write to memory or to skills.
+
+<FigReview lang="en" />
+
+### When it fires
+
+The two stores use two counters, with different units and, more importantly, **different decision points**:
+
+| | Memory review | Skill review |
+|---|---|---|
+| Counts | user turns | model requests (internal steps) |
+| Default threshold | 10 (`memory.nudge_interval`) | 10 (`skills.creation_nudge_interval`) |
+| Incremented | on every user message | every time a model request is prepared |
+| **Decided** | **at the start of the turn** | **at the end of the turn** |
+| Across turns | accumulates, never reset per turn | accumulates, never reset per turn |
+
+Sources: <Src p="agent/turn_context.py" l="758-767" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/agent_init.py" l="1386-1390" /> <Src p="agent/turn_context.py" l="600-602" />
+
+An example makes the two units concrete. You say one thing, "fix the tests". The model reads two files (step 1), decides to run the tests once it has their contents (step 2), and answers directly after seeing the results (step 3; a step with no tool call still counts). That's **one user turn and three internal steps**. <Infer lang="en" />Counting user turns for memory and steps for skills probably reflects that facts worth remembering usually show up in what the user says, while know-how worth keeping usually comes with a lot of tool work. No comment in the code says so.
+
+The difference in timing only becomes clear when you read three pieces of code together. The memory decision is made while the turn context is being built:
+
+```python title="agent/turn_context.py · 1132"
+should_review_memory = _tick_memory_nudge(agent)
+```
+
+During tool execution, calling `memory` or `skill_manage` resets the corresponding counter:
+
+```python title="agent/tool_executor.py · 746–749"
+if ref.name == "memory":
+    agent._turns_since_memory = 0
+elif ref.name == "skill_manage":
+    agent._iters_since_skill = 0
+```
+
+The skill review, though, is checked only when the turn wraps up:
+
+```python title="agent/turn_finalizer.py · 763–770"
+# Skill trigger is checked NOW — based on how many tool iterations THIS turn used.
+_should_review_skills = (
+    agent._skill_nudge_interval > 0
+    and agent._iters_since_skill >= agent._skill_nudge_interval
+    and "skill_manage" in agent.valid_tool_names
+)
+if _should_review_skills:
+    agent._iters_since_skill = 0
+```
+
+Together they produce an easy-to-miss asymmetry: **if the foreground model already wrote a skill this turn, there is no skill review this turn; if it already wrote to memory, the memory review still happens**, because that decision was made before the write. The reset only affects the next counting window.
+
+Whether a review actually launches also requires a final answer, an uninterrupted turn, and no request from the host to skip it. The review runs **after the answer has been delivered**; the comment says this keeps it from competing with the user's task. Unattended contexts such as cron skip it entirely, because one fork costs about 30K tokens. <Src p="agent/turn_finalizer.py" l="778-792" /> The master switch is `auxiliary.background_review.enabled`. <Src p="agent/background_review.py" l="185-250" />
+
+### The fork: a temporary agent built for the cache
+
+The temporary `AIAgent` that `build_cache_parity_fork()` creates has several deliberate properties: <Src p="agent/background_review.py" l="965-1005" />
+
+- **It copies the parent's system prompt and `tools[]` and reuses the same `session_id`**, so its requests hit the prefix cache the parent has already warmed.
+- **It shares the parent's `MemoryStore` object**, so what it writes to memory and what the foreground writes are one and the same state. <Src p="agent/background_review.py" l="992" />
+- **Persistence is fully detached**: it never writes to `state.db`. The comment records what happens otherwise: sharing the `session_id`, the fork would write its own review instructions into the real session, and the next live turn would read them back as a standing instruction.
+- **Its own counters are zeroed**, so it can't trigger reviews of itself; it runs for at most 16 iterations. <Src p="agent/background_review.py" l="173" /> <Src p="agent/background_review.py" l="995" />
+- With a Hermes-managed local `llama-server`, the task goes into an **idle queue** and is picked up only when no chat turn is in progress on the machine and the local model is idle, waiting at most 30 minutes. The reason: a review would tie up the GPU, and the next user request would cancel it anyway, wasting the decode work already paid for. <Src p="agent/review_idle_queue.py" l="1-42" /> <Src p="agent/review_idle_queue.py" l="126-142" />
+
+### What it sees
+
+By default there is **no cap on message count**: the fork gets a copy of every message the session still holds when the turn wraps up, including tool calls and results still in context. Messages already compressed away are not fetched back from the database.
+
+If `auxiliary.background_review` names a provider and model **different from the current session's**, the prefix cache is useless anyway, so the review switches to `_digest_history()`: it keeps the most recent 24 messages verbatim and folds everything earlier into a single `role="user"` digest, with at most 300 characters per old user message, at most 200 per old assistant message, and only the names of old tool calls. The retained window never starts on a `role="tool"` message and shifts earlier when it would. <Src p="agent/background_review.py" l="269-291" /> <Src p="agent/background_review.py" l="332-362" /> The comment puts the choice bluntly: "Routed -> digest (cache cold anyway); same model -> full snapshot (warm cache reads)". <Src p="agent/background_review.py" l="1184-1193" />
+
+### What it may use
+
+The default allowlist is `skills_list`, `skill_view`, `skill_manage`, `read_file` and `search_files`. `memory` is added only when this review **really was triggered by memory** and memory is enabled:
+
+```python title="agent/background_review.py · 1094–1098"
+# Gate the built-in memory tool on BOTH the profile's memory flags and the trigger that fired
+# (#105921): a skill-nudge review never gets the memory tool, so an unattended fork cannot
+# act on the memory tool's "consolidate now" hint and delete entries no one reviewed.
+memory_on = review_agent._memory_enabled or review_agent._user_profile_enabled
+review_toolsets = ["memory", "skills"] if memory_on and review_memory else ["skills"]
+```
+<Src p="agent/background_review.py" l="1088-1128" />
+
+`terminal`, `write_file` and `patch` are always denied, so automated maintenance has to go through `skill_manage`'s validation, and `extra_tools` can only admit tools the parent already has. There is a practical reason the read-only tools must be allowed: the comment records one deployment that saw about 142 tool denials and about 204 read-before-write refusals in two days; the model couldn't read `SKILL.md`, and almost no patch ever landed.
+
+Background edits to an existing skill face one more hard rule: this review must already have read **the exact path it is about to change**, or `skill_manage` refuses. <Src p="tools/skill_manager_guards.py" l="55-73" /> <Src p="tools/skill_manager_guards.py" l="211-221" />
+
+### Approval: staged, not refused
+
+When an unattended review submits a `patch` or `remove`, the tool doesn't apply it. It returns `staged: true` with a `pending_id`; the user reviews it with `/memory pending` and applies it with `/memory approve <id>`. The docstring explains best why it stages instead of simply refusing:
+
+```python title="tools/memory_tool.py · 179–186"
+def _background_delete_gate(store, action, operations, target="memory", content=None,
+                            old_text=None) -> Optional[str]:
+    """Fail-closed operation gate for unattended background-review forks (#105921): ``add``
+    stays available (it is all any review prompt asks for), while ``patch``/``remove`` —
+    single or inside a batch — are never applied unattended. The op is staged in the pending
+    store instead of merely denied: the fork's own review summary is never published back, so
+    a plain denial would drop the consolidation request with no surfacing path at all. A
+    staging failure fails closed to a plain denial."""
+```
+<Src p="tools/memory_tool.py" l="179-219" />
+
+The comment answers another question in passing: the fork's summary is **never sent back** to the foreground session. Its only outputs are what it writes to the stores and the operations staged here. Approval re-checks the original entry, so a replay can't land on a newer entry that happens to contain the same `old_text`. <Src p="tools/memory_tool_store.py" l="447-454" />
+
+Three limits on scope:
+
+1. The gate covers only **unattended** reviews. A review the user starts explicitly with `/refine` counts as attended and keeps every operation. <Src p="agent/background_review.py" l="1150-1159" />
+2. `add` is not gated unless `memory.write_approval` is on, in which case additions need approval too. <Src p="website/docs/user-guide/features/memory.md" l="329-362" />
+3. Skills have a separate switch, `skills.write_approval`, handled with `/skills diff <id>` and `/skills approve <id>`. <Src p="website/docs/user-guide/features/memory.md" l="516-541" />
+
+### How the prompts lean
+
+The two review prompts are deliberately different in tone. The memory prompt is neutral and routes each fact to one place only: `USER.md` for who the user is, `MEMORY.md` for facts about the ENVIRONMENT you operate in. <Src p="agent/background_review.py" l="370-388" /> The skill prompt is clearly more eager: it asks the model to extract reusable techniques and corrections from the conversation and stresses that `Nothing to save.` **should not be the default answer**. <Src p="agent/background_review.py" l="448-518" /> Combined with the tool limits above, the background agent's overall bias is plain: **write skills generously; for memory, add but never delete.**
+
+## Who sees a write, and when
+
+Put all of the above on one timeline and follow a single fact and a single skill:
+
+<Journey lang="en" />
+
+As a table:
+
+| Reader | Memory files | Skills |
+|---|---|---|
+| The call that made the write | the tool result reflects live state immediately | `skill_view` reads the latest file |
+| The same session's system prompt | re-read only after compression, or on session switch or resume | the index updates on rebuild; bodies were never in the prompt |
+| A new session on the same profile | read at startup | listed in the index at startup; bodies read on demand |
+| Another session running concurrently | nothing lost on disk, but its prompt waits for its own rebuild | same |
+| The background review fork | shares the parent's store object | reads and writes the same directory |
+
+There are more re-read triggers than the official docs mention: `invalidate_system_prompt()` runs after compression, and also on the session switch and resume paths in the CLI, ACP and TUI. <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" />
+
+The row that can actually cause trouble is the fourth. A fact written within a session came from that session's own conversation and is already in the model's context, so a late prompt update is mostly harmless. But between **two sessions running at the same time on one profile**, memory written by one is invisible to the other until that other rebuilds its prompt.
+
+## Scope: profiles, projects and delegation
+
+### The profile is the storage boundary
+
+Memory is stored per profile, at a location set by `HERMES_HOME`: `~/.hermes` for the default profile, `~/.hermes/profiles/<name>` for a named one. <Src p="tools/memory_tool.py" l="38-40" /> <Src p="website/docs/user-guide/profiles.md" l="401-433" /> All sessions on a profile share one pair of files; **there are no separate files per project, working directory, user ID or role**. Changing directories only changes where the work happens; only switching profiles switches files.
+
+One exception: `profile create --clone` copies `MEMORY.md` and `USER.md` into the new profile. The docs reason that memory is part of the agent's identity, like `SOUL.md`. <Src p="website/docs/user-guide/profiles.md" l="83" />
+
+History is split by profile too. `session_search` queries only the current profile's `state.db` by default; passing `profile` explicitly opens another profile's database **read-only**. <Src p="tools/session_search_tool.py" l="434-444" /> A profile is a storage boundary, **not a sandbox**: file permissions and tool authorization are separate matters.
+
+### Four tiers for lookup, asymmetric writes
+
+Lookup order: trusted project directories → the current profile's `$HERMES_HOME/skills` → `skills.create_dir` → `skills.external_dirs`, with earlier tiers winning on name clashes. <Src p="agent/skill_utils.py" l="398-420" />
+
+The project tier sits behind a trust gate: `.hermes/skills/` and `.agents/skills/` under the nearest Git root are scanned only if that project root is listed in `skills.trusted_project_dirs`. The comment is direct about why: project skills are a prompt-injection vector and shouldn't load just because you cloned a repository. The user's home directory itself is never treated as a project root, so a dotfiles repo can't be mistaken for one. <Src p="agent/skill_utils.py" l="507-596" />
+
+Writes, however, are **asymmetric**:
+
+- **New skills** go to the current profile, or to `skills.create_dir` if that is set. <Src p="tools/skill_manager_tool.py" l="200-208" />
+- **Edits** look up their target with the project tier excluded, so project skills are **never rewritten**. <Src p="agent/skill_utils.py" l="423-426" />
+
+The consequence: if the model read the project version and then submits an edit under the same `name`, the edit may land on a same-named copy in the profile, and I found nothing that tells the model so.
+
+### Delegation adds no new memory layer
+
+A sub-agent started by `delegate_task` gets its own session, stored in the same database as the parent's and linked through `parent_session_id`. <Src p="tools/delegate_tool.py" l="124-152" /> Its memory is **hard-coded off** (`skip_memory=True`), and the delegation tool table blocks `memory` as well, with the comment "no writes to shared MEMORY.md". <Src p="tools/delegate_tool.py" l="289-308" /> <Src p="tools/delegate_tool_toolsets.py" l="14-22" />
+
+To give different roles their own long-term memory, create a profile for each and run them separately. Delegation through `profile_routes` lets a sub-agent use another profile's environment, credentials and skills, but it is still a sub-agent and the same memory restrictions apply. <Src p="tools/delegate_tool_routes.py" l="111-153" />
+
+## An experiment: a restored skill is archived again right away
+
+Reading the curator, I noticed that `restore_skill()` ends with nothing more than `set_state(ACTIVE)` and refreshes no timestamp, while the archive condition checks only "old enough and not already archived". <Src p="tools/skill_usage.py" l="586-614" /> That implies a restored old skill should be **archived again on the very next curator pass**.
+
+Reading the code wasn't enough, so I ran it at the pinned commit against a throwaway `HERMES_HOME`: create an agent-made skill with 45 days of inactivity, run the automatic transitions once, restore it, and run them again. The [full script](/files/restore_rearchive.py) can be downloaded to reproduce it; it needs Python 3.11 or later.
+
+```python title="restore_rearchive.py (excerpt)"
+u.mark_agent_created("demo")
+rec.update(use_count=3, last_used_at=old, last_viewed_at=old, created_at=old)  # 45 days ago
+
+print("pass 1:", c.apply_automatic_transitions(), state())
+print("restore:", u.restore_skill("demo"), state())
+print("pass 2:", c.apply_automatic_transitions(), state())
+```
+
+```text title="Output (state, dir under skills/, dir under .archive/)"
+pass 1:  {'archived': 1, ...} -> ('archived', False, True)
+restore: (True, 'restored to …/skills/demo') -> ('active', True, False)
+pass 2:  {'archived': 1, ...} -> ('archived', False, True)
+```
+
+Confirmed: **after a restore, if the skill isn't read, used or patched before the next curator pass, it goes straight back into the archive.** The practical impact is limited: the curator runs only weekly by default, a restore is usually followed by actually using the skill, and a single `skill_view` refreshes its activity time. But if you restore a skill just to "put it back for later", it will quietly return to the archive a week on.
+
+## Design review
+
+### What works well
+
+1. **One constraint, applied all the way through.** The frozen snapshot, the volatile tier ordering, the fork reusing the tool list, the dispatch-side allowlist, and deferring reviews until after delivery all serve the prefix cache, and each one has a comment saying why. Consistency like that is rare in a codebase this large.
+2. **Reversible by default.** Over-limit memory isn't truncated, suspicious entries are masked rather than deleted, skills are archived rather than deleted, and the background agent's deletion requests are staged rather than dropped. When something goes wrong, the user can always see it and undo it.
+3. **The division of labor has a clear test.** The single rule "injected every turn, so it must stay small" sets the memory–skill boundary, the tone of both review prompts, and the background agent's toolset, instead of leaving it to the model's judgment.
+4. **It tightens on failure rather than loosening.** If staging fails, the request is refused outright; a review triggered by the skill counter never gets `memory`; project skills require explicit trust.
+
+### What to watch out for
+
+What follows is my judgment, not fact from the source.
+
+1. **Memory can saturate, and the background agent can't clean it up.** Background reviews can only `add`. Once the file is full, `add` is refused, and the `remove` and `patch` needed to free space require a human's approval. Cleanup has to wait until the foreground model's next add gets refused and it consolidates along the way, or until the user works through `/memory pending`. If most memory is written in the background, it may well stay frozen at whatever it looked like the first time it filled up.
+2. **Hard to predict when reviews fire.** Two counters with different units and different decision points, plus resets from foreground writes, make it hard to say in advance whether a particular conversation will trigger a review. Users won't care; anyone debugging or evaluating the system will.
+3. **Concurrent sessions can't see each other.** With two sessions open on one profile, memory written by one stays invisible to the other until the other rebuilds its prompt. Nothing is lost on disk, but the two sessions may be working from different versions of "the facts".
+4. **Restore doesn't reset the clock**; see the experiment above.
+5. **Edits to a same-named skill silently land on the profile copy.** When a project and a profile both have a skill of the same name, `skill_manage` edits the profile version, and both the model and the user may believe they edited the project version.
+6. **A character cap is a blunt instrument.** It keeps the prompt bounded but doesn't distinguish entries by value: a critical convention and a throwaway preference cost the same budget.
+
+## Where the docs and the code disagree
+
+| Topic | Official docs | What the code does |
+|---|---|---|
+| When mid-session memory writes reach the prompt | "won't appear in the system prompt until the next session starts" <Src p="website/docs/user-guide/features/memory.md" l="57" /> | they are also re-read after compression and on session switch or resume <Src p="agent/system_prompt.py" l="814-832" /> |
+| Where agent-created skills are written | "always go to `~/.hermes/skills/`" <Src p="website/docs/user-guide/features/skills.md" l="500" /> | to `skills.create_dir` when it is set <Src p="tools/skill_manager_tool.py" l="200-208" /> |
+
+In both cases the docs are more conservative than the code: following them won't lead you astray, but you will miss some behavior. This note follows the code.
+
+## Open questions
+
+1. **Can a `profile_routes` sub-agent reach the target profile's memory by some other path?** It is set to `skip_memory=True` but also carries `load_soul_identity=True`; I didn't trace prompt construction far enough to be sure.
+2. **Is there any warning when an edit lands on the profile copy of a same-named skill?** I didn't find one in `_find_skill`, but it may live elsewhere.
+3. **How common is memory saturation in practice?** The reasoning above follows the code paths; I haven't run a long end-to-end experiment, and I don't know whether upstream has other mechanisms, such as reminding the user when `/memory pending` piles up.
+
+## Appendix
+
+### Configuration reference
+
+| Setting | Default | Purpose | Source |
+|---|---|---|---|
+| `memory.nudge_interval` | 10 | user-turn threshold for memory reviews | <Src p="agent/agent_init.py" l="1304" /> |
+| `skills.creation_nudge_interval` | 10 | model-request threshold for skill reviews | <Src p="agent/agent_init.py" l="1386-1390" /> |
+| `memory_char_limit` / `user_char_limit` | 2200 / 1375 | character caps for the two files | <Src p="tools/memory_tool_store.py" l="186" /> |
+| `auxiliary.background_review.enabled` | on | whether reviews start automatically | <Src p="agent/background_review.py" l="185-250" /> |
+| `auxiliary.background_review.defer_max_age_s` | 1800 | longest wait in the local-model idle queue | <Src p="agent/review_idle_queue.py" l="26-42" /> |
+| `_digest_history` window | 24 messages | recent messages kept verbatim when reviewing on another model | <Src p="agent/background_review.py" l="332" /> |
+| `_REVIEW_MAX_ITERATIONS` | 16 | maximum iterations per review | <Src p="agent/background_review.py" l="173" /> |
+| `memory.write_approval` | off | when on, `add` needs approval too | <Src p="website/docs/user-guide/features/memory.md" l="329-362" /> |
+| `skills.write_approval` | off | when on, skill changes are staged for approval | <Src p="tools/write_approval.py" l="1-10" /> |
+| `curator.interval_hours` | 168 | minimum interval between runs | <Src p="agent/curator.py" l="31-35" /> |
+| `curator.min_idle_hours` | 2 | minimum idle time when an idle duration is passed | <Src p="agent/curator.py" l="1198-1207" /> |
+| `curator.stale_after_days` / `archive_after_days` | 14 / 30 | days until stale / archived | <Src p="agent/curator.py" l="31-35" /> |
+| `curator.consolidate` | off | whether to run the consolidation agent | <Src p="agent/curator.py" l="31-35" /> |
+| `skills.trusted_project_dirs` | empty | project roots allowed to load project skills | <Src p="agent/skill_utils.py" l="563-568" /> |
+
+### Checking it yourself
+
+Every line-numbered reference here points at commit `bf0203a794a07aac3ff764972ab9087baa4e4f4e`, and code excerpts are copied verbatim with only the leading indentation removed. To check any excerpt, pull it out like this:
+
+```bash title="Extract a range of source at the pinned commit"
+git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
+```
