@@ -1,0 +1,96 @@
+---
+title: "Pi: One Session Log, Several Model Contexts"
+dek: "A discarded attempt is still on disk. Whether the next model sees it depends on the selected leaf, the last checkpoint and the resources loaded for this project."
+summary: "Follow a fork through replay and compaction, then trace how project instructions and skills change between sessions."
+date: "2026-11-18"
+topic: "Agent engineering"
+status: "published"
+pinned: "pi @ f0f9478"
+---
+import Src from '../../components/Src.astro';
+import FigPiBranch from '../../components/FigPiBranch.astro';
+import Infer from '../../components/Infer.astro';
+
+export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945e9c2b04922e29f7ca" };
+
+Try approach A in Pi, go back to the question, then take approach B. The JSONL file still contains every word of A, even when the model never sees A again. Conversely, a rule that has never appeared in a chat can be present on the first turn of a new session. Three inputs explain the difference: **the recorded events, the selected branch and the resources loaded for the current project**.
+
+This note follows `@earendil-works/pi-coding-agent`. The package at the pinned commit declares version 1.5.2. The experiment calls its TypeScript implementation directly, with no model service, desktop client or third-party extension. <Src {...source} p="packages/coding-agent/package.json" l="1-16" />
+
+## Three ways to carry a lesson forward
+
+Suppose a failed release taught you to regenerate an index before publishing. Where you put that lesson determines who will see it.
+
+| Destination | Writer and reader | When it becomes visible |
+|---|---|---|
+| Session message, compaction or branch summary | The runtime appends entries. SessionManager reconstructs the selected path. | On that path, including after resume. A fresh, independent session has no such path. |
+| User or project instruction file | A person or a tool with write access edits Markdown. The resource loader reads it. | When a session opens in an applicable directory, or its resources are reloaded. |
+| `skills/release/SKILL.md` | An author maintains the procedure. The loader indexes its metadata. | The prompt can carry a name, description and location. The model reads the body on demand, or the user explicitly invokes it. |
+
+Version control can distribute project files. Several projects can also share an agent directory. Grouping session files by working directory helps locate an earlier conversation. Starting with `--continue`, choosing `/resume` and starting with `/new` have different effects on the next request. <Src {...source} p="packages/coding-agent/docs/sessions.md" l="7-27" /> <Src {...source} p="packages/coding-agent/docs/sessions.md" l="61-72" />
+
+## Two paths on disk, one in the request
+
+Persistent sessions default to `~/.pi/agent/sessions/`. An entry has an `id` and a `parentId`. An append creates a child of the current leaf. `/tree` changes position within one session file, `/fork` creates a separate session from an earlier user message, and `/clone` copies the active branch. A text editor shows the order entries were appended. Reconstructing a model request requires the parent links. <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="983-995" /> <Src {...source} p="packages/coding-agent/docs/sessions.md" l="36-49" />
+
+<FigPiBranch lang="en" />
+
+The checkpoint belongs to B. Pi walks the ancestry of the target leaf and finds the latest compaction **on that path**. It places the summary before retained messages, then includes eligible entries from `firstKeptEntryId` and entries appended after compaction. Switch back to A and B's checkpoint drops out as well. System messages have special handling, another reason an array slice cannot reproduce the projection. <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="390-423" /> <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="468-513" />
+
+Once the branch and compaction boundary are selected, Pi applies the latest `context_edit` on that branch for each target. An edit can replace message content or omit it from the model context with `replacement: null`. The raw entry stays in the log. Default overflow recovery uses this mechanism. It records omissions for the failed attempt before it tries to compact. If compaction fails or is cancelled, the omissions persist. Rebuilding the context hides the attempt even though the branch has no new checkpoint. <Src {...source} p="packages/coding-agent/docs/session-format.md" l="229-245" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="87-98" />
+
+Default compaction keeps recent material verbatim and asks a model to summarize older material. `reserveTokens` helps determine **when** to compact. `keepRecentTokens` sets the target for **how much recent history** to preserve. Their defaults here are 16,384 and 20,000, with per-model overrides. A separate summarizer can run when navigating with `/tree`. It finds the common ancestor, collects entries on the path being left and records a `branch_summary` at the destination. That is one way B can inherit a lesson from A without inheriting the whole exchange. <Src {...source} p="packages/coding-agent/docs/compaction.md" l="25-50" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="172-185" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="421-437" />
+
+## How project instructions reach the next turn
+
+The resource loader checks the agent directory, then collects ancestor files from the working directory and orders them from broadest to most specific. It takes **one readable candidate per directory**. The order is `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md` and `CLAUDE.MD`. An override in `repo/sub` determines what that directory contributes. The parent repository still contributes its own instructions. Nested linked Git worktrees have an extra check to avoid counting the same repository scope twice. <Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="214-260" /> <Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="262-304" />
+
+The contents enter the project-context section of the system prompt. The configuration reference explicitly separates discovery of these files, which does not require project trust, from loading project `.pi` configuration. To reproduce a surprising instruction, record the working directory and agent directory alongside the repository revision. Two sessions in the same checkout can inherit different ancestors. <Src {...source} p="packages/coding-agent/docs/configuration.md" l="39-47" /> <Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="79-91" /> <Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="170-181" />
+
+## Skill descriptions and bodies have different freshness
+
+At discovery, the loader parses frontmatter and retains the name, description, file location, base directory and invocation policy. A missing usable description skips the skill. Some naming violations only produce diagnostics. The automatic catalog advertises name, description and location. It filters out `disable-model-invocation: true` entries, and the prompt builder checks that a reading route exists in the selected tools. Reading a file locally to parse its frontmatter and transmitting that file to the model are distinct operations. <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="277-344" /> <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="352-390" /> <Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="171-181" />
+
+An explicit `/skill:release v2` takes another path. Pi looks up the name in its current registry and **reads the file from disk at invocation**. It removes frontmatter and wraps the body with its resource location, followed by the user's `v2` argument. Changing the body at an indexed path can therefore affect the next explicit invocation. A newly added or renamed skill needs discovery first. `/reload` reloads resources and rebuilds the runtime. An older body already in the conversation still belongs to its earlier message. <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="2310-2338" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="3849-3877" />
+
+Project skill discovery also depends on trust. Pi automatically scans the project's `.pi/skills` and applicable ancestor `.agents/skills` directories only for a trusted project. A project `AGENTS.md` can therefore reach the prompt in an untrusted checkout while skills stored in those project directories stay out of the automatic catalog. <Src {...source} p="packages/coding-agent/src/core/package-manager.ts" l="2700-2704" /> <Src {...source} p="packages/coding-agent/src/core/package-manager.ts" l="2720-2753" />
+
+Precedence depends on the entry point. The low-level merge keeps the first discovered item and reports a name collision. At application level, the upstream regression test resolves a project auto-discovered skill ahead of a same-name user or package skill. That test does not establish a blanket directory-depth rule for SDK callers who provide their own list of paths. <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="423-455" /> <Src {...source} p="packages/coding-agent/test/suite/regressions/2781-skill-collision-precedence.test.ts" l="76-109" />
+
+## Experiment: does B's checkpoint follow us back to A?
+
+In the pinned repository root, run `npm ci --ignore-scripts`. Save the following as `probe.mjs` and run `node --import ./packages/coding-agent/src/experimental/source-resolver.ts probe.mjs`. The real SessionManager runs in memory. Supplying the summary directly isolates the projection logic from the model that would ordinarily write it.
+
+```js title="probe.mjs"
+import {SessionManager} from './packages/coding-agent/src/core/session-manager.ts';
+const log = SessionManager.inMemory();
+const say = text => log.appendMessage({role:'user', content:text, timestamp:0});
+const root=say('base'); const left=say('attempt A');
+log.branch(root); const right=say('attempt B');
+console.log('raw messages',log.getEntries().filter(e=>e.type==='message').map(e=>e.message.content));
+console.log('active leaf',log.buildSessionContext().messages.map(m=>m.content));
+log.appendCompaction('checkpoint', right, 1200);
+console.log('compacted',log.buildSessionContext().messages.map(m=>m.summary ?? m.content));
+log.branch(left);
+console.log('other leaf',log.buildSessionContext().messages.map(m=>m.content));
+log.appendContextEdit(left, null);
+console.log('edited A', log.buildSessionContext().messages.map(m=>m.content));
+```
+
+| Observation | Measured output, in order |
+|---|---|
+| Enumerate raw messages | `base`, `attempt A`, `attempt B` |
+| B is the active leaf | `base`, `attempt B` |
+| Append the checkpoint to B | `checkpoint`, `attempt B` |
+| Switch back to A | `base`, `attempt A` |
+| Append an omission on A | `base` |
+
+The first four observations vary the branch or compaction boundary. The fifth keeps A in the raw log and removes it from the request with a single edit. I also ran the upstream skill parsing, collision-precedence and context-building tests. These results establish how history is selected. They do not measure how often a model loses a fact when writing its own summary. <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="126-147" /> <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="211-246" />
+
+## What can accumulate across sessions?
+
+The default coding-agent paths examined here persist session entries, explicit edits to user or project files, and writes implemented by extensions. Compaction and branch summaries can change a later request. I found no built-in maintainer in these paths that promotes successful sessions to skills, rewrites them by usage, then archives superseded versions. To carry the release lesson into a **new project session**, update the appropriate instruction file or skill and inspect it from a fresh session. Sharing it across repositories also requires the appropriate installation scope or distribution mechanism. <Src {...source} p="packages/coding-agent/docs/skills.md" l="58-67" /> <Src {...source} p="packages/coding-agent/docs/skills.md" l="87-93" />
+
+Pi exposes separate extension mechanisms. `pi.appendEntry()` persists extension state in a session without adding it to model context. A custom message can enter context. `session_before_compact` can supply a different summarization policy, and `before_agent_start` can change the upcoming turn's inputs. An application can use these hooks to implement review. For a particular deployment the remaining questions are concrete: which extension is installed, what triggers its writer, where does the result land, and which new session reads it? <Infer lang="en" /> Editable resources make durable changes easy to review. A lesson left only in a conversation can remain invisible outside that conversation. <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="122-134" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="532-552" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="615-635" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="1625-1633" />
+
+Pi reconstructs messages from the selected leaf. Hermes also offers a tool for searching history. An active branch and a history-tool call leave different evidence for how an old fact reached an answer. [Compare the Hermes implementation](/notes/hermes-memory-skills/#session-history-and-session_search)

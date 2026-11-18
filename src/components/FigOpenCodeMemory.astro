@@ -1,0 +1,93 @@
+---
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const lanes = [
+  {
+    process: en ? 'Earlier process' : '先前进程',
+    directories: ['extra', 'b'],
+    action: en ? 'Skill call saved to SQLite' : '技能调用结果存入 SQLite',
+    role: 'tool',
+    output: ['BODY_', 'EXTRA_', 'MARKER'],
+  },
+  {
+    process: en ? 'Process resuming the session' : '恢复会话的进程',
+    directories: ['.opencode', 'skills', 'a'],
+    action: en ? 'Skill catalog rebuilt' : '重新发现技能，生成目录',
+    role: 'system',
+    output: ['repo description'],
+  },
+];
+---
+<figure class="memory-flow" lang={en ? 'en' : 'zh-CN'}>
+  <div class="sources">
+    {lanes.map((lane) => (
+      <div class="source">
+        <span class="phase">{lane.process}</span>
+        <span class="path">{lane.directories.map((name) => <>{name}/<wbr /></>)}SKILL.md</span>
+        <span class="name">name: probe</span>
+      </div>
+    ))}
+  </div>
+  <div class="routes">
+    {lanes.map((lane) => (
+      <div class="route"><span>{lane.action}</span></div>
+    ))}
+  </div>
+  <div class="request">
+    <div class="request-title">{en ? 'One resumed model request' : '恢复会话后的同一次模型请求'}</div>
+    <div class="results">
+      {lanes.map((lane) => (
+        <div class="result">
+          <span class="role">{lane.role}</span>
+          <span class="payload">{lane.output.map((part) => <>{part}<wbr /></>)}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+  <figcaption>{en ? 'Figure 1. Two files declared the same skill name. The resumed request carried the earlier tool result alongside a catalog built from the other file.' : '图 1　两份文件声明了同一个技能名。恢复会话时，旧工具结果和从另一份文件构建的目录，一同进入模型请求。'}</figcaption>
+</figure>
+<style>
+  .sources, .routes, .results {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: clamp(8px, 3vw, 26px);
+  }
+  .memory-flow { font-family: var(--sans); }
+  .source, .result { display: flex; flex-direction: column; align-items: flex-start; }
+  .source {
+    padding: 12px clamp(9px, 2vw, 18px);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .phase, .request-title { color: var(--fg); font-size: 14px; line-height: 1.4; font-weight: 600; }
+  .path, .name, .role, .payload { font-family: var(--mono); line-height: 1.6; }
+  .path { margin: 8px 0 2px; color: var(--fg); font-size: 13px; overflow-wrap: anywhere; }
+  .name { font-size: 12px; color: var(--mute); }
+  .route {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 68px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--mute);
+  }
+  .route::before, .route::after { position: absolute; content: ''; }
+  .route::before { top: 0; bottom: 4px; left: 50%; border-left: 1px solid var(--mute); }
+  .route::after {
+    bottom: 3px; left: calc(50% - 2.5px); width: 5px; height: 5px;
+    border: solid var(--mute); border-width: 0 1px 1px 0; transform: rotate(45deg);
+  }
+  .route span { position: relative; padding: 3px 5px; background: var(--bg); }
+  .request { border: 1px solid var(--line); border-top: 2px solid var(--plat); border-radius: 8px; background: var(--card); }
+  .request-title { padding: 10px 14px; text-align: center; border-bottom: 1px solid var(--line); }
+  .result { padding: 10px clamp(8px, 2vw, 18px) 12px; min-width: 0; }
+  .role { font-size: 12px; color: var(--plat-ink); }
+  .payload { font-size: 13px; overflow-wrap: anywhere; color: var(--fg); }
+  @media (max-width: 420px) {
+    .path, .payload { font-size: 12px; }
+    .route span { max-width: calc(100% - 8px); }
+  }
+</style>

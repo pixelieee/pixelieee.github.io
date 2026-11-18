@@ -1,0 +1,33 @@
+---
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const before = [1,9,6,7];
+const after = [1,12,7];
+const columns = ['24%', '44%', '64%', '84%'];
+const description = en
+  ? 'Example. The surface is 1, 9, 6, 7. Replacing the span from 9 to 6 produces 1, 12, 7. Events 9 and 6 remain in the raw log.'
+  : '示例。当前消息序列为 1、9、6、7，用事件 12 替换从 9 到 6 的片段，结果是 1、12、7。原日志仍有 9 和 6。';
+---
+<figure class="surface">
+  <svg width="100%" height="124" role="img" aria-label={description}>
+    <text x="0" y="37" class="name">{en ? 'Before' : '替换前'}</text>
+    <text x="0" y="99" class="name">{en ? 'After' : '替换后'}</text>
+    <line x1="24%" x2="84%" y1="32" y2="32" />
+    <line x1="24%" x2="84%" y1="94" y2="94" />
+    {before.map((seq, i) => <g class:list={['node', { selected: seq === 9 || seq === 6 }]}>
+      <circle cx={columns[i]} cy="32" r="18"/><text x={columns[i]} y="37">{seq}</text>
+    </g>)}
+    {after.map((seq, i) => <g class:list={['node', { selected: seq === 12 }]}>
+      <circle cx={['24%', '54%', '84%'][i]} cy="94" r="18"/><text x={['24%', '54%', '84%'][i]} y="99">{seq}</text>
+    </g>)}
+  </svg>
+  <figcaption>{en ? 'Figure 1. The numbers are event sequence IDs. A previous replacement can place a newer event before an older one. Here events 9 and 6 are adjacent on the surface.' : '图 1　数字是事件序号。经历过一次替换后，新事件可以排在旧事件前面。此例中，9 和 6 在当前消息序列里相邻。'}</figcaption>
+</figure>
+<style>
+  .surface svg { display: block; }
+  line { stroke: var(--line); stroke-width: 2; }
+  .name { fill: var(--mute); font: 13px var(--sans); }
+  circle { fill: var(--bg); stroke: var(--line); stroke-width: 1.6; }
+  .selected circle { fill: var(--card); stroke: var(--plat-ink); }
+  .node text { text-anchor: middle; fill: var(--fg); font: 13px var(--mono); }
+</style>

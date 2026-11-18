@@ -1,0 +1,80 @@
+---
+const { lang = 'zh' } = Astro.props;
+const english = lang === 'en';
+const copy = english ? {
+  title: 'From an earlier conversation to a future thread',
+  trigger: 'A new turn with input in the current root thread schedules a scan of other threads.',
+  steps: [
+    ['Evidence', 'Earlier rollout', 'Eligible thread, idle for at least 6 hours by default.'],
+    ['Stage 1', 'Extract', 'Turn one prior conversation into a source summary. An empty result stops here.'],
+    ['Stage 2', 'Consolidate', 'Select source summaries and update the shared memory summary when needed.'],
+    ['Read', 'Future thread', 'With reading enabled, a nonempty summary can enter the initial context.'],
+  ],
+  branch: 'Project skills',
+  skill: 'Working directory → skill catalog → instructions on selection',
+  caption: 'Figure 1. The thread that triggers extraction is excluded from its own scan. Project skills have a separate discovery path.',
+} : {
+  title: '一段旧对话怎样进入新线程',
+  trigger: '当前根线程开启有输入的新回合，触发对其他线程的扫描。',
+  steps: [
+    ['证据', '旧会话记录', '线程符合来源条件，默认已空闲至少 6 小时。'],
+    ['阶段一', '提取', '把一段旧对话写成来源摘要。没有值得保留的内容时，到此为止。'],
+    ['阶段二', '整理', '选取多份来源摘要，需要时更新共享的记忆摘要。'],
+    ['读取', '后续新线程', '读取已开启且摘要非空时，摘要可进入初始上下文。'],
+  ],
+  branch: '项目 Skill',
+  skill: '当前工作目录 → Skill 目录 → 选用后读取正文',
+  caption: '图 1　触发提取的线程被排除在本次扫描之外。项目 Skill 另有自己的发现路径。',
+};
+const titleId = `codex-memory-flow-${english ? 'en' : 'zh'}`;
+---
+<figure class="memory-flow" lang={english ? 'en' : 'zh-CN'} aria-labelledby={titleId}>
+  <div class="shell">
+    <div class="heading" id={titleId}>{copy.title}</div>
+    <div class="trigger">{copy.trigger}</div>
+    <ol class="sequence" role="list">
+      {copy.steps.map(([phase, label, description]) => (
+        <li>
+          <span class="phase">{phase}</span>
+          <strong class="label">{label}</strong>
+          <span class="description">{description}</span>
+        </li>
+      ))}
+    </ol>
+    <div class="skill">
+      <strong>{copy.branch}</strong>
+      <span>{copy.skill}</span>
+    </div>
+  </div>
+  <figcaption>{copy.caption}</figcaption>
+</figure>
+
+<style>
+  .memory-flow { container-type: inline-size; }
+  .shell { padding: 1.05rem 1.1rem .9rem; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .heading { color: var(--fg); font: 600 1.15rem/1.5 var(--sans); }
+  .trigger { margin-top: .2rem; color: var(--mute); font: .93rem/1.5 var(--sans); }
+  .shell .sequence { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 1.2rem 0 1rem; padding: 0; list-style: none; }
+  .sequence li { position: relative; min-width: 0; margin: 0; padding: 1.3rem .85rem 0 0; line-height: 1.45; }
+  .sequence li:last-child { padding-right: 0; }
+  .sequence li::before { content: ''; position: absolute; left: 0; top: 0; width: .63rem; height: .63rem; box-sizing: border-box; border: 2px solid var(--plat-lo); border-radius: 50%; background: var(--card); }
+  .sequence li:first-child::before, .sequence li:last-child::before { background: var(--plat); }
+  .sequence li:not(:last-child)::after { content: ''; position: absolute; left: .63rem; right: 0; top: .27rem; border-top: 1px solid var(--plat-lo); }
+  .phase, .label, .description { display: block; }
+  .phase { margin-bottom: .2rem; color: var(--mute); font: .82rem/1.45 var(--mono); }
+  .label { color: var(--fg); font: 600 1.05rem/1.45 var(--sans); }
+  .description { margin-top: .25rem; color: var(--fg-2); font: .94rem/1.6 var(--sans); overflow-wrap: break-word; }
+  .skill { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .8rem; padding-top: .8rem; border-top: 1px dashed var(--line); color: var(--mute); font: .94rem/1.55 var(--sans); }
+  .skill strong { color: var(--fg-2); font-weight: 600; }
+  @container (max-width: 39rem) {
+    .shell { padding: 1rem; }
+    .shell .sequence { display: block; margin-top: 1rem; }
+    .sequence li { padding: 0 0 1rem 1.35rem; }
+    .sequence li:last-child { padding: 0 0 0 1.35rem; }
+    .sequence li::before { top: .35rem; }
+    .sequence li:not(:last-child)::after { top: .98rem; left: .27rem; bottom: -.35rem; right: auto; border-top: 0; border-left: 1px solid var(--plat-lo); }
+    .phase { display: inline; margin: 0 .5rem 0 0; }
+    .label { display: inline; }
+    .description { margin-top: .1rem; }
+  }
+</style>

@@ -1,0 +1,118 @@
+---
+title: "OpenCode 的记忆边界：项目规则、会话压缩与技能"
+titleEn: "What OpenCode remembers: project rules, compaction and skills"
+dek: "从同一个仓库启动两次，项目规则可以相同，模型读到的历史却不同。"
+summary: "沿一次真实请求追踪 AGENTS.md、SQLite 会话和按需载入的技能，并复现同名技能在冷启动时选中不同文件。"
+summaryEn: "Trace project rules, SQLite sessions and on-demand skills through a real request, then reproduce a collision between two skills with the same name."
+date: "2026-11-18"
+topic: "Agent 工程"
+status: "published"
+pinned: "opencode v1.18.33 @ 51ef4be"
+---
+import Src from '../../components/Src.astro';
+import FigOpenCodeMemory from '../../components/FigOpenCodeMemory.astro';
+
+在一个带有 `AGENTS.md` 的 Git 仓库里，我让 OpenCode 发起一次模型请求。项目规则直接出现在 system 消息里，同目录下的技能只露出了名字、说明和路径。直到本地测试服务返回一次 `skill("probe")` 调用，**技能正文才随着下一次请求的 tool 消息发出**。会话结束后，留下来的又是第三样东西：SQLite 里按会话 ID 保存的对话记录。
+
+这里分析 **v1.18.33 的 `opencode run` 调用链**。证据取自正式二进制、同版本源码及上游测试。下面涉及模型请求的实验都使用回环地址上的测试服务，没有让真实模型决定使用哪项工具。[固定版本](https://github.com/anomalyco/opencode/tree/51ef4be1d3c122f18fefb510dca8d778571f4f18)
+
+## 三种信息怎样进入下一次请求
+
+| 想保留的内容 | 谁把它写下来 | 下一次怎样读到 |
+| --- | --- | --- |
+| “这个仓库用 pnpm” | 维护者、受权的文件编辑工具，或显式运行的 `/init` | 规则加载器读匹配的文件，组成 system 指令 |
+| “刚才试过哪个命令” | 会话运行时保存消息及其组成部分 | 继续同一会话时重建消息序列，过长的部分可能由摘要代替 |
+| “怎样验证一次发布” | 技能作者把步骤放进 `SKILL.md` | 先提供当前 agent 可见的目录，调用 `skill` 并通过权限检查后返回正文 |
+
+这三种读取发生在同一处。运行循环按当前会话 ID 取得压缩后的历史，再分别计算技能目录、环境、规则和待发送的消息。规则与目录进 `system`，历史进 `messages`。所以删除一个会话、修改一条项目规则、覆盖一个同名技能，影响的对象各不相同。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/prompt.ts" l="1089-1099" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/prompt.ts" l="1255-1285" />
+
+## 一条项目规则什么时候生效
+
+全局层先找配置目录的 `AGENTS.md`，兼容路径是家目录的 `.claude/CLAUDE.md`。项目层按文件名依次尝试 `AGENTS.md`、兼容的 `CLAUDE.md`、旧式 `CONTEXT.md`。一个容易误读的细节：遇到匹配之后，跳出的是**文件名循环**。`findUp` 会收集本次启动目录到工作树根之间、具有该文件名的匹配项。根目录和子目录都叫 `AGENTS.md` 时，两份都有机会进入 system；同一路径上已经找到 `AGENTS.md` 时，项目层的 `CLAUDE.md` 不再作为下一种文件名继续搜索。全局文件仍可与项目文件并存。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="60-68" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="110-150" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/fs-util.ts" l="154-166" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/instruction.test.ts" l="213-229" />
+
+启动目录也有区别。从仓库根目录开始会话时，深层子目录的约定不一定在初始 system 中。后来用 `read` 工具读子目录里的源文件，读取路径会向上寻找附近的规则，跳过已在 system 中、历史中已经附过或本条 assistant 消息已认领的文件。这解释了同一会话里为何能在打开某个包后才看到它的约定。配置中的 `instructions` 则可显式列出额外文件、glob 或 URL。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/read.ts" l="294-314" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="179-220" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/instruction.test.ts" l="115-143" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/rules.mdx" l="109-131" />
+
+## 重开、续聊与压缩
+
+会话行记录项目、工作目录和可选的父会话 ID。消息用 `session_id` 归属会话；文本、工具调用和结果等 part 另存，并指向消息。事件投影器把消息与 part 写进各自的表。命令行可以指定会话、继续最近的顶层会话或创建新会话；恢复历史时的 SQL 查询按一个 `session_id` 过滤。在相同目录里再启动一个新会话，可以读到同一套项目规则，却不会因此自动带上上次所有消息。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/sql.ts" l="22-36" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/sql.ts" l="68-98" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/projector.ts" l="260-279" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/core/src/session/projector.ts" l="308-329" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/cli/cmd/run.ts" l="452-528" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/message-v2.ts" l="433-448" />
+
+**压缩改变下一轮发给模型的序列。** 自动压缩需要配置允许，并达到按模型输入、输出额度计算的阈值。压缩器把较早历史交给 compaction agent，利用先前成功的摘要，同时为最近几轮留下预算。预算允许时，把保留部分的起始消息 ID 记为 `tail_start_id`。下一次读取按“压缩请求、已完成摘要、保留的旧消息、后续新消息”重排。预算连一轮都放不下时可能回落到整段摘要，超长轮次也可能只保留后缀。两种情况在上游测试里都有单独用例。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/overflow.ts" l="8-34" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="228-268" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="358-405" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/message-v2.ts" l="525-575" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/compaction.test.ts" l="939-1017" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/session/compaction.test.ts" l="1055-1097" />
+
+**工具输出清理是另一条路径。** `prune` 从新往旧检查已完成的工具结果，跳过最近的轮次并保护 `skill`。超过约 40,000 个估算 token 的保护区、且可清理部分超过 20,000 时，代码记录 `state.time.compacted`。模型消息转换器看到这个时间戳才输出 `[Old tool result content cleared]`。因此仅看模型收到的占位符，不能断言原字符串已从 SQLite 擦掉。反过来，保护 `skill` 也只针对这一步；后续整段历史压缩仍可能改变可见内容。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="28-33" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="271-315" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/message-v2.ts" l="290-302" />
+
+## 技能经过发现、展示和授权
+
+扫描器在启用兼容层时查找用户目录和工作树中的 `.claude/skills`、`.agents/skills`，然后扫描 OpenCode 配置目录中的 `skill/` 或 `skills/`、显式配置的 `skills.paths`，以及从 `skills.urls` 拉取的目录。发现文件后会解析 frontmatter，并将正文留在当前实例的注册表。这里的“按需加载”说的是**什么时候把正文交给模型**；运行时为了建立索引，可以早已读过磁盘。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="105-139" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="183-229" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="258-285" />
+
+目录和正文之间还有两道检查。目录按照当前 agent 的权限过滤；没有 description 的条目可以存在于注册表中，但不会出现在格式化的可用技能清单里。实际执行 `skill` 时按名字取记录，再调用 `ctx.ask`。通过后返回正文、基目录以及**最多十条**辅助文件路径；列出脚本不会执行它，列出参考文件也不会把它的内容一并送进模型。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="310-337" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/system.ts" l="107-118" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/skill.ts" l="21-65" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/test/skill/skill.test.ts" l="214-240" />
+
+同版本的指南把目录描述为 `skill` 工具说明的一部分。在这里追踪的请求中，我实际捕获到 `<available_skills>` 位于 **system 消息**，工具说明只是提示模型去那里找可用名字。文档也要求填写 description；这是给作者的有效约束，但“缺少说明”在这个版本并不等于“解析器拒绝文件”。排查一个没出现的技能时，需要区分 CLI 是否发现它、当前 agent 是否能看见它、调用是否获准。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/skills.mdx" l="35-44" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/skills.mdx" l="103-124" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/skill.txt" l="1-5" />
+
+## 离线实验：两个目录里使用同一个名字
+
+我在 Windows 使用正式版 `opencode --version` = `1.18.33`，给两个文件相同的 frontmatter 名字 `probe`，正文各放一个标记；第三个技能 `quiet` 没有 description。以下是可重做的最小实验。把该版本可执行文件放在 PATH 中，在空目录将代码保存为 `probe.py`，运行 `python probe.py`。实验使用新临时目录和 Git，不需要模型或密钥。
+
+```python title="probe.py"
+import json, os, pathlib, subprocess, tempfile
+
+root = pathlib.Path(tempfile.mkdtemp())
+repo = root / "project"
+repo.mkdir()
+subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+env = os.environ.copy()
+for key, folder in [("OPENCODE_TEST_HOME", "home"), ("XDG_CONFIG_HOME", "config"),
+                    ("XDG_DATA_HOME", "data"), ("XDG_CACHE_HOME", "cache"),
+                    ("XDG_STATE_HOME", "state")]:
+    folder = root / folder
+    folder.mkdir()
+    env[key] = str(folder)
+env.update(OPENCODE_DISABLE_MODELS_FETCH="1", OPENCODE_DISABLE_AUTOUPDATE="1",
+           OPENCODE_DISABLE_DEFAULT_PLUGINS="1")
+
+def skill(folder, name, description, body):
+    path = repo / folder / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    field = f"description: {description}\n" if description else ""
+    path.write_text(f"---\nname: {name}\n{field}---\n{body}\n", encoding="utf8")
+
+skill(".opencode/skills/a", "probe", "repo description", "BODY_REPO_MARKER")
+skill("extra/b", "probe", "extra description", "BODY_EXTRA_MARKER")
+skill("extra/quiet", "quiet", "", "BODY_QUIET_MARKER")
+(repo / "opencode.json").write_text('{"skills":{"paths":["extra"]}}', encoding="utf8")
+for _ in range(8):
+    out = subprocess.check_output(["opencode", "debug", "skill"], cwd=repo, env=env)
+    skills = {s["name"]: s for s in json.loads(out)}
+    print(skills["probe"]["content"].strip(), skills["quiet"].get("description"))
+```
+
+八次冷启动中，`probe` **七次返回 `BODY_EXTRA_MARKER`，一次返回 `BODY_REPO_MARKER`**；`quiet` 可在原始清单中找到，说明为空。不要依赖这个比例，甚至每次都看到同一个赢家也可能发生。原因可以定位到两行：多个匹配文件并发解析，写入时使用 frontmatter 名字作为同一个键。同名会记录警告，随后完成的写入可以替换先前记录。在这个版本里，“项目目录先扫描”不足以推出“项目文件必胜”。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/skill/index.ts" l="235-245" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/cli/cmd/debug/skill.ts" l="6-13" />
+
+我随后用同一组文件、正式 CLI 和本机回环 HTTP 服务检查模型边界。额外放入 `AGENTS.md` 与 `CLAUDE.md`，各写一个不同的标记。测试服务按 OpenAI 兼容协议回复一次 `skill({"name":"probe"})`，再回复 `OK`；单独生成标题的请求不计入下表。
+
+| 观察位置 | 实际捕获到的内容 |
+| --- | --- |
+| 第一轮 system 消息 | 有 `AGENTS.md` 标记、`probe` 名称、`repo description` 和来源路径；没有同级 `CLAUDE.md` 标记、`quiet` 目录项或技能正文标记 |
+| 第一轮工具定义 | `skill` 说明引用 system 中的目录，参数是技能名 |
+| 第二轮 tool 消息 | `<skill_content name="probe">` 内出现 `BODY_REPO_MARKER`，随后是基目录及文件清单 |
+
+另一次实验在同一 Git 目录连续发出三个请求。每次把英文标记作为用户消息，第三次把第一次输出的 session ID 传给 `--session`。回环服务记录的 user 消息如下：
+
+```text title="opencode run --format json --model localprobe/probe · 用户消息"
+run PIXEL_REQUEST_MARKER                     -> [PIXEL_REQUEST_MARKER]
+run PIXEL_FRESH_MARKER                       -> [PIXEL_FRESH_MARKER]
+run --session <first-id> PIXEL_RESUME_MARKER -> [PIXEL_REQUEST_MARKER, PIXEL_RESUME_MARKER]
+```
+
+第三次还有个更难察觉的细节：新拼的目录写着 `repo description`，保留下来的旧 tool 消息却是 `BODY_EXTRA_MARKER`。这不是一份文件前后自相矛盾。**目录描述当前发现结果，工具消息记录当时那次读取**。语义上相同的名字，在历史和当前请求里可以指向不同来源。
+
+<FigOpenCodeMemory />
+
+## 哪些变化会跨会话留下来
+
+`/init` 是明确的写入入口。官方命令模板让 agent 阅读仓库、创建或更新项目根的 `AGENTS.md`，已有文件应保留经过验证的指导。普通 agent 也有受权限约束的编辑和写入工具，所以用户可以让它把一个已验证流程写成技能。跨会话可见性的依据是**文件真的写到了会被发现的位置**。从一次技能成功执行，不能推出系统会自动改进这个技能。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/rules.mdx" l="10-28" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/command/template/initialize.txt" l="33-66" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/tool/registry.ts" l="211-246" />
+
+“OpenCode 没有记忆文件”也太绝对。当 agent 没有自定义提示词，某些模型名会走 `PROMPT_BEAST` 分支；模板确实指示模型在用户要求记住某事时更新 `.github/instructions/memory.instruction.md`。这是特定提示词交给模型的文件工作流。默认规则加载器列出的文件名里没有它，不能据此承诺每个模型、每次启动都会自动读回。<Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/llm/request.ts" l="53-67" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/system.ts" l="28-43" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/prompt/beast.txt" l="114-134" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/instruction.ts" l="60-68" />
+
+插件则提供了另一个合理入口。`experimental.session.compacting` 可以补充上下文或替换摘要提示词。上游文档给的是扩展接口，写入长期知识库、去重或评价新技能仍需具体插件实现。对本文追踪的运行链，能确认的是会话摘要、规则重读与技能装载；没有观察到一次普通回合结束后自动把经验写成新 `SKILL.md` 的维护器。判断某个安装实例是否会“越用越会”，最有区分度的问题是：**本次运行写了哪个持久化对象，下次请求又是从哪里把它读回来的？** <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/plugin/src/index.ts" l="291-316" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/opencode/src/session/compaction.ts" l="372-391" /> <Src repo="anomalyco/opencode" rev="51ef4be1d3c122f18fefb510dca8d778571f4f18" p="packages/web/src/content/docs/plugins.mdx" l="350-389" />
+
+Hermes 的 curator 会修改受管 Skill。对照 OpenCode 的同名冲突，目录中某项变了，既可能是已选文件被修订，也可能是这次选中了另一份文件。 [对照 Hermes 的实现](/notes/hermes-memory-skills/#skill按需加载的做法)

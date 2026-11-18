@@ -553,3 +553,13 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 ```bash title="取出固定提交里的一段源码"
 git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
 ```
+
+### 同系列的五个对照实验
+
+| Agent | 可以核对的问题 |
+|---|---|
+| [Codex CLI](/notes/codex-memory-skills/) | 新回合何时会挑中别的旧线程来提取记忆？ |
+| [Claude Code](/notes/claude-code-memory-skills/) | 首个请求已经读到了索引，哪些主题正文还留在磁盘上？ |
+| [Pi](/notes/pi-memory-skills/) | 切回旧分支，另一条分支的压缩摘要还在请求里吗？ |
+| [OpenCode](/notes/opencode-memory-skills/) | 恢复会话时，当前的 Skill 简介和历史工具结果会出自不同文件吗？ |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | 历史能被检索、Skill 能热更新，分别是谁在读和写？ |

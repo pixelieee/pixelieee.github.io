@@ -449,3 +449,13 @@ Every line-numbered reference here points at commit `bf0203a794a07aac3ff764972ab
 ```bash title="Extract a range of source at the pinned commit"
 git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
 ```
+
+### The same questions in five other agents
+
+| Agent | An observable boundary |
+|---|---|
+| [Codex CLI](/notes/codex-memory-skills/) | When can a new turn select a different, older thread for extraction? |
+| [Claude Code](/notes/claude-code-memory-skills/) | Which topic bodies remain on disk when the first request already includes the index? |
+| [Pi](/notes/pi-memory-skills/) | Does another branch’s checkpoint survive a switch back to the original leaf? |
+| [OpenCode](/notes/opencode-memory-skills/) | Can a resumed request combine a current skill description with a tool result from a different file? |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | Who owns a historical search and who owns an updated skill body? |

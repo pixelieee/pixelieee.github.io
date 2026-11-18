@@ -1,0 +1,208 @@
+---
+title: "Claude Code：一条约定怎样进入下一次请求"
+titleEn: "Claude Code: How an Instruction Reaches the Next Request"
+dek: "从一条发版约定出发，跟踪项目规则、自动记忆和 Skill 在本次对话与下一次会话里的去向。"
+summary: "用 Claude Code 2.1.327 的真实请求核对项目规则、记忆索引截断、Skill 发现与手动调用。"
+summaryEn: "A local request trace in Claude Code 2.1.327 tests project instructions, memory truncation, and skill discovery and invocation."
+date: "2026-11-18"
+topic: "Agent 工程"
+status: "published"
+pinned: "Claude Code 2.1.327"
+---
+
+import FigClaudeMemory from '../../components/FigClaudeMemory.astro';
+
+假设我让 Claude 改一段发布脚本，顺口说了三件事。「我们仓库的发布命令是 `make release`」「上线时间由值班人确认」「下次写发布说明要列出兼容性变化」。这一轮它能复述三句话。关闭终端、从同一个仓库重新启动，哪几句还会随请求交给模型？
+
+**取决于谁把它写到了哪个文件，以及新任务触发了哪次读取。** 我在本地用 Claude Code 2.1.327 做了四次调用。在普通提示的首个请求里能找到项目说明和 Skill 的简介；显式调用 Skill，正文才出现。读取子目录下的文件后，下一次请求里又多了两条约束。下文区分这份实测、公开文档规定的行为，以及我对机制的判断。版本取自实际 CLI，官方文档核对于 2026-11-18。[该版变更记录](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L3)
+
+我也核对过一份 2026 年春的私有历史快照，用它确定该追踪哪些读写环节。旧材料不能证明今天的发布版采用同一套实现。下文有关当前产品的结论均来自可复查的公开资料或文末实验。
+
+## 先确定谁拥有这条知识
+
+| 希望留下什么 | 落点与写入者 | 下次何时出现 |
+|---|---|---|
+| 仓库约定，例如发布前必须由值班人确认 | 团队在仓库根目录维护 `CLAUDE.md`，可以随代码评审 | 从仓库启动会话时加载。用户或组织也可以提供各自范围的说明 |
+| 只约束 `module/` 内代码的规则 | 团队在 `.claude/rules/` 写带 `paths` 的 Markdown，或在子目录放 `CLAUDE.md` | 从上层启动后，访问相关文件时才进入上下文 |
+| 对方纠正过、以后仍有用的事实 | Claude 可在本机项目的自动记忆目录写主题笔记，维护 `MEMORY.md` 索引；用户可检查、修改 | 新对话先带入受限长度的索引；需要具体内容时再读主题文件 |
+| 编写发布说明的步骤、检查项和模板 | 团队或用户维护 `.claude/skills/release-card/SKILL.md` 及附件，也可以让 Claude 起草再审查 | 通常先给模型名字和简介，选中或输入 `/release-card` 后才加载正文 |
+| 上一轮执行了哪个命令、结果是什么 | 对话记录 | 恢复那段会话可继续处理。另开会话时，上一段对话的完整输出不会随项目说明一起出现 |
+
+如果 `Makefile` 已经给出实际发布命令，另一份长期笔记很容易随它过期。我会保留更难从代码里推出的约定，例如「值班人确认以后才执行」，把发布说明的模板放进 Skill。临时失败的构建日志留在当次会话。这样下次只改实现时，模型仍能遵守发布约束，也不用先读整套发布流程。[项目记忆](https://code.claude.com/docs/en/memory) · [Skill 的存放位置](https://code.claude.com/docs/en/skills#where-skills-live) · [上下文与会话](https://code.claude.com/docs/en/how-claude-code-works)
+
+## 第一次请求里有哪些规则
+
+假定从仓库根启动。Claude Code 会从上级目录到当前目录拼接找到的 `CLAUDE.md`；同层的 `CLAUDE.local.md` 排在后面。前后两段都进了上下文。官方文档说明，项目说明以系统提示之后的一条用户消息交给模型。如果一段要求「永远运行全量测试」，另一段要求「只运行相关测试」，文本顺序不能保证工程策略。仓库还应在 CI 执行真正不能跳过的检查。[说明文件的加载顺序](https://code.claude.com/docs/en/memory#how-claude-md-files-load)
+
+从根进入 `module/a.py` 则有两种延迟读取。子目录的 `module/CLAUDE.md` 随该目录的文件访问加载；项目根 `.claude/rules/module.md` 还可以用 `paths: ["module/**/*.py"]` 把约束缩到 Python 文件。在实验的首个请求里，两份文件的标记都缺席。让 CLI 的真实 `Read` 工具读一次 `module/a.py` 后，文件内容、子目录说明和路径规则同时出现在下一次请求。调试自己的仓库时，`InstructionsLoaded` hook 还可区分 `session_start`、`nested_traversal` 和 `path_glob_match`。[路径规则](https://code.claude.com/docs/en/memory#path-specific-rules) · [InstructionsLoaded 事件](https://code.claude.com/docs/en/hooks#instructionsloaded)
+
+另一个容易踩到的组合是 `AGENTS.md` 与 `CLAUDE.md` 同时存在。按这版的默认配置，只要工作目录或其上级已有项目侧的 `CLAUDE.md` 或 `CLAUDE.local.md`，直接读取 `AGENTS.md` 的回退就不生效。实验的根目录同时放了两者，首个请求只出现了 `CLAUDE.md` 的标记。团队确实维护两份时，可以显式设置读取两者，也可以从 `CLAUDE.md` 用 `@AGENTS.md` 导入共享部分。直接识别 `AGENTS.md` 从 v2.1.277 起才提供，不同运行环境也有差别。[AGENTS.md 的选择条件](https://code.claude.com/docs/en/memory#agents-md)
+
+## 自动记忆：保存成功以后还要能找回来
+
+本地终端会话默认开启自动记忆。Claude 会判断一条纠正、偏好、项目决定或外部参考是否值得后续使用，也可能一次都不写。标准目录为 `~/.claude/projects/<project>/memory/`。默认按仓库归属，**同一台机器上同一仓库的多个 worktree 共享自动记忆**。同一仓库换电脑不会自动带上这些文件。可在 `/memory` 查看、编辑或关闭；会话历史到期清理时，记忆文件单独保留。[写入范围与存放位置](https://code.claude.com/docs/en/memory#auto-memory)
+
+索引的每一行可以指向一个主题文件。比如一行记录「生产上线找值班人确认 → release-owner.md」，新对话先看到这条线索，需要时 Claude 用普通文件工具读交接人和适用条件。写回时，若记忆文件以 YAML frontmatter 开头，CLI 会在 `modified` 字段标记写入时间。一个旧决定本身是否仍有效，还要核查。主题文件单独存在，却没有索引入口，会使这项事实更难被主动发现。反过来，把整个交接过程抄进索引，会挤掉后面的线索。
+
+启动时索引最多取**前 200 行或前 25 KB，以先到者为准**。这和“写入是否落盘”是两个时点。官方说明明确写到，超限写入仍能成功落盘，工具会告知 Claude 重写索引；下次启动只取可加载的前缀。这个限制专指自动记忆索引。启动时读取的 `CLAUDE.md` 另有整文件限制，4 MiB 以内可以完整加载，超出则整份跳过。[索引加载与超限写入](https://code.claude.com/docs/en/memory#how-it-works)
+
+**跨分支的代价**也在这里。假如模型把「正在迁移结算模块」当作全仓库事实写下，维护旧版本的 worktree 也可能看见。若必须依代码版本判断，直接读相应分支；若要保留人的决定，可以在笔记里写清受影响的分支、日期和撤销条件。这是从默认共享范围推出的后果，实验没有让真实模型跨分支作答。
+
+### 会话内写入、记忆提取和 Dream
+
+一次纠正可以在对话进行中就写进主题文件。客户端还有记忆提取路径，官方发布记录给了两个边界。v2.1.77 修过提取写入与主会话记录之间的竞态，它曾让恢复会话时的近期对话缺失。v2.1.273 修过一处权限问题，开启 `permissions.blockReadsOutsideWorkingDirectories` 后，由仓库设置指定的记忆目录也必须对提取流程停用。这说明提取有自己的读写时机，单凭看到 `MEMORY.md` 变更，不能断定是哪次调用写的。[恢复会话的修复](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L8904) · [记忆提取与目录权限](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L4404)
+
+本地可通过 `autoMemoryEnabled: false` 或环境变量 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` 关闭自动记忆。在后台会话或由另一 Claude Code 会话启动的会话里，`/memory` 可以关，但不能重新开启。官方帮助中心还在 CLI 速查表中列出 `/dream`，公开的命令参考却没有承诺本地定时整理的固定周期。应以正在使用的交互会话里 `/help` 列出的能力为准。本文的四组实验预置了记忆文件，没有触发或验证后台提取与整理。[自动记忆开关](https://code.claude.com/docs/en/memory#enable-or-disable-auto-memory) · [CLI 帮助中心](https://support.claude.com/en/articles/14554000-claude-code-power-user-tips) · [命令参考](https://code.claude.com/docs/en/commands)
+
+Anthropic 对 **Managed Agents 的 Dreams API** 则给出了明确协议。异步作业读取一个旧记忆库和一至一百份会话记录，把整理结果写入新库，应用可以先审核再采用，原库仍可用。官方研究也给出反例：在 CL-Bench 数据库任务上，有模型写下许多未经验证的猜测，也有模型根据评测反馈修正并积累规则。后台作业成功只说明整理过材料。要判断发布流程是否真有改进，还要看下一次产出的发布说明。这些结果属于托管服务，不能用来推定本机终端的调度间隔、触发阈值或覆盖写策略。[Dreams API](https://platform.claude.com/docs/en/managed-agents/dreams) · [Anthropic 的记忆研究](https://www.anthropic.com/research/components-of-agent-memory)
+
+## Skill 的简介、正文和权限有各自的生效时间
+
+一个普通 Skill 的简介告诉模型「什么时候值得打开它」。因此 `description` 写成「处理发布说明，比较兼容性变化和迁移步骤」，比「发布工具」更有用。正文给出做法，参考文件及脚本等用到时再读。Anthropic 的工程文章用这三级说明为何大量程序性知识可以放在磁盘上，而初始上下文仍然很小。Simon Willison 用官方的 Slack 动图 Skill 做过一个实际演示，校验器可直接检查成品尺寸，比在提示里反复解释尺寸更可靠。两篇材料解释了这个设计，当前 CLI 的调用行为以文档和后面的实验为准。[Anthropic 工程文章](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) · [Willison 的动图实验](https://simonwillison.net/2025/Oct/16/claude-skills/)
+
+| Skill 配置 | 普通会话起步时 | 谁能直接调用 |
+|---|---|---|
+| 默认 | 通常列出简介，正文按需加载 | 用户和模型 |
+| `disable-model-invocation: true` | 简介也不列给模型 | 用户可输入 `/name` 显式调用 |
+| `user-invocable: false` | 可以列出简介 | 模型可选；用户不能通过 `/name` 直接运行 |
+
+Skill 太多时，目录预算也会影响发现。目前文档描述的预算是模型上下文窗口的 1%，目录会保留名字，但可能从低使用频率的条目开始略去描述。手动调用能读到正文，并不足以证明模型从普通任务描述中也能找到它。[谁能调用](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill) · [目录预算](https://code.claude.com/docs/en/skills#skill-descriptions-are-cut-short)
+
+调用时，渲染后的正文作为消息进入对话，后续轮次仍然可见。修改 `SKILL.md` 后，目录的变化可以在会话中被发现，已经注入的旧消息仍保留旧文本。重新调用时，渲染结果相同就简短提示已经加载，结果变化则追加新正文。与此同时，`allowed-tools` 带来的免逐次批准只覆盖调用它的这一轮，下次用户发消息便结束。**文字还在，不等于操作授权还在。** [会话内编辑](https://code.claude.com/docs/en/skills#live-change-detection) · [正文生命周期](https://code.claude.com/docs/en/skills#skill-content-lifecycle) · [工具许可](https://code.claude.com/docs/en/skills#pre-approve-tools-for-a-skill)
+
+## 压缩、委派和真正的改进
+
+一次长发布任务可以跨过上下文压缩。项目根的 `CLAUDE.md` 会从磁盘重读；子目录规则重新按需加载。调用过的 Skill 采用另一套办法：在摘要后尽量重新附上每个 Skill 最近一次调用的内容，各保留前 5,000 token，合计不超过 25,000，优先最近调用的。所以把关键验收条件放在长 Skill 的末尾，初次能看到，压缩后可能正好失去。这里的数值来自检索日的官方文档，下面的无模型实验没有触发压缩。[压缩后的项目说明](https://code.claude.com/docs/en/memory#instructions-seem-lost-after-/compact) · [Skill 重新附加预算](https://code.claude.com/docs/en/skills#skill-content-lifecycle)
+
+换成子 Agent，读者又变了。普通子 Agent 不自动加载主对话的 auto memory；fork 可继承父对话和系统提示。给专职审阅者设置自己的 `memory: project`，则可用仓库内的 `.claude/agent-memory/<name>/` 保存审查知识。设为 `local` 时使用 `.claude/agent-memory-local/<name>/`，适合本机记录。另一个例外是把 Skill 明确预加载给子 Agent，这时启动时就给正文。主会话中观察到的「先简介后正文」不能直接推广到这种情况。[子 Agent 持久记忆](https://code.claude.com/docs/en/sub-agents#enable-persistent-memory) · [预加载 Skill](https://code.claude.com/docs/en/sub-agents#preload-skills-into-subagents)
+
+我把“学会了”拆成两个可检查的变化。第一，磁盘上多了一条下次会被找到的信息，可以用请求记录验证。第二，相同类型的任务做得更好，需要比较结果。公开的 `skill-creator` 把两件易混淆的事分别测量：用应该触发和不该触发的相邻问题检查简介，再按任务断言检查输出。触发评估脚本会检查实际工具事件，既接受对目标 Skill 的调用，也接受读取相应文件；单纯在回答里写出名字不会算作触发。新 Skill 与没有该 Skill 的会话比较，改旧 Skill 则保留旧版本作对照。以发布说明为例，「生成这次发版说明」该触发，「解释这次发版为什么回滚」未必该触发；最后还要独立检查生成物有没有准确列出不兼容变化。这个工作流由人启动，不能从某次成功写文件推断 CLI 已自动改进技能或更新模型参数。[固定版本的评估流程](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/SKILL.md#L145-L201) · [触发评估脚本](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L132-L168)
+
+## 实验：观察 CLI 实际发出的请求
+
+在独立配置目录和临时 Git 仓库里，我给每份文件写入不同的标记，以 2.1.327 的真实 CLI 组装请求。接收端只监听本机环回地址，仅输出预设标记及截断告警的位置。前三次调用返回固定的 `OK`；第四次先返回一条指定了文件名的 `Read` 调用，再返回 `OK`。这是对客户端发现、读取和发送行为的观测。接收端没有真实模型，不能测模型会不会自发选中 Skill、写入记忆或遵守规则。
+
+| 真实 CLI 的输入 | 首个请求观测 | 后续观测 |
+|---|---|---|
+| `ordinary prompt` | 根 `CLAUDE.md`、索引、普通 Skill 的简介在场；主题正文、两个 Skill 正文、手动 Skill 的简介均缺席 | 返回固定文本后结束 |
+| `/release-card` | 普通 Skill 正文首次出现 | 简介仍在 |
+| `/release-manual` | 手动 Skill 正文出现 | 其简介仍未列进目录 |
+| `READ_PROBE` | 子目录说明、路径规则和测试文件内容都缺席 | CLI 执行 `Read module/a.py` 后，第二个请求同时出现三者 |
+
+我原以为用全文搜索就能判断索引截断。一个 202 行、远小于 25 KB 的索引给了反例。搜索第 201 行的短标记会误判，因为告警恰好摘引了第一个省略行。检验加载边界时，需要看匹配出自哪一段。这个实验没有执行超限写入。
+
+<FigClaudeMemory />
+
+<details>
+<summary>复现实验（Python 标准库、Git、Claude Code 2.1.327）</summary>
+
+将下方代码保存为 `probe.py`，执行以下命令。脚本打印临时目录，便于检查每份原始文件，只把虚构的凭证值传给本机接收端。
+
+```bash title="检查版本并执行"
+claude --version
+python probe.py
+```
+
+```python title="probe.py"
+"""Python 3.9+, Git and Claude Code 2.1.327. No accounts or third-party packages."""
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
+
+base = Path(tempfile.mkdtemp(prefix="cc-context-"))
+repo = base / "repo"
+config = base / "config"
+memory = base / "memory"
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+def skill(name, manual=False):
+    front = "disable-model-invocation: true\n" if manual else ""
+    write(repo / ".claude/skills" / name / "SKILL.md",
+          f"---\nname: {name}\ndescription: DESC_{name}_TAG\n{front}---\nBODY_{name}_TAG\n")
+
+write(repo / "CLAUDE.md", "ROOT_TAG")
+write(repo / "AGENTS.md", "SECOND_GUIDE_TAG")
+write(repo / "module/CLAUDE.md", "NESTED_TAG")
+write(repo / "module/a.py", "FILE_TAG = 1")
+write(repo / ".claude/rules/module.md", '---\npaths: ["module/**/*.py"]\n---\nRULE_TAG')
+write(config / "settings.json", json.dumps({"autoMemoryDirectory": str(memory), "autoMemoryEnabled": True}))
+write(memory / "MEMORY.md", "\n".join(["INDEX_TAG"] + [f"entry {i}" for i in range(2, 200)]
+                                     + ["LINE200_TAG", "LINE201_TAG", "LINE202_TAG"]))
+write(memory / "topic.md", "TOPIC_TAG")
+skill("release-card")
+skill("release-manual", manual=True)
+subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+markers = ("ROOT", "SECOND_GUIDE", "NESTED", "RULE", "FILE", "INDEX", "LINE200",
+           "LINE201", "LINE202", "TOPIC", "DESC_release-card", "BODY_release-card",
+           "DESC_release-manual", "BODY_release-manual")
+
+class Receiver(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.split("?")[0] != "/v1/messages":
+            self.send_error(404)
+            return
+        text = json.dumps(req, ensure_ascii=False)
+        print(" ", " ".join(k for k in markers if k + "_TAG" in text), flush=True)
+        if "LINE201_TAG" in text:
+            offset = text.index("LINE201_TAG")
+            print("  ...", text[offset-64:offset+17], "...")
+        read = "READ_PROBE" in text and "tool_result" not in json.dumps(req["messages"])
+        block = {"type": "text", "text": ""}
+        delta = {"type": "text_delta", "text": "OK"}
+        if read:
+            block = {"type": "tool_use", "name": "Read", "id": "toolu_probe", "input": {}}
+            delta = {"type": "input_json_delta", "partial_json": json.dumps({"file_path": str(repo / "module/a.py")})}
+        msg = {"id": "msg_probe", "role": "assistant", "type": "message", "model": req["model"],
+               "content": [], "stop_reason": None, "stop_sequence": None,
+               "usage": {"input_tokens": 1, "output_tokens": 0}}
+        events = [("message_start", {"message": msg}), ("content_block_start", {"index": 0, "content_block": block}),
+                  ("content_block_delta", {"index": 0, "delta": delta}), ("content_block_stop", {"index": 0}),
+                  ("message_delta", {"delta": {"stop_reason": "tool_use" if read else "end_turn", "stop_sequence": None},
+                                     "usage": {"output_tokens": 1}}), ("message_stop", {})]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for name, fields in events:
+            payload = json.dumps({"type": name, **fields})
+            self.wfile.write(f"event: {name}\ndata: {payload}\n\n".encode())
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+Thread(target=server.serve_forever, daemon=True).start()
+# Keep OS prerequisites, omit any existing provider credentials and custom settings.
+keep = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "LANG",
+        "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROCESSOR_ARCHITECTURE"}
+env = {k: v for k, v in os.environ.items() if k.upper() in keep}
+home = base / "home"
+home.mkdir()
+env.update(HOME=str(home), USERPROFILE=str(home), LOCALAPPDATA=str(home / "Local"),
+           APPDATA=str(home / "Roaming"), CLAUDE_CONFIG_DIR=str(config),
+           ANTHROPIC_BASE_URL=f"http://127.0.0.1:{server.server_port}", ANTHROPIC_API_KEY="local-fixture",
+           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1", DISABLE_AUTOUPDATER="1", NO_PROXY="127.0.0.1")
+cli = shutil.which("claude.exe") or shutil.which("claude")
+try:
+    for prompt in ["ordinary prompt", "/release-card", "/release-manual", "READ_PROBE"]:
+        print(prompt, flush=True)
+        subprocess.run([cli, "-p", "--no-session-persistence", "--model", "sonnet", "--strict-mcp-config",
+                        "--tools", "Read,Skill", "--allowedTools", "Read", "--", prompt],
+                       cwd=repo, env=env, stdin=subprocess.DEVNULL, check=True)
+finally:
+    server.shutdown()
+print("Fixture directory:", base)
+```
+
+</details>
+
+Hermes 将两个小文件的加载时快照放入前缀。对照 Claude Code 的索引与主题笔记，同样是写到了磁盘，下一个读者可能是新会话的运行时，也可能是随后主动读文件的模型。 [对照 Hermes 的实现](/notes/hermes-memory-skills/#记忆文件小冻结可审计)
