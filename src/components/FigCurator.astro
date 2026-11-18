@@ -2,41 +2,41 @@
 // 图 3：curator 的状态转换。数值来自 agent/curator.py 的默认配置。
 ---
 <figure class="fig3">
-<svg viewBox="0 0 760 230" role="img" aria-label="curator 的 active、stale、archived 状态转换">
+<svg viewBox="0 0 760 244" role="img" aria-label="curator 的 active、stale、archived 状态转换">
   <defs>
     <marker id="c3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker>
     <marker id="c3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--plat)"/></marker>
   </defs>
   <g class="b">
-    <rect x="10" y="78" width="170" height="64" rx="10"/><rect x="295" y="78" width="170" height="64" rx="10"/><rect x="580" y="78" width="170" height="64" rx="10"/>
+    <rect x="10" y="84" width="200" height="68" rx="10"/><rect x="280" y="84" width="200" height="68" rx="10"/><rect x="550" y="84" width="200" height="68" rx="10"/>
   </g>
   <g class="t">
-    <text x="26" y="106" class="h mono">active</text><text x="26" y="127" class="m">正常出现在 Skill 目录</text>
-    <text x="311" y="106" class="h mono">stale</text><text x="311" y="127" class="m">仍可读取、可使用</text>
-    <text x="596" y="106" class="h mono">archived</text><text x="596" y="127" class="m">skills/.archive/</text>
-    <text x="237" y="98" class="m" text-anchor="middle">≥ 14 天</text>
-    <text x="522" y="98" class="m" text-anchor="middle">≥ 30 天</text>
+    <text x="26" y="114" class="h mono">active</text><text x="26" y="137" class="m">正常出现在 Skill 目录</text>
+    <text x="296" y="114" class="h mono">stale</text><text x="296" y="137" class="m">仍可读取、可使用</text>
+    <text x="566" y="114" class="h mono">archived</text><text x="566" y="137" class="m">skills/.archive/</text>
+    <text x="245" y="104" class="m" text-anchor="middle">≥ 14 天</text>
+    <text x="515" y="104" class="m" text-anchor="middle">≥ 30 天</text>
     <text x="380" y="30" class="m" text-anchor="middle">距最近活动 ≥ 30 天，active 也直接归档</text>
-    <text x="237" y="184" class="m" text-anchor="middle">最近活动 &lt; 14 天，回到 active</text>
-    <text x="380" y="216" class="g" text-anchor="middle">hermes curator restore &lt;skill&gt;（保留原活动时间）</text>
+    <text x="245" y="190" class="m" text-anchor="middle">最近活动 &lt; 14 天</text>
+    <text x="380" y="234" class="g" text-anchor="middle">hermes curator restore &lt;skill&gt;（保留原活动时间）</text>
   </g>
   <g class="ln">
-    <path d="M180 110 H295" marker-end="url(#c3)"/>
-    <path d="M465 110 H580" marker-end="url(#c3)"/>
-    <path d="M95 78 V44 H665 V78" marker-end="url(#c3)"/>
-    <path d="M380 142 V164 H95 V142" marker-end="url(#c3)"/>
-    <path d="M665 142 V198 H95 V142" marker-end="url(#c3g)" class="gd"/>
+    <path d="M210 118 H280" marker-end="url(#c3)"/>
+    <path d="M480 118 H550" marker-end="url(#c3)"/>
+    <path d="M110 84 V46 H650 V84" marker-end="url(#c3)"/>
+    <path d="M380 152 V172 H110 V152" marker-end="url(#c3)"/>
+    <path d="M650 152 V210 H110 V152" marker-end="url(#c3g)" class="gd"/>
   </g>
 </svg>
 <figcaption>图 3　curator 的状态转换。「活动时间」取 last_used_at、last_viewed_at、last_patched_at 中最新的一个，没有记录时退回 created_at。</figcaption>
 <style>
 .fig3 svg{width:100%;height:auto;display:block}
 .fig3 .b rect{fill:var(--card);stroke:var(--line)}
-.fig3 text{fill:var(--fg);font-size:14.5px;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.fig3 text{fill:var(--fg);font-size:16px;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .fig3 .mono{font-family:'JetBrains Mono',monospace}
-.fig3 .h{font-weight:500;font-size:15px}
-.fig3 .m{fill:var(--mute);font-size:13px}
-.fig3 .g{fill:var(--plat-ink);font-size:13px}
+.fig3 .h{font-weight:500;font-size:17px}
+.fig3 .m{fill:var(--mute);font-size:14px}
+.fig3 .g{fill:var(--plat-ink);font-size:14px}
 .fig3 .ln path{fill:none;stroke:var(--mute);stroke-width:1.2}
 .fig3 .ln .gd{stroke:var(--plat);stroke-dasharray:4 3}
 </style>

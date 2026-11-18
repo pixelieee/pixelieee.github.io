@@ -41,14 +41,14 @@ article .meta{display:flex;flex-wrap:wrap;gap:6px 16px;font:12px 'JetBrains Mono
 .prose h2{font-size:26px;font-weight:600;margin:3em 0 .6em}.prose h3{font-size:20px;font-weight:600;margin:2em 0 .5em}
 .prose p,.prose li{overflow-wrap:anywhere}
 .prose a{text-decoration:underline;text-decoration-color:var(--plat);text-underline-offset:4px;text-decoration-thickness:1px}
-.prose code:not(pre code){font:.86em 'JetBrains Mono',monospace;background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.prose code:not(pre code){font:.84em 'JetBrains Mono',monospace;background:var(--code);border-radius:4px;padding:1px 5px}
 .prose img{max-width:100%;border:1px solid var(--line);border-radius:10px;background:var(--card)}
-.prose table{width:100%;border-collapse:collapse;font-size:14.5px;display:block;overflow-x:auto}
+.prose table{width:100%;border-collapse:collapse;font-size:14.5px;display:table;margin:1.4em 0;table-layout:auto}
 .prose th,.prose td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
 .prose th{font:500 12px 'JetBrains Mono',monospace;color:var(--mute)}
 .prose blockquote{margin:1.4em 0;padding:2px 0 2px 16px;border-left:2px solid var(--plat);color:var(--mute);font-size:15.5px}
 .prose figure{margin:2em 0}.prose figcaption{font-size:13px;color:var(--mute);margin-top:6px}
-.src{font:12px 'JetBrains Mono',monospace;color:var(--plat-ink);white-space:nowrap}
+
 .pager{display:flex;justify-content:space-between;gap:16px;border-top:1px solid var(--line);margin-top:64px;padding:24px 0 80px;font-size:14px}
 @media (max-width:1000px){.article-grid{grid-template-columns:minmax(0,1fr);gap:0}.toc{position:static;max-height:none;margin:0 0 24px}.toc a:not(.d2){display:none}}
 @media (max-width:560px){body{font-size:16px}nav.main .lnk{display:none}.hero{padding-top:56px}}
@@ -58,3 +58,11 @@ article .meta{display:flex;flex-wrap:wrap;gap:6px 16px;font:12px 'JetBrains Mono
 .prose pre,.prose .expressive-code{max-width:100%}
 html,body{overflow-x:clip}
 .eyebrow::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;vertical-align:1px;background:linear-gradient(135deg,#F6EFD9,var(--plat) 55%,#EBDDB4)}
+
+.prose a.src{font:11px/1 'JetBrains Mono',monospace;color:var(--mute);white-space:nowrap;text-decoration:none;border:1px solid var(--line);border-radius:4px;padding:3px 5px;margin:0 1px 0 4px;vertical-align:1px;background:transparent;transition:color .15s,border-color .15s}
+.prose a.src:hover,.prose a.src:focus-visible{color:var(--fg);border-color:var(--plat)}
+.prose table a.src{margin-left:0}
+.prose td:first-child,.prose th:first-child{white-space:nowrap}
+.prose td code{white-space:normal;overflow-wrap:anywhere}
+.prose .expressive-code{margin:1.3em 0}
+@media (max-width:700px){.prose table{display:block;overflow-x:auto;font-size:13.5px;-webkit-overflow-scrolling:touch}.prose td,.prose th{white-space:nowrap}.prose td code{overflow-wrap:normal}}

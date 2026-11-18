@@ -1,36 +1,36 @@
 ---
-// 图 2：一次 Background Review 从计数到落盘的时间线。
+// 图 2：一次 Background Review 从计数到落盘的路径（纵向时间线）。
 const steps = [
-  { n: '1', t: '累计计数', a: '用户轮 ≥ 10（记忆）', b: '模型请求 ≥ 10（Skill）' },
-  { n: '2', t: '回合收尾', a: '最终答复已送出', b: '未中断、未被跳过' },
-  { n: '3', t: '复制消息', a: '当前会话仍保留的', b: '全部消息的快照' },
-  { n: '4', t: '后台 fork', a: '白名单工具', b: '默认不含 terminal' },
-  { n: '5', t: '落盘', a: 'add 直接写入', b: 'patch/remove 暂存' },
+  { t: '累计计数', d: '用户轮 ≥ 10（记忆），或模型请求 ≥ 10（Skill）' },
+  { t: '回合收尾', d: '最终答复已送出，回合未中断、未被跳过' },
+  { t: '复制消息', d: '当前会话仍保留的全部消息的快照' },
+  { t: '后台 fork', d: '临时 AIAgent，白名单工具，默认不含 terminal' },
+  { t: '落盘', d: 'add 直接写入；patch / remove 暂存，等用户批准' },
 ];
+const H = 56;
 ---
 <figure class="fig2">
-<svg viewBox="0 0 760 150" role="img" aria-label="Background Review 的五个步骤">
+<svg viewBox={`0 0 760 ${steps.length * H + 8}`} role="img" aria-label="Background Review 的五个步骤">
+  <path d={`M24 ${H / 2 + 4} V${(steps.length - 1) * H + H / 2 + 4}`} class="rail" />
   {steps.map((s, i) => (
-    <g transform={`translate(${i * 152},0)`}>
-      <rect x="2" y="30" width="140" height="100" rx="10" class="b" />
-      <circle cx="22" cy="30" r="11" class="c" />
-      <text x="22" y="34.5" class="n" text-anchor="middle">{s.n}</text>
-      <text x="14" y="62" class="h">{s.t}</text>
-      <text x="14" y="88" class="m">{s.a}</text>
-      <text x="14" y="107" class="m">{s.b}</text>
-      {i < steps.length - 1 && <path d={`M143 80 H152`} class="ar" />}
+    <g transform={`translate(0,${i * H + 4})`}>
+      <circle cx="24" cy={H / 2} r="13" class="c" />
+      <text x="24" y={H / 2 + 5} class="n" text-anchor="middle">{i + 1}</text>
+      <text x="56" y={H / 2 + 6} class="h">{s.t}</text>
+      <text x="170" y={H / 2 + 6} class="m">{s.d}</text>
+      {i < steps.length - 1 && <path d={`M56 ${H} H752`} class="sep" />}
     </g>
   ))}
 </svg>
 <figcaption>图 2　一次 Background Review 的路径。第 5 步中 patch / remove 暂存后，要用户执行 <code>/memory approve</code> 才会生效。</figcaption>
 <style>
 .fig2 svg{width:100%;height:auto;display:block}
-.fig2 .b{fill:var(--card);stroke:var(--line)}
-.fig2 .c{fill:var(--bg);stroke:var(--plat)}
-.fig2 text{fill:var(--fg);font-size:14.5px;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-.fig2 .n{fill:var(--plat-ink);font-size:12px;font-family:'JetBrains Mono',monospace}
-.fig2 .h{font-weight:600;font-size:14px}
-.fig2 .m{fill:var(--mute);font-size:13px}
-.fig2 .ar{stroke:var(--plat);stroke-width:1.5}
+.fig2 .rail{stroke:var(--line);stroke-width:1.5}
+.fig2 .sep{stroke:var(--line);stroke-width:1}
+.fig2 .c{fill:var(--bg);stroke:var(--plat);stroke-width:1.5}
+.fig2 text{fill:var(--fg);font-size:16px;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.fig2 .n{fill:var(--plat-ink);font-size:13px;font-family:'JetBrains Mono',monospace}
+.fig2 .h{font-weight:600}
+.fig2 .m{fill:var(--mute);font-size:15px}
 </style>
 </figure>

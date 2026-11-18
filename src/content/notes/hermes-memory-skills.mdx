@@ -1,5 +1,7 @@
 ---
 title: "Hermes Agent：记忆、Skill 与跨会话演进"
+titleEn: "Hermes Agent: Memory, Skills and Cross-Session Evolution"
+summaryEn: "Three stores, three write paths, and the one constraint that ties them together: never dirty the prefix cache. Claims checked line by line against the source, with trade-offs, edge cases and open questions."
 summary: "三类存储、三条写入路径，以及把它们串起来的一条约束：不要弄脏前缀缓存。逐条对照源码，写清取舍、边界情况和仍未弄清的问题。"
 date: "2026-11-16"
 topic: "Agent 工程"
@@ -75,11 +77,20 @@ import FigCurator from '../../components/FigCurator.astro';
 单次调用的写法适合只有一处改动的情况：
 
 ```json title="单次 add"
-{ "target": "memory", "action": "add", "content": "这个仓库用 pnpm。" }
+{
+  "target": "memory",
+  "action": "add",
+  "content": "这个仓库用 pnpm。"
+}
 ```
 
 ```json title="单次 patch：只替换命中的那一段"
-{ "target": "memory", "action": "patch", "old_text": "这个仓库用 npm", "content": "这个仓库用 pnpm" }
+{
+  "target": "memory",
+  "action": "patch",
+  "old_text": "这个仓库用 npm",
+  "content": "这个仓库用 pnpm"
+}
 ```
 
 几条容易踩的边界：

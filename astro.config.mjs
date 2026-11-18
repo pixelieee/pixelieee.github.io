@@ -10,7 +10,7 @@ export default defineConfig({
       themes: ['github-dark-default', 'github-light-default'],
       themeCssSelector: (theme) => (theme.type === 'dark' ? ':root[data-theme="dark"]' : ':root[data-theme="light"]'),
       useDarkModeMediaQuery: false,
-      styleOverrides: { borderRadius: '10px', codeFontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace" },
+      styleOverrides: { borderRadius: '10px', borderColor: 'var(--line)', codeBackground: 'var(--code)', codePaddingInline: '1.1rem', frames: { shadowColor: 'transparent', editorActiveTabIndicatorTopColor: 'var(--plat)', editorActiveTabIndicatorBottomColor: 'transparent', editorTabBarBackground: 'var(--card)', editorActiveTabBackground: 'var(--code)', editorActiveTabForeground: 'var(--fg)', editorTabBarBorderBottomColor: 'var(--line)', editorActiveTabBorderColor: 'var(--line)', frameBoxShadowCssValue: 'none' }, codeFontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace" },
     }),
     mdx(),
     sitemap(),

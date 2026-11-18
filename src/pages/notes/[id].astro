@@ -25,12 +25,12 @@ const minutes = Math.max(1, Math.round(words / 400));
     <article>
       <a class="back" href="/#notes">← <span data-zh="所有笔记" data-en="All notes">所有笔记</span></a>
       <div class="eyebrow" style="margin-top:20px">{note.data.topic}{note.data.pinned ? ` · ${note.data.pinned}` : ''}</div>
-      <h1>{note.data.title}</h1>
+      <h1 data-zh={note.data.title} data-en={note.data.titleEn ?? note.data.title}>{note.data.title}</h1>
       <div class="meta"><time datetime={note.data.date}>{note.data.date}</time><span>{words.toLocaleString('en-US')} <span data-zh="字" data-en="words">字</span></span><span data-zh={`约 ${minutes} 分钟`} data-en={`${minutes} min read`}>{`约 ${minutes} 分钟`}</span></div>
       <div class="prose"><Content /></div>
       <div class="pager">
-        {prev ? <a href={`/notes/${prev.id}/`}>← {prev.data.title}</a> : <span />}
-        {next ? <a href={`/notes/${next.id}/`}>{next.data.title} →</a> : <span />}
+        {prev ? <a href={`/notes/${prev.id}/`}>← <span data-zh={prev.data.title} data-en={prev.data.titleEn ?? prev.data.title}>{prev.data.title}</span></a> : <span />}
+        {next ? <a href={`/notes/${next.id}/`}><span data-zh={next.data.title} data-en={next.data.titleEn ?? next.data.title}>{next.data.title}</span> →</a> : <span />}
       </div>
     </article>
   </div>

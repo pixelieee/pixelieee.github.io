@@ -23,8 +23,8 @@ const groups = [
           {g.items.map((n) => (
             <a class="card" href={`/notes/${n.id}/`}>
               <div class="meta"><time datetime={n.data.date}>{n.data.date}</time><span>{n.data.topic}</span>{n.data.pinned && <span class="tag">{n.data.pinned}</span>}</div>
-              <h3>{n.data.title}</h3>
-              <p>{n.data.summary}</p>
+              <h3 data-zh={n.data.title} data-en={n.data.titleEn ?? n.data.title}>{n.data.title}</h3>
+              <p data-zh={n.data.summary} data-en={n.data.summaryEn ?? n.data.summary}>{n.data.summary}</p>
             </a>
           ))}
         </>
