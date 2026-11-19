@@ -1,0 +1,69 @@
+---
+/** 四条轴线：真相、执行、通信、嵌入。颜色取自主题变量。 */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    a0: '四条轴线决定一个 harness 的形状',
+    a1: '真相在哪',
+    a2: '日志 · 内存 · 快照',
+    a3: '谁执行副作用',
+    a4: '循环自己干 · 还是只下命令',
+    a5: 'Agent 怎么说话',
+    a6: '统一入口 · 还是各走各的',
+    a7: '怎样被嵌入',
+    a8: '同进程库 · 子进程 · 常驻服务',
+    cap: '图 1　读完一篇 harness，只问这四件事。后面的机制都是这四条轴上的取舍。',
+  },
+  en: {
+    a0: 'Four axes that shape a harness',
+    a1: 'Where truth lives',
+    a2: 'log · memory · checkpoint',
+    a3: 'Who runs side effects',
+    a4: 'the loop itself · or commands only',
+    a5: 'How agents talk',
+    a6: 'one inbox · or separate channels',
+    a7: 'How you embed it',
+    a8: 'in-process · subprocess · always-on server',
+    cap: 'Figure 1. Ask only these four questions of any harness. Everything else is a trade-off on these axes.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 200" role="img" aria-label={t.a0}>
+      <g class="bx">
+        <rect x="12" y="24" width="170" height="120" rx="12"/>
+        <rect x="200" y="24" width="170" height="120" rx="12"/>
+        <rect x="388" y="24" width="170" height="120" rx="12"/>
+        <rect x="576" y="24" width="170" height="120" rx="12"/>
+      </g>
+      <g fill="var(--fg)" font-family="var(--sans)" font-size="15" font-weight="600">
+        <text x="97" y="70" text-anchor="middle">{t.a1}</text>
+        <text x="285" y="70" text-anchor="middle">{t.a3}</text>
+        <text x="473" y="70" text-anchor="middle">{t.a5}</text>
+        <text x="661" y="70" text-anchor="middle">{t.a7}</text>
+      </g>
+      <g fill="var(--mute)" font-family="var(--sans)" font-size="12">
+        <text x="97" y="108" text-anchor="middle">{t.a2}</text>
+        <text x="285" y="108" text-anchor="middle">{t.a4}</text>
+        <text x="473" y="108" text-anchor="middle">{t.a6}</text>
+        <text x="661" y="108" text-anchor="middle">{t.a8}</text>
+      </g>
+      <g fill="var(--plat)" font-family="var(--mono)" font-size="11">
+        <text x="97" y="40" text-anchor="middle">1</text>
+        <text x="285" y="40" text-anchor="middle">2</text>
+        <text x="473" y="40" text-anchor="middle">3</text>
+        <text x="661" y="40" text-anchor="middle">4</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+
+<style>
+  .fig { margin: 1.6rem 0 1.8rem; }
+  .fig-scroll { overflow-x: auto; }
+  .bx rect { fill: var(--card); stroke: var(--line); stroke-width: 1; }
+  figcaption { margin-top: .7rem; color: var(--mute); font: 13px/1.55 var(--sans); }
+</style>
