@@ -3,6 +3,7 @@ import { getCollection, getEntry } from 'astro:content';
 import Base from '../layouts/Base.astro';
 import AsciiPortrait from '../components/AsciiPortrait.astro';
 
+const slogan = { zh: '前沿Agentic harness学习笔记', en: 'Notes on frontier agentic harnesses' };
 const all = (await getCollection('notes')).sort((a, b) => b.data.date.localeCompare(a.data.date));
 const en = Object.fromEntries(await Promise.all(all.map(async (n) => [n.id, (await getEntry('notesEn', n.id))?.data])));
 const groups = [
@@ -11,13 +12,15 @@ const groups = [
   { key: 'todo', zh: '待研究', en: 'To explore' },
 ].map((g) => ({ ...g, items: all.filter((n) => n.data.status === g.key) })).filter((g) => g.items.length);
 ---
-<Base title="pixel notes · 对照源码的学习笔记" titleEn="pixel notes · notes written against the source" description="对照源码写成的 Agent 工程笔记：每个结论固定到具体提交，写清设计取舍与边界情况。">
+<Base title={`pixel notes · ${slogan.zh}`} titleEn={`pixel notes · ${slogan.en}`} description="对照源码写成的 Agent 工程笔记：每个结论固定到具体提交，写清设计取舍与边界情况。">
   <div class="wrap">
     <section class="hero">
       <div class="intro">
-        <div class="eyebrow">Source-level notes</div>
-        <h1 data-zh="学习笔记" data-en="Learning notes">学习笔记</h1>
-        <p data-zh="阅读 Agent 源码时写的笔记，记录它们的设计和尚未弄清的问题。" data-en="Notes from reading the source of AI agents: how they are designed, and what is still unclear.">阅读 Agent 源码时写的笔记，记录它们的设计和尚未弄清的问题。</p>
+        <h1 data-zh={slogan.zh} data-en={slogan.en}>{slogan.zh}</h1>
+        <a class="leaderboard" href="https://frontierharness.org/">
+          <span data-zh="Frontier Harness 榜单" data-en="Frontier Harness leaderboard">Frontier Harness 榜单</span>
+          <span aria-hidden="true">↗</span>
+        </a>
       </div>
       <div class="art"><AsciiPortrait /></div>
     </section>
@@ -49,6 +52,18 @@ const groups = [
     column-gap: clamp(24px, 5vw, 72px);
     padding: 52px 0 22px;
   }
+
+  .intro h1 { text-wrap: balance; }
+  .leaderboard {
+    display: inline-flex;
+    align-items: baseline;
+    gap: .35em;
+    color: var(--fg-2);
+    text-decoration: underline;
+    text-decoration-color: var(--plat);
+    text-underline-offset: .25em;
+  }
+  .leaderboard:hover, .leaderboard:focus-visible { color: var(--fg); text-decoration-color: currentColor; }
 
   @media (max-width: 600px) {
     .hero {
