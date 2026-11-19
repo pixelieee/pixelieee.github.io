@@ -47,13 +47,18 @@ const groups = [
 <style>
   .hero {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 50%);
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     align-items: center;
-    column-gap: clamp(24px, 5vw, 72px);
+    column-gap: clamp(24px, 3vw, 42px);
     padding: 52px 0 22px;
   }
 
-  .intro h1 { text-wrap: balance; }
+  .intro { container-type: inline-size; }
+  .intro h1 {
+    font-size: clamp(1.25rem, 7cqi, 2.75rem);
+    text-wrap: balance;
+  }
+  .intro h1:lang(en) { font-size: clamp(1rem, 5.6cqi, 2.25rem); }
   .leaderboard {
     display: inline-flex;
     align-items: baseline;
