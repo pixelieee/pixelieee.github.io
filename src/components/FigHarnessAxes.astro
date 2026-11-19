@@ -1,69 +1,86 @@
 ---
-/** 四条轴线：真相、执行、通信、嵌入。颜色取自主题变量。 */
+/** 四条轴线总览：真相 · 执行 · 通信 · 嵌入 */
 const { lang = 'zh' } = Astro.props;
 const T = {
   zh: {
-    a0: '四条轴线决定一个 harness 的形状',
-    a1: '真相在哪',
-    a2: '日志 · 内存 · 快照',
-    a3: '谁执行副作用',
-    a4: '循环自己干 · 还是只下命令',
-    a5: 'Agent 怎么说话',
-    a6: '统一入口 · 还是各走各的',
-    a7: '怎样被嵌入',
-    a8: '同进程库 · 子进程 · 常驻服务',
-    cap: '图 1　读完一篇 harness，只问这四件事。后面的机制都是这四条轴上的取舍。',
+    a0: '读任何 harness 之前，先钉住这四条轴',
+    n1: '1 · 真相',
+    n2: '2 · 执行',
+    n3: '3 · 通信',
+    n4: '4 · 嵌入',
+    q1: '循环此刻信什么？',
+    q2: '谁去动外界？',
+    q3: '话从哪条管道进？',
+    q4: '别人怎么把它嵌进自己的进程？',
+    h1: '落盘文件 ≠ 唯一事实',
+    h2: '循环自己干 ≠ 只下命令',
+    h3: '子代理工具 ≠ 对等会话',
+    h4: '拉子进程 ≠ 常驻服务',
+    cap: '图 1　四条轴。后面每一节只回答其中一条；四条叠完，空位才会显形。',
   },
   en: {
-    a0: 'Four axes that shape a harness',
-    a1: 'Where truth lives',
-    a2: 'log · memory · checkpoint',
-    a3: 'Who runs side effects',
-    a4: 'the loop itself · or commands only',
-    a5: 'How agents talk',
-    a6: 'one inbox · or separate channels',
-    a7: 'How you embed it',
-    a8: 'in-process · subprocess · always-on server',
-    cap: 'Figure 1. Ask only these four questions of any harness. Everything else is a trade-off on these axes.',
+    a0: 'Pin these four axes before reading any harness',
+    n1: '1 · Truth',
+    n2: '2 · Execution',
+    n3: '3 · Messaging',
+    n4: '4 · Embedding',
+    q1: 'What does the loop trust now?',
+    q2: 'Who touches the outside world?',
+    q3: 'Which pipe carries talk?',
+    q4: 'How do others embed it?',
+    h1: 'on-disk file ≠ sole truth',
+    h2: 'loop runs I/O ≠ commands only',
+    h3: 'subagent-as-tool ≠ peer session',
+    h4: 'spawn on demand ≠ always-on server',
+    cap: 'Figure 1. Four axes. Each section answers one; the empty seat appears only after all four stack.',
   },
 };
 const t = T[lang] ?? T.zh;
 ---
 <figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
   <div class="fig-scroll">
-    <svg viewBox="0 0 760 200" role="img" aria-label={t.a0}>
+    <svg viewBox="0 0 760 268" role="img" aria-label={t.a0}>
+      <defs>
+        <marker id={`ax-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)"/>
+        </marker>
+      </defs>
       <g class="bx">
-        <rect x="12" y="24" width="170" height="120" rx="12"/>
-        <rect x="200" y="24" width="170" height="120" rx="12"/>
-        <rect x="388" y="24" width="170" height="120" rx="12"/>
-        <rect x="576" y="24" width="170" height="120" rx="12"/>
+        <rect x="12" y="18" width="174" height="168" rx="12"/>
+        <rect x="200" y="18" width="174" height="168" rx="12"/>
+        <rect x="388" y="18" width="174" height="168" rx="12"/>
+        <rect x="576" y="18" width="174" height="168" rx="12"/>
       </g>
-      <g fill="var(--fg)" font-family="var(--sans)" font-size="15" font-weight="600">
-        <text x="97" y="70" text-anchor="middle">{t.a1}</text>
-        <text x="285" y="70" text-anchor="middle">{t.a3}</text>
-        <text x="473" y="70" text-anchor="middle">{t.a5}</text>
-        <text x="661" y="70" text-anchor="middle">{t.a7}</text>
+      <g class="t">
+        <text x="99" y="48" text-anchor="middle" class="h">{t.n1}</text>
+        <text x="287" y="48" text-anchor="middle" class="h">{t.n2}</text>
+        <text x="475" y="48" text-anchor="middle" class="h">{t.n3}</text>
+        <text x="663" y="48" text-anchor="middle" class="h">{t.n4}</text>
+        <text x="99" y="88" text-anchor="middle" class="q">{t.q1}</text>
+        <text x="287" y="88" text-anchor="middle" class="q">{t.q2}</text>
+        <text x="475" y="88" text-anchor="middle" class="q">{t.q3}</text>
+        <text x="663" y="88" text-anchor="middle" class="q">{t.q4}</text>
+        <text x="99" y="140" text-anchor="middle" class="m">{t.h1}</text>
+        <text x="287" y="140" text-anchor="middle" class="m">{t.h2}</text>
+        <text x="475" y="140" text-anchor="middle" class="m">{t.h3}</text>
+        <text x="663" y="140" text-anchor="middle" class="m">{t.h4}</text>
       </g>
-      <g fill="var(--mute)" font-family="var(--sans)" font-size="12">
-        <text x="97" y="108" text-anchor="middle">{t.a2}</text>
-        <text x="285" y="108" text-anchor="middle">{t.a4}</text>
-        <text x="473" y="108" text-anchor="middle">{t.a6}</text>
-        <text x="661" y="108" text-anchor="middle">{t.a8}</text>
-      </g>
-      <g fill="var(--plat)" font-family="var(--mono)" font-size="11">
-        <text x="97" y="40" text-anchor="middle">1</text>
-        <text x="285" y="40" text-anchor="middle">2</text>
-        <text x="473" y="40" text-anchor="middle">3</text>
-        <text x="661" y="40" text-anchor="middle">4</text>
-      </g>
+      <path class="flow" d="M186 102 H200" marker-end={`url(#ax-${lang})`}/>
+      <path class="flow" d="M374 102 H388" marker-end={`url(#ax-${lang})`}/>
+      <path class="flow" d="M562 102 H576" marker-end={`url(#ax-${lang})`}/>
+      <text x="380" y="228" text-anchor="middle" class="hint">{t.a0}</text>
     </svg>
   </div>
   <figcaption>{t.cap}</figcaption>
 </figure>
-
 <style>
-  .fig { margin: 1.6rem 0 1.8rem; }
-  .fig-scroll { overflow-x: auto; }
-  .bx rect { fill: var(--card); stroke: var(--line); stroke-width: 1; }
-  figcaption { margin-top: .7rem; color: var(--mute); font: 13px/1.55 var(--sans); }
+.fig{margin:1.6rem 0 1.8rem}
+.fig-scroll{overflow-x:auto}
+.bx rect{fill:var(--card);stroke:var(--line);stroke-width:1}
+.t .h{fill:var(--fg);font:600 15px var(--sans)}
+.t .q{fill:var(--fg-2);font:14px var(--sans)}
+.t .m{fill:var(--mute);font:12px var(--mono)}
+.hint{fill:var(--mute);font:13px var(--sans)}
+.flow{fill:none;stroke:var(--plat);stroke-width:1.4}
+figcaption{margin-top:.7rem;color:var(--mute);font:13px/1.55 var(--sans)}
 </style>
