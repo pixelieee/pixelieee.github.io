@@ -1,7 +1,7 @@
 ---
 title: "Claude Code: How an Instruction Reaches the Next Request"
-dek: "Follow a release convention through project rules, auto memory, and skills, from the current conversation into the next session."
-summary: "A local request trace in Claude Code 2.1.327 tests project instructions, memory truncation, and skill discovery and invocation."
+dek: "A successful Edit leaves two versions of an index in play. Follow the requests to see when memory reloads and which worktree loses a skill."
+summary: "Write, Edit, Read and a linked-worktree control expose memory reloads, post-write warnings and skill discovery in Claude Code 2.1.327."
 date: "2026-11-18"
 topic: "Agent engineering"
 status: "published"
@@ -9,12 +9,43 @@ pinned: "Claude Code 2.1.327"
 ---
 
 import FigClaudeMemory from '../../components/FigClaudeMemory.astro';
+import FigClaudeTrace from '../../components/FigClaudeTrace.astro';
+import FigClaudeScope from '../../components/FigClaudeScope.astro';
 
-While updating a release script, I tell Claude three things. “This repository publishes with `make release`.” “The on-call engineer confirms when we go live.” “Next time you draft release notes, list the compatibility changes.” It can repeat all three immediately. Which of them will reach the model after I close the terminal and start a fresh conversation in the same repository?
+An on-call engineer changes the release handoff code. Claude Code writes the topic file and edits its index. Both tools report success. I capture the next outgoing request: its startup instructions still carry the **old index**. I close the process and start another one in the same repository: the **new index** appears, but the handoff code is missing. Only when the CLI reads the topic file does the code enter the request as a tool result.
 
-**It depends on who wrote the information to disk and what causes the next session to read it.** I traced four invocations of Claude Code 2.1.327. A plain prompt sent the project instructions and an ordinary skill’s description. An explicit invocation added its body. A read inside a subdirectory brought two more instructions into the next request. Below I distinguish those observations from the product’s documented behavior and my interpretation. The version comes from the installed CLI. I checked the official documentation on November 18, 2026. [Pinned release changelog](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L3)
+That write raises three questions. How can the current conversation know the new value before its startup instructions change? Why can a linked Git worktree inherit the memory yet lose a skill that worked in the main checkout? What should a caller do when a single write reports both success and “Error”? I traced the on-disk results and individual message blocks with the installed Claude Code 2.1.327 and a loopback endpoint that scripts tool calls. No API key or model prediction is involved. The trace measures client behavior. What a model decides to remember requires a different experiment. I checked the official sources on November 18, 2026. [Pinned release changelog](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L3)
 
-I also checked a privately held historical snapshot from spring 2026 to identify which reads and writes to trace. It cannot establish how the current release works. Every claim below about the current product rests on publicly checkable material or the reproducible probe at the end.
+## Follow one fact through two process starts
+
+I initialized a Git repository under an isolated configuration and let the CLI create its normal project-memory directory. The index started with one line containing `INDEX_BEFORE`. My endpoint requested three real CLI actions: read the old index, write a `release-owner.md` containing `DETAIL_QUARTZ`, then replace the index marker with `INDEX_AFTER`. Each process used `--no-session-persistence`. The ordinary prompt was the same each time and contained none of these markers.
+
+<FigClaudeTrace lang="en" />
+
+Both index markers are searchable in request four. A whole-payload search would suggest the CLI had already reloaded the index. Looking at message positions gives a different answer. The startup attachment in a `user` text block still contains the old index. The assistant’s own `Edit` call supplies both `old_string` and `new_string`. The file on disk has changed, and the current task can recover what happened from tool history. In the fresh process that history is gone. Its first request picks up the new index from disk. This measures **the next request within the same turn** after an edit. It does not establish a refresh policy for every subsequent user turn.
+
+Here are the relevant blocks from the fresh process’s second request. I have elided the directory, line-number prefixes and surrounding text. Roles and block types are as transmitted. Flattening the request to one string would hide the causal link.
+
+```json title="After reading the topic · adjacent message blocks, abridged"
+[
+  {
+    "role": "assistant",
+    "content": [{
+      "type": "tool_use", "id": "toolu_1", "name": "Read",
+      "input": {"file_path": "…/release-owner.md"}
+    }]
+  },
+  {
+    "role": "user",
+    "content": [{
+      "type": "tool_result", "tool_use_id": "toolu_1",
+      "content": "…The on-call handoff code is DETAIL_QUARTZ. …"
+    }]
+  }
+]
+```
+
+The `tool_use_id` ties the result to this particular read. The YAML supplied to `Write` named only the note, its description and its type. Inspecting the file on disk showed an added `modified` timestamp. That tells us when it was written. It cannot establish whether the on-call assignment is still current. [How auto memory is read and written](https://code.claude.com/docs/en/memory#how-it-works)
 
 ## Who owns the information?
 
@@ -40,19 +71,39 @@ There is also a selection rule for `AGENTS.md`. With this version’s defaults, 
 
 Auto memory is enabled by default for local terminal sessions. Claude judges whether a correction, preference, project decision or external reference is worth keeping. A session can end without writing anything. The standard directory is `~/.claude/projects/<project>/memory/`. **By default, worktrees from the same repository on one machine share auto memory.** Switching to another machine does not transfer it. The user can inspect, edit or disable it through `/memory`. Expiration of session history leaves the memory files intact. [Write scope and storage](https://code.claude.com/docs/en/memory#auto-memory)
 
-The index can point to separate topic files. An entry such as “Production sign-off → release-owner.md” gives the next session a clue. Claude can use its ordinary file tools to read the current contact and conditions. When it writes a memory file that starts with YAML frontmatter, the CLI records the write time in a `modified` field. The validity of an older decision still requires checking. A topic file with no index entry is harder to discover. Putting the entire handoff procedure in the index consumes space that could have pointed to other topics.
+### Which part of an oversized write reports the error?
 
-On startup the index contributes **its first 200 lines or 25 KB, whichever comes first**. A write and a later load have different boundaries. The documentation says an oversized write still reaches disk, and the tool tells Claude to shorten the index. The next startup loads only the bounded prefix. That particular limit applies to the auto-memory index. A `CLAUDE.md` read at startup has a separate whole-file limit. Up to 4 MiB loads in full. A larger file is skipped entirely. [Startup limits and oversized writes](https://code.claude.com/docs/en/memory#how-it-works)
+I asked the real `Read` tool to read the index, then the real `Write` tool to replace it with 202 lines. The file was small enough to hit the line limit first. I checked three places for the outcome of the same call.
 
-Sharing across branches has a cost. If Claude writes “the billing module is being migrated” as a repository-wide fact, a worktree maintaining the previous release can see it too. For facts that depend on a code version, I would inspect the actual branch. A note about a human decision can name the affected branches, the date and when the decision expires. This consequence follows from the documented scope. My experiment did not ask a model to reason across branches.
+| Where I looked | What 2.1.327 actually did |
+|---|---|
+| `MEMORY.md` on disk | All 202 lines persisted, including the final marker |
+| `user.tool_result` returned to the assistant | Reported a successful update; no `is_error` field was set |
+| Separate `system` message in the following request | Identified `PostToolUse:Write` as its source, warned that the read budget had been exceeded and requested a shorter index with details moved to topic files |
+
+The tool finished a file write. The subsequent check concerned **how much a future process can load**. Checking only the tool’s success bit loses the maintenance request. Repeating the same write on seeing the word “Error” only puts the same oversized file back. The useful action is to preserve the index entry and move the detailed instructions to a topic file. The documented startup budget is the first 200 lines or 25 KB, whichever comes first. Startup `CLAUDE.md` files have a separate whole-file cap. [Index write and load limits](https://code.claude.com/docs/en/memory#how-it-works)
+
+<FigClaudeMemory lang="en" />
+
+A more subtle counterexample emerges after restarting. A whole-request search for `EDGE_201` succeeds because the warning quotes the first omitted line. In the payload, `EDGE_200` is in the index body, `EDGE_201` occurs only in the warning, and `EDGE_202` is absent. If a release check depends on an entry being present, inspect the **body of the attachment**. Counting matches can silently certify the wrong thing.
 
 ### In-session writes, extraction and dreams
 
 A correction can reach a topic file before the conversation ends. Release notes give two useful boundaries for a separate memory-extraction path. Version 2.1.77 fixed a race between extraction writes and the main transcript that could drop recent messages on resume. In v2.1.273, a fix extended `permissions.blockReadsOutsideWorkingDirectories` to extraction when repository settings supplied the memory directory. Extraction has its own read and write timing. A change to `MEMORY.md` alone cannot identify which invocation wrote it. [Transcript race fix](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L8904) · [Memory extraction and directory permissions](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L4404)
 
-Local auto memory can be disabled with `autoMemoryEnabled: false` or `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. In a background session, or one started by another Claude Code session, `/memory` can turn it off but cannot re-enable it. The official Help Center also lists `/dream` in its CLI reference table. The public command reference gives no fixed schedule for local consolidation. Check what the interactive session actually offers with `/help`. The four runs below started with prewritten memory files and did not trigger or verify background extraction or consolidation. [Auto-memory settings](https://code.claude.com/docs/en/memory#enable-or-disable-auto-memory) · [CLI Help Center](https://support.claude.com/en/articles/14554000-claude-code-power-user-tips) · [Command reference](https://code.claude.com/docs/en/commands)
+Local auto memory can be disabled with `autoMemoryEnabled: false` or `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. In a background session, or one started by another Claude Code session, `/memory` can turn it off but cannot re-enable it. The official Help Center also lists `/dream` in its CLI reference table. The public command reference gives no fixed schedule for local consolidation. Check what the interactive session actually offers with `/help`. The writer in this experiment is identifiable from its tool events. I did not trigger or verify background extraction or consolidation. [Auto-memory settings](https://code.claude.com/docs/en/memory#enable-or-disable-auto-memory) · [CLI Help Center](https://support.claude.com/en/articles/14554000-claude-code-power-user-tips) · [Command reference](https://code.claude.com/docs/en/commands)
 
 Anthropic documents a specific protocol for the **Managed Agents Dreams API**. An asynchronous job takes an existing memory store and one to one hundred sessions. It writes a separate output store that the application can review before adopting. The input remains available. Anthropic’s CL-Bench database experiment illustrates what can go wrong. One model recorded untested guesses, while others used grader feedback to correct and accumulate rules. A completed job shows that some material was processed. Whether it improved our release procedure is a question for the next set of release notes. These are results from the managed service. They do not establish a scheduling interval, a trigger threshold or an overwrite policy for the local terminal. [Dreams API](https://platform.claude.com/docs/en/managed-agents/dreams) · [Anthropic’s memory research](https://www.anthropic.com/research/components-of-agent-memory)
+
+## How can an empty directory cut off skill inheritance?
+
+I created a linked worktree for a release. The main checkout contained an uncommitted `release-card` skill written **after** the worktree was created. I launched a fresh process in the linked checkout each time, holding the prompt and CLI configuration fixed. Only the linked checkout’s own root directory changed.
+
+<FigClaudeScope lang="en" />
+
+As a control, I opened an independent Git repository with the same CLI configuration. Its first request contained neither `INDEX_AFTER` nor either test skill’s description. This separates the shared index across worktrees from the fact that the processes used the same configuration directory.
+
+For auto memory, both worktrees resolve to the same machine-local project directory. For project skills, since v2.1.277 the CLI first checks whether the worktree root has a skill directory. It falls back to the main checkout only when the directory is absent. **An empty directory is enough to switch the fallback off.** No skill-name collision is required. Adding a branch’s first local skill can remove the release procedure that used to be discoverable from the main checkout, while the shared release contact remains visible. Identify whether the missing item was a fact in the index or a procedure in the catalog before investigating its storage. [What worktrees share](https://code.claude.com/docs/en/worktrees#what-worktrees-share-with-the-main-checkout) · [Project skill discovery](https://code.claude.com/docs/en/skills#discovery-from-parent-and-nested-directories)
 
 ## A skill’s description, body and permissions have different lifetimes
 
@@ -68,139 +119,38 @@ With many skills, discovery also depends on the catalog budget. The current docu
 
 Invocation adds the rendered body to the conversation as a message. Later turns can still see it. Edits on disk can refresh the catalog during the session, but an older message retains its original text. Invoking again produces a short reminder if the rendered result matches, or appends the new body if it changed. Tool pre-approval from `allowed-tools` expires when the next user message starts a new turn. **A procedure can therefore remain in the conversation after its tool approval has expired.** [Editing during a session](https://code.claude.com/docs/en/skills#live-change-detection) · [Skill content lifecycle](https://code.claude.com/docs/en/skills#skill-content-lifecycle) · [Tool pre-approval](https://code.claude.com/docs/en/skills#pre-approve-tools-for-a-skill)
 
-## Compaction, delegation and improvement
+### The same name through two entry points
 
-A long release can cross a context compaction. The root `CLAUDE.md` is re-read from disk. Nested instructions load again when accessed. Invoked skills follow another rule. After the summary, Claude Code tries to reattach the most recent invocation of each skill, keeping the first 5,000 tokens per skill and 25,000 overall, with recent invocations first. A critical check at the end of a long skill can be available on first use and absent after compaction. These budgets are documented as of the date above. The model-free experiment below did not trigger compaction. [Project instructions after compaction](https://code.claude.com/docs/en/memory#instructions-seem-lost-after-/compact) · [Skill reattachment budget](https://code.claude.com/docs/en/skills#skill-content-lifecycle)
+Within one conversation the endpoint issued `Skill({"skill":"release-card"})` twice. Both tool results reported that the skill was launching, but the body occurred only once in the request following the second call. The new text after that call said the skill had already been loaded and its instructions were unchanged. Changing the tool argument to the manual-only `release-manual` produced a result with `is_error: true` and no skill body. Supplying the same name as a user command, `/release-manual`, put the body in the first request.
+
+Two tempting diagnoses fail here. A successful `Skill` result does not count how many copies of the body were injected. Knowing the name of a manual-only skill does not let the model invoke it. The endpoint prescribed these tool actions. The experiment does not measure autonomous selection from an ordinary task.
+
+## What survives compaction and delegation?
+
+A long release can cross a context compaction. The root `CLAUDE.md` is re-read from disk. Nested instructions load again when accessed. Invoked skills follow another rule. After the summary, Claude Code tries to reattach the most recent invocation of each skill, keeping the first 5,000 tokens per skill and 25,000 overall, with recent invocations first. A critical check at the end of a long skill can be available on first use and absent after compaction. These budgets are documented as of the date above. The loopback experiment did not trigger compaction. [Project instructions after compaction](https://code.claude.com/docs/en/memory#instructions-seem-lost-after-/compact) · [Skill reattachment budget](https://code.claude.com/docs/en/skills#skill-content-lifecycle)
 
 Delegation changes who reads the information. An ordinary subagent does not automatically load the main conversation’s auto memory. A fork can inherit the parent’s conversation and system prompt. A dedicated reviewer with `memory: project` can keep its own notes in `.claude/agent-memory/<name>/` in the repository. With `local` the corresponding directory is `.claude/agent-memory-local/<name>/`, for machine-local records. Explicitly preloading a skill into a subagent also supplies its full body at startup. A trace of a normal main conversation is a poor guide to that case. [Subagent persistent memory](https://code.claude.com/docs/en/sub-agents#enable-persistent-memory) · [Preloading skills](https://code.claude.com/docs/en/sub-agents#preload-skills-into-subagents)
 
-“Learned” can mean two observable changes. First, there is a new piece of information that a later request can retrieve. A request trace can show that. Second, future tasks of this type produce better results. That takes a comparison. The public `skill-creator` workflow tests the description with neighboring prompts that should and should not trigger the skill, then evaluates output against task assertions. The trigger evaluator inspects actual tool events. It accepts a call to the target skill or a read of the matching file. Merely mentioning the skill in a response does not count. A new skill gets a no-skill baseline. A revision is compared with its previous version. “Draft notes for this release” should trigger our skill. “Explain why this release was rolled back” might not. Neither verdict tells us whether generated notes actually list the breaking changes. This is a human-initiated improvement workflow. A successful file write alone establishes neither a skill revision nor an update to model weights. [Pinned evaluation workflow](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/SKILL.md#L145-L201) · [Trigger-evaluation implementation](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L132-L168)
+## What does skill-creator’s trigger score actually measure?
 
-## Experiment: inspect the CLI’s actual requests
+Suppose `release-card` passes every trigger question and still omits breaking changes from the release notes. The public Anthropic evaluator explains how both results can be true. It generates a unique name and writes **the description under test plus a placeholder body** to a temporary command file, then sends the evaluation question directly to `claude -p`. These four lines establish the identity it will look for. [Pinned implementation, lines 51–75](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L51-L75)
 
-I created an isolated config directory and a temporary Git repository, put unique markers in each input file and let the real 2.1.327 CLI assemble requests. A loopback server prints only the known markers and a fragment of the truncation warning. It returns a fixed `OK` for the first three invocations. For the fourth, it first asks for a specific `Read`, then returns `OK`. This observes what the client discovers, reads and sends. With no real model behind the endpoint, the experiment cannot measure spontaneous skill selection, memory writing or instruction following.
+```python title="run_eval.py · L51–54"
+unique_id = uuid.uuid4().hex[:8]
+clean_name = f"{skill_name}-skill-{unique_id}"
+project_commands_dir = Path(project_root) / ".claude" / "commands"
+command_file = project_commands_dir / f"{clean_name}.md"
+```
 
-| Input to the real CLI | First request | Subsequent observation |
-|---|---|---|
-| `ordinary prompt` | Root `CLAUDE.md`, index and ordinary skill description present. Topic body, both skill bodies and manual-only description absent | Ends after the fixed reply |
-| `/release-card` | Ordinary skill body appears | Its description remains in the catalog |
-| `/release-manual` | Manual-only skill body appears | Its description is still absent from the catalog |
-| `READ_PROBE` | Nested instructions, path rule and test file contents all absent | The second request contains all three after the CLI executes `Read module/a.py` |
+The evaluator inspects the tool stream. A `Skill` or `Read` input containing the generated name can count as a trigger. This can answer whether “draft notes for this release” hits and whether the adjacent “explain why this release was rolled back” triggers by mistake. It can do so without running the team’s actual release procedure. It cannot tell whether the resulting release notes cover breaking changes. For that, supply a known change set and assert against the output. Compare a new skill with a no-skill baseline, or a revision with the previous version. Saving experience in files and demonstrating better task performance require different evidence. [Trigger detection](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L132-L168) · [Output evaluation and baselines](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/SKILL.md#L145-L201)
 
-I expected a full-text search to settle the index boundary. A 202-line index, well under 25 KB, showed why that can mislead. Searching for the marker on line 201 would give the wrong answer because a warning quotes the first omitted line. To test what loaded, inspect where the match occurred. This run did not exercise an oversized write.
+## Reproduce the trace
 
-<FigClaudeMemory lang="en" />
+The script requires Python’s standard library, Git and Claude Code. It isolates the configuration and repositories and sends requests to loopback. The endpoint specifies the tool calls; the real client performs them. The script prints its temporary directory. The `requests/` subdirectory retains the actual payloads and `config/projects/` retains the memory files. [Download the full experiment](/experiments/claude-memory-trace.py)
 
-<details>
-<summary>Reproduce the experiment with Python’s standard library, Git and Claude Code 2.1.327</summary>
-
-Save the code below as `probe.py` and run these commands. The script prints the temporary directory so you can inspect the original files. It supplies a dummy credential to the loopback endpoint.
-
-```bash title="Check the version and run the probe"
+```bash title="Run the trace and retain its raw requests"
 claude --version
-python probe.py
+python claude-memory-trace.py
 ```
 
-```python title="probe.py"
-"""Python 3.9+, Git and Claude Code 2.1.327. No accounts or third-party packages."""
-import json
-import os
-import shutil
-import subprocess
-import tempfile
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from threading import Thread
-
-base = Path(tempfile.mkdtemp(prefix="cc-context-"))
-repo = base / "repo"
-config = base / "config"
-memory = base / "memory"
-
-def write(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-def skill(name, manual=False):
-    front = "disable-model-invocation: true\n" if manual else ""
-    write(repo / ".claude/skills" / name / "SKILL.md",
-          f"---\nname: {name}\ndescription: DESC_{name}_TAG\n{front}---\nBODY_{name}_TAG\n")
-
-write(repo / "CLAUDE.md", "ROOT_TAG")
-write(repo / "AGENTS.md", "SECOND_GUIDE_TAG")
-write(repo / "module/CLAUDE.md", "NESTED_TAG")
-write(repo / "module/a.py", "FILE_TAG = 1")
-write(repo / ".claude/rules/module.md", '---\npaths: ["module/**/*.py"]\n---\nRULE_TAG')
-write(config / "settings.json", json.dumps({"autoMemoryDirectory": str(memory), "autoMemoryEnabled": True}))
-write(memory / "MEMORY.md", "\n".join(["INDEX_TAG"] + [f"entry {i}" for i in range(2, 200)]
-                                     + ["LINE200_TAG", "LINE201_TAG", "LINE202_TAG"]))
-write(memory / "topic.md", "TOPIC_TAG")
-skill("release-card")
-skill("release-manual", manual=True)
-subprocess.run(["git", "init", "-q", str(repo)], check=True)
-
-markers = ("ROOT", "SECOND_GUIDE", "NESTED", "RULE", "FILE", "INDEX", "LINE200",
-           "LINE201", "LINE202", "TOPIC", "DESC_release-card", "BODY_release-card",
-           "DESC_release-manual", "BODY_release-manual")
-
-class Receiver(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def do_POST(self):
-        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        if self.path.split("?")[0] != "/v1/messages":
-            self.send_error(404)
-            return
-        text = json.dumps(req, ensure_ascii=False)
-        print(" ", " ".join(k for k in markers if k + "_TAG" in text), flush=True)
-        if "LINE201_TAG" in text:
-            offset = text.index("LINE201_TAG")
-            print("  ...", text[offset-64:offset+17], "...")
-        read = "READ_PROBE" in text and "tool_result" not in json.dumps(req["messages"])
-        block = {"type": "text", "text": ""}
-        delta = {"type": "text_delta", "text": "OK"}
-        if read:
-            block = {"type": "tool_use", "name": "Read", "id": "toolu_probe", "input": {}}
-            delta = {"type": "input_json_delta", "partial_json": json.dumps({"file_path": str(repo / "module/a.py")})}
-        msg = {"id": "msg_probe", "role": "assistant", "type": "message", "model": req["model"],
-               "content": [], "stop_reason": None, "stop_sequence": None,
-               "usage": {"input_tokens": 1, "output_tokens": 0}}
-        events = [("message_start", {"message": msg}), ("content_block_start", {"index": 0, "content_block": block}),
-                  ("content_block_delta", {"index": 0, "delta": delta}), ("content_block_stop", {"index": 0}),
-                  ("message_delta", {"delta": {"stop_reason": "tool_use" if read else "end_turn", "stop_sequence": None},
-                                     "usage": {"output_tokens": 1}}), ("message_stop", {})]
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.end_headers()
-        for name, fields in events:
-            payload = json.dumps({"type": name, **fields})
-            self.wfile.write(f"event: {name}\ndata: {payload}\n\n".encode())
-
-server = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
-Thread(target=server.serve_forever, daemon=True).start()
-# Keep OS prerequisites, omit any existing provider credentials and custom settings.
-keep = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "LANG",
-        "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROCESSOR_ARCHITECTURE"}
-env = {k: v for k, v in os.environ.items() if k.upper() in keep}
-home = base / "home"
-home.mkdir()
-env.update(HOME=str(home), USERPROFILE=str(home), LOCALAPPDATA=str(home / "Local"),
-           APPDATA=str(home / "Roaming"), CLAUDE_CONFIG_DIR=str(config),
-           ANTHROPIC_BASE_URL=f"http://127.0.0.1:{server.server_port}", ANTHROPIC_API_KEY="local-fixture",
-           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1", DISABLE_AUTOUPDATER="1", NO_PROXY="127.0.0.1")
-cli = shutil.which("claude.exe") or shutil.which("claude")
-try:
-    for prompt in ["ordinary prompt", "/release-card", "/release-manual", "READ_PROBE"]:
-        print(prompt, flush=True)
-        subprocess.run([cli, "-p", "--no-session-persistence", "--model", "sonnet", "--strict-mcp-config",
-                        "--tools", "Read,Skill", "--allowedTools", "Read", "--", prompt],
-                       cwd=repo, env=env, stdin=subprocess.DEVNULL, check=True)
-finally:
-    server.shutdown()
-print("Fixture directory:", base)
-```
-
-</details>
-
-Hermes places load-time snapshots of two small files in the prefix. Compared with Claude Code’s index and topic notes, the next reader of a disk write may be the next session’s runtime or a model that later opens a file. [Compare the Hermes implementation](/notes/hermes-memory-skills/#memory-files-small-frozen-auditable)
+Three pairs reproduce the main findings: `writer-4.json` and `restart-1.json` distinguish conversation history from a new load. `linked-1.json` and `linked-empty-1.json` isolate the empty-directory switch. `oversize-3.json` and `truncation-1.json` show the post-write check and the next process’s truncation. I used a privately held historical snapshot to decide which branches to investigate. Claims about the current release can be checked against the experiment, the pinned public source, or the product documentation cited above.

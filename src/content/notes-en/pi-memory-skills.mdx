@@ -1,7 +1,7 @@
 ---
 title: "Pi: One Session Log, Several Model Contexts"
-dek: "A discarded attempt is still on disk. Whether the next model sees it depends on the selected leaf, the last checkpoint and the resources loaded for this project."
-summary: "Follow a fork through replay and compaction, then trace how project instructions and skills change between sessions."
+dek: "One skill invocation carries an old rule and a new procedure. A failed edit appears among the modified files. Both observations can be traced back to a specific reader."
+summary: "Compare provider transcripts across a skill edit, reload and restart, then trace a failed file edit into compaction."
 date: "2026-11-18"
 topic: "Agent engineering"
 status: "published"
@@ -9,6 +9,7 @@ pinned: "pi @ f0f9478"
 ---
 import Src from '../../components/Src.astro';
 import FigPiBranch from '../../components/FigPiBranch.astro';
+import FigPiSkillRequests from '../../components/FigPiSkillRequests.astro';
 import Infer from '../../components/Infer.astro';
 
 export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945e9c2b04922e29f7ca" };
@@ -16,6 +17,16 @@ export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945
 Try approach A in Pi, go back to the question, then take approach B. The JSONL file still contains every word of A, even when the model never sees A again. Conversely, a rule that has never appeared in a chat can be present on the first turn of a new session. Three inputs explain the difference: **the recorded events, the selected branch and the resources loaded for the current project**.
 
 This note follows `@earendil-works/pi-coding-agent`. The package at the pinned commit declares version 1.5.2. The experiment calls its TypeScript implementation directly, with no model service, desktop client or third-party extension. <Src {...source} p="packages/coding-agent/package.json" l="1-16" />
+
+## One invocation can carry old rules and new instructions
+
+I put two recognizable markers in a `release` skill: `DESC_A` in the description and `BODY_A` in the procedure. The project's `AGENTS.md` contained `RULE_A`. After the first invocation, I changed all three markers from A to B and created a second skill named `late`. Without leaving the session, I sent the same `/skill:release` command again.
+
+In the request Pi actually handed its test provider, the effective system rule was still **A**, the newly expanded procedure was already **B**, and an earlier user message still contained the first **A**. The rule and catalog came from resource loading. The command read the body from its registered path at invocation. The previous invocation survived as a message on the active branch. The figure shows which of these changed at each step.
+
+<FigPiSkillRequests lang="en" />
+
+One observation overturned my first interpretation. I expected that finding `RULE_A` anywhere in the transcript after `/reload` would indicate a failed refresh. The marker did survive, yet Pi's own replay produced **only B as the effective rule**. The session computes changes to named prompt sections and appends a system message carrying the patch. The test provider sees that sequence. An adapter that accepts a single leading system message can collapse the sequence before sending. Searching the transcript and inspecting the effective system prompt answer different questions. <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1826-1848" /> <Src {...source} p="packages/ai/src/types.ts" l="562-581" /> <Src {...source} p="packages/ai/src/utils/transcript.ts" l="68-110" />
 
 ## Three ways to carry a lesson forward
 
@@ -40,6 +51,27 @@ The checkpoint belongs to B. Pi walks the ancestry of the target leaf and finds 
 Once the branch and compaction boundary are selected, Pi applies the latest `context_edit` on that branch for each target. An edit can replace message content or omit it from the model context with `replacement: null`. The raw entry stays in the log. Default overflow recovery uses this mechanism. It records omissions for the failed attempt before it tries to compact. If compaction fails or is cancelled, the omissions persist. Rebuilding the context hides the attempt even though the branch has no new checkpoint. <Src {...source} p="packages/coding-agent/docs/session-format.md" l="229-245" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="87-98" />
 
 Default compaction keeps recent material verbatim and asks a model to summarize older material. `reserveTokens` helps determine **when** to compact. `keepRecentTokens` sets the target for **how much recent history** to preserve. Their defaults here are 16,384 and 20,000, with per-model overrides. A separate summarizer can run when navigating with `/tree`. It finds the common ancestor, collects entries on the path being left and records a `branch_summary` at the destination. That is one way B can inherit a lesson from A without inheriting the whole exchange. <Src {...source} p="packages/coding-agent/docs/compaction.md" l="25-50" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="172-185" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="421-437" />
+
+## Where does compaction get its list of modified files?
+
+Back in the release task, I had the test provider call Pi's built-in `edit` tool with a piece of old text that did not exist in `release.md`. The tool returned an error. The file still contained `unchanged`. After another turn I passed the real session branch into compaction preparation with a one-token recent budget, putting the attempted edit in the material to summarize. Its list of modified files included `release.md`.
+
+```json title="Three observations of the same failed edit"
+{
+  "toolError": true,
+  "onDisk": "unchanged",
+  "readFiles": [],
+  "modifiedFiles": ["release.md"]
+}
+```
+
+The list has three identifiable sources of structure. First, Pi looks through **model-visible messages** for assistant calls to `read`, `write` and `edit`. For codemode it also inspects nested calls recorded on tool results. Next it classifies and deduplicates the `path` argument. A file both read and edited appears only under modifications. Finally it appends the list to the summary and returns it in structured `details`. This path neither inspects a Git diff nor requires a successful result for each direct edit. <Src {...source} p="packages/coding-agent/src/core/compaction/utils.ts" l="29-74" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="899-919" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="1037-1056" />
+
+This affects the next compaction as well. The default implementation carries file sets forward from a previous non-extension checkpoint and supplies the previous summary to the update prompt. A later `modifiedFiles` list is good evidence of **where to look**. To establish whether a release manifest actually changed, inspect the tool result or the artifact. The experiment measured the preparation stage. Generating summary text and merging an earlier list are source-traced steps. <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="51-83" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="713-733" />
+
+### Where can Pi cut a long tool-using turn?
+
+When the recent budget falls inside a long investigation, Pi chooses a legal cut in the active projection. A tool result cannot simply become the first retained message. There are now three regions: history before this user turn, the first part of the turn itself and the tail retained verbatim. With input for both older regions, Pi summarizes the history and the turn prefix separately, then joins them under `Turn Context (split turn)`. If there is an earlier summary and no new pre-turn history, that summary can supply the first part. The retained exchange can thus keep an account of the problem it was answering. Repeated compaction also depends on previous summaries: a rationale already omitted there may never reappear. <Src {...source} p="packages/coding-agent/docs/compaction.md" l="87-98" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="863-919" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="980-1020" />
 
 ## How project instructions reach the next turn
 
@@ -87,10 +119,43 @@ console.log('edited A', log.buildSessionContext().messages.map(m=>m.content));
 
 The first four observations vary the branch or compaction boundary. The fifth keeps A in the raw log and removes it from the request with a single edit. I also ran the upstream skill parsing, collision-precedence and context-building tests. These results establish how history is selected. They do not measure how often a model loses a fact when writing its own summary. <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="126-147" /> <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="211-246" />
 
+## Reproduce the provider observations
+
+[Download the Pi request and compaction probe](/experiments/pi-skill-lifecycle.mjs) and place it in the root of the pinned checkout. It uses a temporary agent directory, a temporary project, in-memory sessions and Pi's official test provider, which returns fixed replies or tool calls. The built-in `edit` tool works against a real file. Assertions check its contents, the error flag and the compaction preparation result. The capture point is the normalized provider interface, before any vendor-specific HTTP adapter. No live model chooses the tools.
+
+External extensions are disabled. Pi still walks ancestors of the temporary project for rules. An existing `AGENTS.md` there can reach the local test provider, and the script prints only the fixture markers. I ran Node 22.23.1. These commands build the schema and extract the generated model catalog from the matching release package in a clean checkout.
+
+```sh title="From the root of the pinned Pi checkout"
+npm ci --ignore-scripts
+npm run build --workspace packages/schema
+npm pack @earendil-works/pi-ai@1.5.2 --silent
+node -e "require('node:fs').mkdirSync('packages/ai/src/providers/data',{recursive:true})"
+tar -xf earendil-works-pi-ai-1.5.2.tgz -C packages/ai/src/providers/data --strip-components 4 package/dist/providers/data
+node --import ./packages/coding-agent/src/experimental/source-resolver.ts pi-skill-lifecycle.mjs
+```
+
+The reload observation hinges on this short piece of code. It diffs the current branch's sections against the newly built sections, returning a system message only for changes. That is why the probe prints both the raw system updates and the replayed effective rule. <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1839-1848" />
+
+```ts title="agent-session.ts · 1843–1847"
+const sections = diffSystemPromptSections(
+    getCurrentSystemMessage(messages)?.sections ?? {},
+    buildSystemPromptSections(options),
+);
+return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
+```
+
 ## What can accumulate across sessions?
 
 The default coding-agent paths examined here persist session entries, explicit edits to user or project files, and writes implemented by extensions. Compaction and branch summaries can change a later request. I found no built-in maintainer in these paths that promotes successful sessions to skills, rewrites them by usage, then archives superseded versions. To carry the release lesson into a **new project session**, update the appropriate instruction file or skill and inspect it from a fresh session. Sharing it across repositories also requires the appropriate installation scope or distribution mechanism. <Src {...source} p="packages/coding-agent/docs/skills.md" l="58-67" /> <Src {...source} p="packages/coding-agent/docs/skills.md" l="87-93" />
 
 Pi exposes separate extension mechanisms. `pi.appendEntry()` persists extension state in a session without adding it to model context. A custom message can enter context. `session_before_compact` can supply a different summarization policy, and `before_agent_start` can change the upcoming turn's inputs. An application can use these hooks to implement review. For a particular deployment the remaining questions are concrete: which extension is installed, what triggers its writer, where does the result land, and which new session reads it? <Infer lang="en" /> Editable resources make durable changes easy to review. A lesson left only in a conversation can remain invisible outside that conversation. <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="122-134" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="532-552" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="615-635" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="1625-1633" />
+
+### Two official extensions identify exactly who carries a change forward
+
+The `todo` example returns a full task snapshot and the next ID in its structured tool-result `details`. On `session_start` or `session_tree` the extension clears its in-memory variables and replays results belonging to `todo` on the current branch. Return to an earlier leaf and it reconstructs that branch's task state. Both persistence and restoration have a concrete boundary here: the chosen path in this session. <Src {...source} p="packages/coding-agent/examples/extensions/todo.ts" l="106-138" /> <Src {...source} p="packages/coding-agent/examples/extensions/todo.ts" l="147-177" />
+
+To carry a debugging result into **another session**, the official `/handoff` example collects branch material, combines it with the user's next goal and generates a draft. The user can revise or cancel it. A new session records the parent reference and puts the draft in the editor for the user to send. The artifact is a prompt tailored to the next task. Installing the extension, invoking its command and submitting that prompt are identifiable decisions. Neither example publishes the experience as a searchable `SKILL.md` for every project. <Src {...source} p="packages/coding-agent/examples/extensions/handoff.ts" l="85-116" /> <Src {...source} p="packages/coding-agent/examples/extensions/handoff.ts" l="161-190" />
+
+What I value for debugging is the ability to trace a surprising answer to **a particular branch, resource load or explicit invocation**. The cost is equally tangible: corrected instructions can coexist with older copies in the conversation, and a file list can record an attempted change. For evidence that a lesson became a reusable procedure, start a genuinely fresh session and inspect the procedure that its skill invocation actually expands.
 
 Pi reconstructs messages from the selected leaf. Hermes also offers a tool for searching history. An active branch and a history-tool call leave different evidence for how an old fact reached an answer. [Compare the Hermes implementation](/notes/hermes-memory-skills/#session-history-and-session_search)

@@ -1,0 +1,58 @@
+---
+const english = Astro.props.lang === 'en';
+const text = english ? {
+  title: 'One source disappears in two steps',
+  columns: ['Observation', 'Extraction rows', 'Source files', 'Global job'],
+  moments: ['First pass', 'Empty result', 'After cooldown'],
+  caption: 'Figure 2. Counts observed in the seeded-summary run. The initial summary kept its old marker throughout.',
+} : {
+  title: '同一个来源分两步消失',
+  columns: ['观察时刻', '数据库提取行', '磁盘来源文件', '全局任务'],
+  moments: ['首次整理成功', '再次提取为空', '冷却后再开回合'],
+  caption: '图 2　有旧摘要组的实测计数。三个时刻的总摘要都保留了原标记。',
+};
+const observations = [[1, 1, 'done'], [0, 1, 'pending'], [0, 0, 'done']];
+const titleId = `codex-source-retention-${english ? 'en' : 'zh'}`;
+---
+<figure class="retention" lang={english ? 'en' : 'zh-CN'} aria-labelledby={titleId}>
+  <div class="panel">
+    <div class="heading" id={titleId}>{text.title}</div>
+    <table aria-labelledby={titleId}>
+      <thead><tr>{text.columns.map((label) => <th scope="col">{label}</th>)}</tr></thead>
+      <tbody>
+        {observations.map(([db, disk, job], index) => (
+          <tr>
+            <th scope="row">{text.moments[index]}</th>
+            <td><span class:list={['count', { present: db === 1 }]}>{db}</span></td>
+            <td><span class:list={['count', { present: disk === 1 }]}>{disk}</span></td>
+            <td><span class:list={['state', { queued: job === 'pending' }]}>{job}</span></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  <figcaption>{text.caption}</figcaption>
+</figure>
+
+<style>
+  .retention { container-type: inline-size; }
+  .panel { padding: 1rem 1.15rem; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  .heading { color: var(--fg); font: 600 1.15rem/1.45 var(--sans); }
+  .panel table { display: table; width: 100%; min-width: 0; margin: .8rem 0 0; border-collapse: collapse; table-layout: fixed; }
+  .panel th, .panel td { padding: .45rem .3rem; border: 0; border-bottom: 1px solid var(--line); white-space: normal; }
+  .panel th:first-child { width: 36%; padding-left: 0; }
+  .panel th:not(:first-child), .panel td { text-align: center; }
+  .panel thead th { color: var(--mute); font: 400 .88rem/1.4 var(--sans); text-transform: none; letter-spacing: 0; }
+  .panel tbody th { color: var(--fg-2); font: 500 .94rem/1.45 var(--sans); text-align: left; }
+  .panel tbody tr:last-child > * { border-bottom: 0; }
+  .count { display: inline-block; min-width: 2.2rem; border-radius: 3px; color: var(--mute); font: 500 1rem/1.7 var(--mono); }
+  .present { background: var(--plat-soft); color: var(--fg); }
+  .state { color: var(--mute); font: .88rem/1.4 var(--mono); }
+  .queued { color: var(--fg); font-weight: 600; }
+  @container (max-width: 27rem) {
+    .panel { padding: .85rem .75rem; }
+    .panel th:first-child { width: 32%; }
+    .panel th, .panel td { padding: .45rem .15rem; }
+    .panel thead th, .state { font-size: .83rem; }
+  }
+</style>

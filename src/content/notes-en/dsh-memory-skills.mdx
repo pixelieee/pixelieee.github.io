@@ -1,7 +1,7 @@
 ---
 title: "DeepSeek Harness: Session Events, Skill Catalogs and External Memory"
-dek: "A model can load a new procedure without a new catalog message. It can also lose an instruction that still exists on disk. The two outcomes have different owners."
-summary: "Follow a skill edit into the next request and identify who owns session replay, historical search, workspace instructions and long-term memory."
+dek: "A release record turns up in a second repository. A skill catalog reappears without a file change. Which state determines what the next step can read?"
+summary: "Query one graph from two workspaces and trace the session events that republish an unchanged skill catalog after compaction."
 date: "2026-11-18"
 topic: "Agent engineering"
 status: "published"
@@ -9,11 +9,20 @@ pinned: "deepseek-harness @ 2e39e70"
 ---
 import Src from '../../components/Src.astro';
 import FigDshSurface from '../../components/FigDshSurface.astro';
+import FigDshCatalogHistory from '../../components/FigDshCatalogHistory.astro';
 import Infer from '../../components/Infer.astro';
 
 export const source = { repo: "deepseek-ai/deepseek-harness", rev: "2e39e70496aa02986ca6a820c5d497e816b69d7e" };
 
 “Check the artifact before shipping” can live in a DSH conversation, a project's `AGENTS.md` or a callable skill. All three preserve text. Different sessions can carry it forward. DeepSeek Harness composes plugins through Cordis. To establish what a deployment remembers, identify its plugins, then follow the **write, the durable record and the next request**. This note pins the official repository at `2e39e70` and identifies optional components where they matter.
+
+## How can a second repository find the first release record?
+
+I started the reference memory server specified by DSH in a temporary project A. I gave `release` the observation `refresh atlas` and a `requires` edge to another entity, `manifest`. Then I stopped the process, changed to project B, and started a new server against the same graph file. A search for `ATLAS` returned `release`. With the directory and query program held constant, restarting against a fresh graph produced an empty result.
+
+The experimental DSH session-query tool answers a different scope question. To read another session, it filters by **both the target ID and the caller's working directory** and checks the observed session header. Two directories in the same Git repository do not gain a shared lookup scope from that relationship. What explained the cross-project result above was two server processes opening the same graph. For a demonstration of cross-project recall, the first piece of evidence I would ask for is the **name of the tool that returned the record**. <Src {...source} p="packages/experimental/tool-session-query/src/workspace-access.ts" l="74-112" /> <Src {...source} p="apps/cli/config/examples/mcp-memory/mcp-reference-memory.cordis.yml" l="1-13" />
+
+Three changes trace the different readers below: a session acquires a checkpoint, a skill file changes, and a memory service restarts. The first two follow the pinned DSH source. The third uses the independently versioned service in its sample configuration. The graph writes were explicit protocol calls.
 
 ## Four destinations for the same lesson
 
@@ -45,6 +54,14 @@ The basic compaction backend checks pressure at step boundaries and has a recove
 
 **Can a new session look up an old one?** The experimental `tool-session-query` consumer is opt-in. Its five read-only tools can find events, read source records and trace relationships. Cross-session access requires an exact match between the target and caller's `cwd`. A caller with no `cwd` can inspect only itself. The SQLite query backend can search current, shadowed and log-only material by default. A phrase can disappear from the current request and still be retrievable from history. <Src {...source} p="packages/experimental/tool-session-query/README.md" l="9-14" /> <Src {...source} p="packages/experimental/tool-session-query/src/workspace-access.ts" l="74-99" /> <Src {...source} p="packages/session-query/session-query-sqlite/README.md" l="59-69" />
 
+### A new message arrives while the summary is being written
+
+The normal follow-up path has a queue. An upstream case pauses manual compaction while it awaits a summary and submits a second question via `agent.followup`. The next turn starts after the compaction end and flush. Its model request contains the checkpoint followed by the new question. The stability check below addresses the separate case where the runtime surface actually changes during summarization. <Src {...source} p="packages/compaction/compaction-basic/tests/manual-compaction.spec.ts" l="266-308" />
+
+Summarization waits on a model call. Suppose a user message arrives at the end of the surface during that wait. Can the summary still commit? The caller selects a **stability check**. Automatic compaction requires the whole measured surface to match before committing in the current turn. A manual selection requires the chosen span to remain contiguous and valid, with the same events and measurements. An append outside that span can survive alongside the replacement. Both modes use the same commit function. <Src {...source} p="packages/compaction/compaction-basic/src/index.ts" l="398-415" /> <Src {...source} p="packages/compaction/compaction-basic/src/index.ts" l="428-454" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="431-469" />
+
+The **stage of failure** matters too. If the framed summary costs at least as much as the selected region, it fails before replacement. After validation, the code appends the summary, the replacement message and the closing event. Only then does it call the optional persistence flush. A flush failure surfaces as a `persistence` error even though an in-memory reader can already see the new checkpoint. The evidence that distinguishes these cases is the current surface, the closing event and the result of a cold read after restart. <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="228-270" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="411-425" />
+
 ## Workspace rules still have to fit
 
 The base composition enables `agent-instructions`. For the first request it reads user roots (`$DSH_HOME` and the shared agents root), then the project chain from its root down to the working directory. `AGENTS.md`, `CLAUDE.md` and their `.local.md` variants can contribute. Files with identical trimmed content in one candidate group are presented once. The base budget is 65,536 **bytes per chain**. A file's presence does not guarantee that every byte of it reaches the request. <Src {...source} p="packages/context/agent-instructions/README.md" l="27-44" /> <Src {...source} p="packages/context/agent-instructions/src/files.ts" l="430-450" />
@@ -59,41 +76,44 @@ Before a step, the tool plugin requests a snapshot for the current agent scope a
 
 Why can editing the body leave the catalog quiet? Its digest includes the names, descriptions and completeness of discovery. Changing only a procedure can affect the next load without changing what the catalog advertises. Editing a description, deleting an entry or recovering from partial discovery can instead produce a replacement catalog. Even an **empty catalog** has two meanings: a successful discovery found none, or discovery could not confirm any this time. An incomplete observation is not cached as authoritative and old catalog entries are no longer a license to call those names. <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="290-329" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="344-356" /> <Src {...source} p="docs/subsystems/skills.md" l="11-17" /> <Src {...source} p="docs/subsystems/skills.md" l="77-83" />
 
+### The files did not change. Why did the catalog get published again?
+
+Publication compares two states. One comes from current discovery: names and rendered descriptions contribute to a digest, with an extra bit for an incomplete observation. The other is the last structured catalog **still visible to the model**. The plugin walks backward through session events for readable catalog data, then checks whether the event sequence number occurs in `surface.nodes`. File timestamps alone cannot explain what happens after compaction. <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="222-255" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="344-355" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="380-399" />
+
+<FigDshCatalogHistory lang="en" />
+
+Two opposite cases test this account. After a body-only edit, the upstream test reads the second body with just one catalog event on record. Replacing the catalog with a checkpoint changes no file, yet the next step emits a second catalog. The former tests the file provider. The latter tests whether the consumer tracks **what the model can still see**. On resume it can recover the same decision from tagged events on the surface. It need not determine whether a summarizer faithfully reproduced a list of skills in prose. <Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="585-614" /> <Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="689-744" />
+
+### A provider goes away or changes during discovery
+
+If a preferred source becomes unavailable, a lower-priority definition of the same name may win. Guidance limits the model to confirmed entries and records incomplete discovery. Even if the same names are present next time, recovering completeness changes the digest and clears the warning. This measures confidence in the current catalog. Identifying who authored a change takes separate evidence. <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="290-329" /> <Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="363-402" />
+
+A narrower race occurs when a provider invalidates the registry during a scan. The cache key includes the working directory, scope chain and revision. A revision change during discovery triggers one more collection. If that races too, the registry returns the observed entries as uncacheable. Loading a body also checks identity: if the loaded name differs from the candidate chosen earlier, the call returns no definition and invalidates the relevant registration's cache. A file being renamed cannot deliver instructions with a new identity under the old name. <Src {...source} p="packages/skill/skill/src/index.ts" l="24-28" /> <Src {...source} p="packages/skill/skill/src/index.ts" l="502-550" /> <Src {...source} p="packages/skill/skill/tests/skill.spec.ts" l="796-864" />
+
 ## Who owns an external memory write?
 
 The official guide has three default-off reference configurations: Memorix, MCP Reference Memory and Engram. DSH launches an installed stdio process or connects to a running HTTP service, discovers its tools and makes them callable. The selected server owns indexing, project identity, migrations, conflict handling and forgetting policies. Enabling its tools does not establish that an ordinary chat message calls a writer. <Src {...source} p="docs/user/guide/mcp-memory.md" l="5-33" />
 
 For Reference Memory, the example sets `MEMORY_FILE_PATH` to a local JSONL knowledge graph of entities, relations and observations. Search performs case-insensitive substring matching over entity names, types and observations. If a semantic paraphrase fails to retrieve a record, check whether a write tool ran, whether both processes target the same file and whether the literal search term occurs in an indexed field. <Src {...source} p="apps/cli/config/examples/mcp-memory/mcp-reference-memory.cordis.yml" l="1-13" /> <Src {...source} p="docs/user/guide/mcp-memory.md" l="48-59" />
 
+### Does finding an edge also retrieve the neighbor's properties?
+
+The opening experiment used `create_entities`, `create_relations`, `search_nodes` and `open_nodes`. Calling `create_entities` again for an existing `release` with a new observation, `SECOND_NOTE`, successfully returned an empty list of additions. Searching for that marker also returned nothing. Creation deduplicates by name; the operation for adding a fact to an existing entity is `add_observations`. Counting successful write calls would overstate how many facts the graph acquired. [Pinned server implementation](https://unpkg.com/@modelcontextprotocol/server-memory@2026.7.4/dist/index.js)
+
+| Query in a fresh process | Entities returned | What the result establishes |
+|---|---|---|
+| Same graph, search `ATLAS` | `release` | The observation matches. An edge naming `manifest` is also returned. |
+| Same graph, search `map` | None | A related word has no literal match in this fixture. |
+| Same graph, open `manifest` | `manifest` | The neighbor's own observation, `owner: ci`, becomes available. |
+| Same directory, read a different, empty graph | None | Starting a server and choosing which data file to open are separate decisions. |
+
+The first search revealed the neighbor's name and the relationship. Its observations arrived only on the second tool call. That extra hop is what the model would need to answer who maintains the dependency. The probe speaks MCP over stdio directly to the server pinned by DSH's example. It covers writes, process exit, restart and reads. It does not measure DSH's tool selection or the likelihood of a model taking the second hop. [Download the experiment](/experiments/dsh-memory-graph.py)
+
+In an empty directory install `npm install @modelcontextprotocol/server-memory@2026.7.4`, then run `python dsh-memory-graph.py node_modules/@modelcontextprotocol/server-memory/dist/index.js`. Both graph files live in a temporary directory.
+
 ## Experiment: why can a 600-byte budget yield 879 bytes?
 
-This calls the pinned instruction renderer with synthetic, already-read files. The measured output is the text that layer supplies to its caller. There is no chat, model or user configuration in the experiment. With Node 22.23.1, save this as `probe.mjs` in the DSH repository root and run `node probe.mjs`. The resolution hook maps one workspace dependency to its TypeScript source in the same checkout.
-
-```js title="probe.mjs"
-import {registerHooks} from 'node:module';
-import {pathToFileURL} from 'node:url';
-import {resolve} from 'node:path';
-const homePaths = pathToFileURL(resolve('packages/util/home-paths/src/index.ts')).href;
-registerHooks({resolve(name, ctx, next) {
-  return name === '@deepseek-ai/dsh-home-paths'
-    ? {url: homePaths, shortCircuit: true} : next(name, ctx);
-}});
-const {renderAgentInstructions} = await import('./packages/context/agent-instructions/src/render.ts');
-const file = (path, content) => ({absolutePath: resolve(path), displayPath: path, content});
-const globalRule = file('~/.dsh/AGENTS.md', 'G'.repeat(240));
-const rootRule = file('AGENTS.md', 'R'.repeat(800));
-const nestedRule = file('app/AGENTS.md', 'N'.repeat(240));
-
-for (const [maxBytes, files] of [
-  [600, [rootRule, nestedRule]],
-  [600, [globalRule, rootRule, nestedRule]],
-  [2000, [globalRule, rootRule, nestedRule]],
-]) {
-  const {text, omitted, truncated} = renderAgentInstructions(files, {maxBytes});
-  console.log(Buffer.byteLength(text), omitted.map(f => f.displayPath),
-    truncated.map(f => [f.displayPath, f.includedBytes]));
-}
-```
+[Download the budget probe](/experiments/dsh-instruction-budget.mjs) into the pinned DSH checkout and run `node dsh-instruction-budget.mjs` with Node 22.23.1. One workspace dependency is resolved to source in the same checkout. The real renderer receives a 240-byte user rule, an 800-byte project-root rule and a 240-byte nested rule. The measurement includes the headings and omission notices delivered to the caller.
 
 | Input and per-chain budget | Output bytes | Fully omitted | Truncated |
 |---|---:|---|---|
@@ -102,6 +122,14 @@ for (const [maxBytes, files] of [
 | All three, 2,000 | 1,659 | None | None |
 
 The totals include headings and explanatory text. Adding the user file raised the total above 600 because the user and project chains each have a budget. It did not displace more of the nested rule. Within a single project chain the broader root file was omitted first, then the more specific file was truncated. When an instruction is missing, inspect the rendered omission and truncation records as well as the filesystem. <Src {...source} p="packages/context/agent-instructions/src/render.ts" l="363-420" /> <Src {...source} p="packages/context/agent-instructions/src/render.ts" l="427-480" />
+
+## Reproducing catalog and checkpoint behavior
+
+Besides the independent graph processes, I ran three upstream suites in the pinned checkout: the `tool-skill` consumer, the skill registry and `manual-compaction`. The catalog cases wire up the actual Cordis registry, filesystem provider and tool plugin. They edit temporary files and drive the step boundary in the fixture. The manual-compaction case gates summary generation so a second message can arrive at a known moment. This separates the file change from the material contributed at the next step. Model compliance with the republished catalog remains unmeasured. <Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="61-77" /> <Src {...source} p="packages/compaction/compaction-basic/tests/manual-compaction.spec.ts" l="266-308" />
+
+```sh title="Run in the pinned DSH checkout after installing dependencies with its specified pnpm"
+pnpm exec vitest run packages/skill/skill/tests/skill.spec.ts packages/skill/tool-skill/tests/tool-skill.spec.ts packages/compaction/compaction-basic/tests/manual-compaction.spec.ts
+```
 
 ## Where evolution actually happens
 

@@ -1,9 +1,9 @@
 ---
 title: "DeepSeek Harness：会话事件、Skill 目录与外接记忆"
 titleEn: "DeepSeek Harness: Session Events, Skill Catalogs and External Memory"
-dek: "一份 Skill 换了正文，目录可以毫无动静；一条工作区规则明明还在磁盘上，模型却可能读不到它。这两件事由不同组件决定。"
-summary: "从一次 Skill 更新追到下一次模型请求，分清会话回放、历史检索、工作区指令与长期记忆的所有者。"
-summaryEn: "Follow a skill edit into the next request and identify who owns session replay, historical search, workspace instructions and long-term memory."
+dek: "换仓库仍能找回一条发布记录，文件未动却会再发一遍 Skill 目录。哪一份状态决定了下一步看见什么？"
+summary: "用两个工作目录追踪外接记忆的边界，再沿会话事件解释压缩后为什么会重新发布相同的 Skill 目录。"
+summaryEn: "Query one graph from two workspaces and trace the session events that republish an unchanged skill catalog after compaction."
 date: "2026-11-18"
 topic: "Agent 工程"
 status: "published"
@@ -11,11 +11,20 @@ pinned: "deepseek-harness @ 2e39e70"
 ---
 import Src from '../../components/Src.astro';
 import FigDshSurface from '../../components/FigDshSurface.astro';
+import FigDshCatalogHistory from '../../components/FigDshCatalogHistory.astro';
 import Infer from '../../components/Infer.astro';
 
 export const source = { repo: "deepseek-ai/deepseek-harness", rev: "2e39e70496aa02986ca6a820c5d497e816b69d7e" };
 
 把「交付前先核对产物」写成 DSH 聊天里的一句话、项目的 `AGENTS.md`，或可调用的 Skill，三个地方都留得住文字，但能带走它们的会话不同。DeepSeek Harness 用 Cordis 组合插件。要回答一次“它记住了吗”，先确定部署加载了哪几个插件，再沿**写入 → 持久记录 → 下一次请求**查下去。本文固定到官方仓库 `2e39e70`，涉及可选插件时单独注明。
+
+## 换仓库后，为什么还能搜到上次发布的记录？
+
+我先在临时项目 A 启动官方示例指定的 Reference Memory 服务，写入一条事实：`release` 有一条观察 `refresh atlas`，和另一个实体 `manifest` 之间有一条 `requires` 关系。退出进程，切到项目 B，用同一个图谱文件重新启动。查 `ATLAS` 仍返回 `release`。接着保持项目 B 和检索程序不动，只换一个空图谱文件，结果就变成空集。
+
+把相同的问题问 DSH 自带的实验性会话查询工具，作用域却换了。读取其他会话时，它用目标会话 ID **和调用方的工作目录**一起筛选，再核对目标的会话头。两个独立目录即使属于同一个 Git 仓库，也不因此共享这条查询路径；上面外部服务的共享条件则是两个进程打开同一份图谱。读一段“跨项目记忆”的演示，最先值得看的是成功返回数据的**工具名**。<Src {...source} p="packages/experimental/tool-session-query/src/workspace-access.ts" l="74-112" /> <Src {...source} p="apps/cli/config/examples/mcp-memory/mcp-reference-memory.cordis.yml" l="1-13" />
+
+下文沿三次具体的变化追踪谁在读取旧材料：会话生成检查点、Skill 文件被修改、记忆服务换进程。前两条查固定提交，第三条使用官方示例锁定的独立服务。没有模型参与写入图谱。
 
 ## 一条经验的四种去向
 
@@ -47,6 +56,14 @@ export const source = { repo: "deepseek-ai/deepseek-harness", rev: "2e39e70496aa
 
 **新会话能否主动查旧会话？** 官方的实验性 `tool-session-query` 是单独启用的消费者。其五个只读工具可搜事件、读原文或追踪关系；跨会话读要求目标与调用方的 `cwd` 完全相同，没有 `cwd` 的调用方只能查看自己。SQLite 查询后端默认搜索范围可以覆盖当前、已遮盖和仅存在于日志的事件。于是「已经从当前提示词移开」和「不能从历史查到」可以有完全不同的答案。<Src {...source} p="packages/experimental/tool-session-query/README.md" l="9-14" /> <Src {...source} p="packages/experimental/tool-session-query/src/workspace-access.ts" l="74-99" /> <Src {...source} p="packages/session-query/session-query-sqlite/README.md" l="59-69" />
 
+### 摘要生成期间又来了一条消息
+
+正常入口有队列。上游把一次手工压缩停在等待摘要的时刻，经 `agent.followup` 提交第二个问题，观察到压缩结束并完成刷新之后才开始下一回合。模型先收到检查点，再收到那个问题。下面的稳定性检查负责另一层问题，即运行时的可见消息序列如果真的变了，正在生成的摘要还能不能用。<Src {...source} p="packages/compaction/compaction-basic/tests/manual-compaction.spec.ts" l="266-308" />
+
+摘要要等一次模型调用。此时如果后面又追加一条用户消息，能否提交刚写好的摘要？答案取决于**调用者选了哪种稳定性检查**。自动压缩在本回合内运行，提交前要求整条可见消息序列与测量时一致。手动选区只要求那段消息仍然连续、两端合法、事件及其计量结果一致。新消息只要追加在选区之外，后一种检查就允许它和旧选区的摘要同时保留。两种模式共用替换函数。<Src {...source} p="packages/compaction/compaction-basic/src/index.ts" l="398-415" /> <Src {...source} p="packages/compaction/compaction-basic/src/index.ts" l="428-454" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="431-469" />
+
+另一个边界是**写到哪一步失败**。封装后的摘要至少和原片段一样大，会在替换发生前失败；若检验通过，代码先追加摘要、替换消息与结束事件，之后才调用可选的持久化刷新。后者失败时，上层收到的是 `persistence` 错误。此时内存中可能已经有了新检查点，所以“命令报错”也不能直接翻译成“旧消息仍然可见”。区分两种情况要看当前序列、结束事件上的错误，以及重启后能否冷读到它。<Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="228-270" /> <Src {...source} p="packages/compaction/compaction-basic/src/region.ts" l="411-425" />
+
 ## 工作区规则：写在文件里，还要进得了预算
 
 默认基础组合启用 `agent-instructions`。首次请求先读用户根（`$DSH_HOME` 及共享 agents 根），再从项目根到工作目录读取项目指令。`AGENTS.md`、`CLAUDE.md` 和各自的 `.local.md` 可以作出贡献，同一候选组去除首尾空白后内容相同的文件只呈现一次。每条链的预算分别为 65,536 **字节**；它不是两条链共享的字符数，也没有承诺一定能把每份文件完整贴进去。<Src {...source} p="packages/context/agent-instructions/README.md" l="27-44" /> <Src {...source} p="packages/context/agent-instructions/src/files.ts" l="430-450" />
@@ -61,41 +78,44 @@ export const source = { repo: "deepseek-ai/deepseek-harness", rev: "2e39e70496aa
 
 为什么改了正文，目录却可能安静？进入目录摘要的字段只有名称、描述和本次发现是否完整。只改步骤，下一次加载可以取得新正文，而模型端没有新的目录要接收；改描述、删除条目或从部分发现恢复，才可能出现替换目录。**空目录也有两种含义**：完整发现后没有可用项，或有提供方失败、这次只能确认零项。后者不会作为权威结果缓存，模型也不能把旧目录里残留的名字当成当前可用。<Src {...source} p="packages/skill/tool-skill/src/index.ts" l="290-329" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="344-356" /> <Src {...source} p="docs/subsystems/skills.md" l="11-17" /> <Src {...source} p="docs/subsystems/skills.md" l="77-83" />
 
+### 文件未动，目录为什么又发了一次？
+
+目录有两份可比的状态。一份来自这一步刚完成的发现：条目按名称和已呈现的描述计算摘要，发现不完整还要额外记一位。另一份来自**模型当前可见**的最后一条目录消息：插件逆向读会话事件，在事件上找可解析的目录数据，再检查其序号是否还在 `surface.nodes` 中。只比较文件时间戳，解释不了压缩之后的行为。<Src {...source} p="packages/skill/tool-skill/src/index.ts" l="222-255" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="344-355" /> <Src {...source} p="packages/skill/tool-skill/src/index.ts" l="380-399" />
+
+<FigDshCatalogHistory />
+
+这里能用两个相反的用例检查解释是否成立。只改正文时，官方测试读到了第二版正文，目录消息总数仍为 1。用检查点覆盖刚发过的目录时，文件没有变化，下一步却留下第 2 条目录。前者检验提供方怎样读文件，后者检验消费端是否记得**模型还能看到什么**。恢复旧会话时，插件也从有来源标记的可见事件恢复这个判断；它无需猜测摘要模型有没有在一段自由文字里准确复述 Skill 清单。<Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="585-614" /> <Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="689-744" />
+
+### 发现过程中，提供方掉线或发生更新
+
+若较高优先级的来源暂时不可读，较低层的同名条目可能当选。插件告诉模型只能使用本次确认的项，并标出发现不完整。即使两次确认的名称碰巧相同，恢复完整的那一步也会改变摘要并撤下旧告警。这解决的是“当前目录有多可信”，和“文件最后是谁改的”无关。<Src {...source} p="packages/skill/tool-skill/src/index.ts" l="290-329" /> <Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="363-402" />
+
+还有一个更短的竞争窗口：列目录刚开始，提供方就通知注册表内容已变。注册表把工作目录、作用域链和修订号都放入缓存键。扫描前后的修订号不同会重查一次；又遇到变化，就交出这次看到的条目并标记不可缓存。正文加载还有独立的身份核对：读取路径后，如果正文返回的名称已经和获胜候选不同，本次调用返回空并让对应缓存失效。这样一个正在改名的文件不会以旧名交付一份新身份的指令。<Src {...source} p="packages/skill/skill/src/index.ts" l="24-28" /> <Src {...source} p="packages/skill/skill/src/index.ts" l="502-550" /> <Src {...source} p="packages/skill/skill/tests/skill.spec.ts" l="796-864" />
+
 ## 外接记忆：谁拥有“记住”这次写入？
 
 官方给出 Memorix、MCP Reference Memory、Engram 三种默认关闭的参考配置。DSH 负责启动已安装的 stdio 服务或连接现有 HTTP 服务，发现并暴露工具。索引、项目标识、数据迁移、冲突处理和遗忘策略要去相应服务核实。即便启用了工具，每条普通用户消息会不会触发写入，仍取决于调用路径。<Src {...source} p="docs/user/guide/mcp-memory.md" l="5-33" />
 
 以 Reference Memory 为例，示例通过 `MEMORY_FILE_PATH` 指向本地知识图谱的 JSONL，支持实体、关系和观察。这里的搜索是对名称、类型和观察值做不区分大小写的子串匹配。把两段语义相近的文本送进去、检索却没有命中，不足以说明 DSH 丢了记忆；应先核对工具是否真的调用、两个进程是否指向同一文件、字面检索词是否出现在已写入字段。<Src {...source} p="apps/cli/config/examples/mcp-memory/mcp-reference-memory.cordis.yml" l="1-13" /> <Src {...source} p="docs/user/guide/mcp-memory.md" l="48-59" />
 
+### 图谱里的边能找到邻居，能顺便读到它的属性吗？
+
+首节实验具体调用了 `create_entities`、`create_relations`、`search_nodes` 和 `open_nodes`。向已存在的 `release` 再调用一次 `create_entities`，并带上一条新观察 `SECOND_NOTE`，服务成功返回空的新增列表。随后搜索那个标记也是空集。这个操作按名字去重；要给已有实体补事实，接口是 `add_observations`。仅统计“成功的写工具调用次数”，在这里就会多算一次实际记住的事实。[固定版本的服务器实现](https://unpkg.com/@modelcontextprotocol/server-memory@2026.7.4/dist/index.js)
+
+| 在新进程里的查询 | 命中实体 | 可回答的问题 |
+|---|---|---|
+| 同图谱，搜 `ATLAS` | `release` | 观察值匹配，也带回指向 `manifest` 的边 |
+| 同图谱，搜 `map` | 无 | 本次输入里概念接近的词没有字面命中 |
+| 同图谱，打开 `manifest` | `manifest` | 现在才读到邻居的观察值 `owner: ci` |
+| 同目录，另一个空图谱，读全图 | 无 | 恢复了哪个服务进程与打开哪个文件是两件事 |
+
+`ATLAS` 返回的结果里有邻居的名字和关系，却没有邻居的观察值。要回答“这个依赖由谁维护”，还需要再调用一次工具。这个差别比“用了知识图谱”更能说明一次回答究竟得到了什么证据。此实验直接对示例指定的 stdio 服务发送 MCP 请求，覆盖写入、停止进程、重开与读取；DSH 宿主的工具选择和模型是否会主动走第二跳仍是另一个问题。[下载可复现实验](/experiments/dsh-memory-graph.py)
+
+在空目录运行 `npm install @modelcontextprotocol/server-memory@2026.7.4`，然后执行 `python dsh-memory-graph.py node_modules/@modelcontextprotocol/server-memory/dist/index.js`。脚本只在临时目录写两份图谱。
+
 ## 实验：600 字节的限制，为什么能得到 879 字节？
 
-下面用固定提交的真实规则渲染器。输入是人为构造的已读取文件，输出是该层交给上游的文字；实验没有启动聊天、模拟模型或改用户配置。用 Node 22.23.1，把代码保存到 DSH 仓库根的 `probe.mjs`，执行 `node probe.mjs`。解析钩子仅将一个工作区依赖指向同一提交的 TypeScript 源文件。
-
-```js title="probe.mjs"
-import {registerHooks} from 'node:module';
-import {pathToFileURL} from 'node:url';
-import {resolve} from 'node:path';
-const homePaths = pathToFileURL(resolve('packages/util/home-paths/src/index.ts')).href;
-registerHooks({resolve(name, ctx, next) {
-  return name === '@deepseek-ai/dsh-home-paths'
-    ? {url: homePaths, shortCircuit: true} : next(name, ctx);
-}});
-const {renderAgentInstructions} = await import('./packages/context/agent-instructions/src/render.ts');
-const file = (path, content) => ({absolutePath: resolve(path), displayPath: path, content});
-const globalRule = file('~/.dsh/AGENTS.md', 'G'.repeat(240));
-const rootRule = file('AGENTS.md', 'R'.repeat(800));
-const nestedRule = file('app/AGENTS.md', 'N'.repeat(240));
-
-for (const [maxBytes, files] of [
-  [600, [rootRule, nestedRule]],
-  [600, [globalRule, rootRule, nestedRule]],
-  [2000, [globalRule, rootRule, nestedRule]],
-]) {
-  const {text, omitted, truncated} = renderAgentInstructions(files, {maxBytes});
-  console.log(Buffer.byteLength(text), omitted.map(f => f.displayPath),
-    truncated.map(f => [f.displayPath, f.includedBytes]));
-}
-```
+[下载规则预算实验](/experiments/dsh-instruction-budget.mjs)，保存到 DSH 固定提交的仓库根目录，用 Node 22.23.1 执行 `node dsh-instruction-budget.mjs`。脚本把一个工作区依赖指向同一提交的源码，然后把 240 字节的用户规则、800 字节的项目根规则和 240 字节的子目录规则交给真实渲染器。测量的是上游收到的完整文本，包含文件名和省略说明。
 
 | 输入与每链预算 | 输出字节 | 被完全省略 | 被截断 |
 |---|---:|---|---|
@@ -104,6 +124,14 @@ for (const [maxBytes, files] of [
 | 三份文件，2,000 | 1,659 | 无 | 无 |
 
 输出包含说明和文件标题。第二行超过 600 的原因是用户链与项目链各有预算；用户链并没有挤掉更多子目录规则。同一条项目链内，较宽泛的根文件先被省略，再截取最具体的文件。查某条规则为何缺席时，检查实际呈现的省略和截断记录，比只检查路径是否存在更有解释力。<Src {...source} p="packages/context/agent-instructions/src/render.ts" l="363-420" /> <Src {...source} p="packages/context/agent-instructions/src/render.ts" l="427-480" />
+
+## 怎样复核目录和检查点
+
+除了独立的图谱进程，我在同一固定提交上运行了三套上游测试：`tool-skill` 的消费端、Skill 注册表，以及 `manual-compaction` 的会话压缩。观察目录行为的用例挂上真实 Cordis 注册表、文件提供方和工具插件，用临时文件改正文；测试自行驱动步骤边界。手工压缩用例用可暂停的摘要过程精确控制第二条消息到来的时机。这样的测试能区分“磁盘变化”和“下一步模型拿到什么”，没有测量模型会不会遵守重新发布的目录。<Src {...source} p="packages/skill/tool-skill/tests/tool-skill.spec.ts" l="61-77" /> <Src {...source} p="packages/compaction/compaction-basic/tests/manual-compaction.spec.ts" l="266-308" />
+
+```sh title="在 DSH 固定提交根目录运行，用项目指定的 pnpm 安装依赖后执行"
+pnpm exec vitest run packages/skill/skill/tests/skill.spec.ts packages/skill/tool-skill/tests/tool-skill.spec.ts packages/compaction/compaction-basic/tests/manual-compaction.spec.ts
+```
 
 ## 进化发生在哪一层
 

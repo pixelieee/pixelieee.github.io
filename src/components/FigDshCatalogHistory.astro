@@ -1,0 +1,29 @@
+---
+const {lang = 'zh'} = Astro.props;
+const en = lang === 'en';
+const stages = en ? [
+  ['First step', 'Catalog C₁', 'The step publishes the name and description as a durable message.'],
+  ['Change the body', 'C₁ still visible', 'The digest still matches. The next skill call can read the new body. No new catalog message is needed.'],
+  ['Replace C₁ with a checkpoint', 'C₁ in log only', 'The original event survives, but the model-facing surface now contains the checkpoint in its place.'],
+  ['Start the next step', 'Catalog C₂', 'The visible catalog is missing. The step publishes the same entries again, even though no skill file changed.'],
+] : [
+  ['首个步骤', '发布目录 C₁', '名称和描述成为一条可持久化的目录消息。'],
+  ['只改正文', 'C₁ 仍可见', '目录摘要相同，这一步可以不发目录。调用 Skill 时已可读到新正文。'],
+  ['用检查点覆盖 C₁', 'C₁ 只在日志里', '目录事件仍能查到。此时模型能看到的位置，已经换成了压缩消息。'],
+  ['开始下一步', '重新发布 C₂', '可见消息里找不到原目录。即使文件完全没变，这一步也会重新发布相同条目。'],
+];
+---
+<figure class="catalog">
+  <ol>{stages.map(([when, state, description]) => <li><div class="step">{when}</div><div class="fact"><strong>{state}</strong><span>{description}</span></div></li>)}</ol>
+  <figcaption>{en ? 'Two upstream cases, shown on the same timeline. The body-edit case changes a file. The checkpoint case replaces one surface message. Each is sufficient to test a different input of the catalog decision.' : '图 2　把两组独立回归用例画在同一条时间线上。正文修改改变磁盘，检查点改变模型能看到的消息；两者分别检验目录发布判断的一项输入。'}</figcaption>
+</figure>
+<style>
+  .catalog ol{list-style:none;padding:0;margin:0}
+  .catalog li{display:grid;grid-template-columns:minmax(95px,32%) 1fr;gap:.85rem;position:relative;padding:.8rem 0;margin:0;border-top:1px solid var(--line)}
+  .step{font:.83rem/1.65 var(--mono);color:var(--mute);overflow-wrap:anywhere}
+  .fact{position:relative;border-left:1px solid var(--line);padding-left:1.05rem}
+  .fact::before{content:'';position:absolute;left:-3.5px;top:.57rem;width:6px;height:6px;background:var(--bg);border:1px solid var(--mute)}
+  li:last-child .fact::before{background:var(--plat);border-color:var(--plat-ink)}
+  strong{display:block;font:600 .99rem/1.5 var(--sans);color:var(--fg)}
+  span{display:block;font:.9rem/1.7 var(--sans);color:var(--fg-2);margin-top:.18rem}
+</style>

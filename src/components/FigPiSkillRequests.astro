@@ -1,0 +1,44 @@
+---
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const rows = [
+  { label: en ? 'First call' : '首次调用', system: 'RULE_A · DESC_A', messages: ['BODY_A'], note: en ? 'The first invocation expands the file into a user message.' : '第一次显式调用，正文随用户消息进入请求。' },
+  { label: en ? 'Edit on disk' : '改文件后', system: 'RULE_A · DESC_A', messages: ['BODY_A', 'BODY_B'], note: en ? 'The same request contains the old catalog, the earlier invocation and the newly read procedure.' : '同一份请求里，同时有旧目录、前一次调用的旧步骤，以及刚从文件读出的新步骤。' },
+  { label: en ? 'New name' : '调用新名字', system: 'RULE_A · DESC_A', messages: ['BODY_A', 'BODY_B', '/skill:late'], note: en ? 'The new file exists. Its unregistered command reaches the provider as literal text.' : '新文件已经存在。当前目录还找不到这个名字，命令原文直接到了模型端。' },
+  { label: en ? 'Reload' : '重新加载', system: 'RULE_B · DESC_B · NEW_SKILL', messages: ['BODY_A', 'BODY_B', '/skill:late', 'BODY_B'], note: en ? 'The transcript keeps the original system message and a patch. Replaying them yields B. Earlier invocations still contain the body they read.' : '底层请求同时带着旧系统消息和一条更新。按顺序应用后规则为 B。历次调用仍携带当时读出的正文。' },
+  { label: en ? 'Fresh session' : '新开会话', system: 'RULE_B · DESC_B · NEW_SKILL', messages: ['hello'], note: en ? 'The independent session discovers the edited resources. Its only user message is the new greeting.' : '独立会话重新发现磁盘资源，历史里的两份步骤都没有跟过来。' },
+];
+const id = (i: number) => `pi-request-${lang}-${i}`;
+---
+<figure class="requests">
+  <fieldset>
+    <legend>{en ? 'Inspect a captured Pi request' : '切换查看 Pi 实际发出的请求'}</legend>
+    <div class="choices">
+      {rows.map((row, i) => <label><input type="radio" name={`pi-requests-${lang}`} value={String(i)} aria-controls={id(i)} checked={i===1} /><span>{row.label}</span></label>)}
+    </div>
+    {rows.map((row, i) => <div class="packet" id={id(i)} data-step={i}>
+      <dl><div><dt>{en ? 'effective system' : '当前有效 system'}</dt><dd><code>{row.system}</code></dd></div>
+          <div><dt>{en ? 'user history' : '历次 user'}</dt><dd>{row.messages.map(m => <code>{m}</code>)}</dd></div></dl>
+      <p>{row.note}</p>
+    </div>)}
+  </fieldset>
+  <figcaption>{en ? 'Figure 1. Selected excerpts from the captured requests. Each chip in the user row represents one message, in send order.' : '图 1　摘录各次请求中与实验有关的文字。下排每个小格对应一条用户消息，按发送顺序排列。'}</figcaption>
+</figure>
+<style>
+  fieldset{min-inline-size:0;margin:0;padding:0;border:0}
+  legend{padding:0;font:600 1rem/1.6 var(--sans);color:var(--fg)}
+  .choices{display:flex;flex-wrap:wrap;gap:.3rem .9rem;border-bottom:1px solid var(--line);padding:.65rem 0}
+  label{position:relative;cursor:pointer;font: .84rem/1.65 var(--sans);color:var(--mute);padding:.12rem .15rem}
+  label input{position:absolute;opacity:0;inset:0;width:100%;height:100%;margin:0;cursor:pointer}
+  label:has(:checked){color:var(--fg);box-shadow:inset 0 -2px var(--plat-ink)}
+  label:has(:focus-visible){outline:2px solid var(--plat-ink);outline-offset:2px}
+  .packet{display:none}
+  fieldset:has([value="0"]:checked) [data-step="0"], fieldset:has([value="1"]:checked) [data-step="1"],
+  fieldset:has([value="2"]:checked) [data-step="2"], fieldset:has([value="3"]:checked) [data-step="3"],
+  fieldset:has([value="4"]:checked) [data-step="4"]{display:block}
+  dl{margin:1rem 0 .65rem} dl>div{display:grid;grid-template-columns:minmax(70px,21%) 1fr;align-items:baseline;gap:8px;margin:.45rem 0}
+  dt{font:.79rem/1.7 var(--mono);color:var(--mute)} dd{display:flex;flex-wrap:wrap;gap:.35rem;margin:0}
+  dd code{font:.82rem/1.5 var(--mono);padding:.12rem .35rem;overflow-wrap:anywhere}
+  .packet p{margin:.65rem 0;font-size:.92rem;color:var(--fg-2)}
+  @media print{.choices{display:none}.packet{display:block}}
+</style>
