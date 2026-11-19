@@ -1,0 +1,107 @@
+---
+/** 轴 1：可恢复落盘 vs 日志派生模型历史 */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    a0: '同一句「会话能续上」，两条完全不同的路径',
+    left: '说法 A · 可恢复落盘',
+    right: '说法 B · 日志派生历史',
+    l1: '用户说话',
+    l2: '循环改内存 history',
+    l3: '顺便 append JSONL / SQLite',
+    l4: '下次启动：读文件填回内存',
+    l5: '循环信任的是内存',
+    r1: '用户说话 → append 事件',
+    r2: 'deriveMessages() 从日志折出',
+    r3: '折出的历史交给模型',
+    r4: '没有第二份「真」消息表',
+    r5: '循环信任的是日志前缀',
+    vs: '多数产品停在左边；dsh 公开走到右边（仅模型可见历史）',
+    cap: '图 2　左边保证「聊过能回来」；右边保证「发给模型的只能从同一份日志折出来」。二者常被一句「有 JSONL」糊成一件事。',
+  },
+  en: {
+    a0: '“I can resume” hides two different paths',
+    left: 'Claim A · resumable dump',
+    right: 'Claim B · history derived from the log',
+    l1: 'user speaks',
+    l2: 'loop mutates in-memory history',
+    l3: 'also appends JSONL / SQLite',
+    l4: 'on restart: file → refill memory',
+    l5: 'the loop trusts memory',
+    r1: 'user speaks → append event',
+    r2: 'deriveMessages() folds the log',
+    r3: 'folded history goes to the model',
+    r4: 'no second “true” message table',
+    r5: 'the loop trusts the log prefix',
+    vs: 'Most products stop on the left; dsh publicly reaches the right (for model-visible history)',
+    cap: 'Figure 2. Left: chat can come back. Right: what the model sees must fold from one log. “We have JSONL” usually means only the left.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 340" role="img" aria-label={t.a0}>
+      <defs>
+        <marker id={`th-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)"/>
+        </marker>
+        <marker id={`tg-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)"/>
+        </marker>
+      </defs>
+      <g class="bx">
+        <rect x="12" y="12" width="352" height="268" rx="12"/>
+        <rect x="396" y="12" width="352" height="268" rx="12"/>
+      </g>
+      <g class="in">
+        <rect x="36" y="56" width="304" height="36" rx="8"/>
+        <rect x="36" y="108" width="304" height="36" rx="8"/>
+        <rect x="36" y="160" width="304" height="36" rx="8"/>
+        <rect x="36" y="212" width="304" height="36" rx="8"/>
+        <rect x="420" y="56" width="304" height="36" rx="8"/>
+        <rect x="420" y="108" width="304" height="36" rx="8"/>
+        <rect x="420" y="160" width="304" height="36" rx="8"/>
+        <rect x="420" y="212" width="304" height="36" rx="8"/>
+      </g>
+      <g class="t">
+        <text x="28" y="38" class="h">{t.left}</text>
+        <text x="412" y="38" class="h">{t.right}</text>
+        <text x="52" y="78">{t.l1}</text>
+        <text x="52" y="130">{t.l2}</text>
+        <text x="52" y="182">{t.l3}</text>
+        <text x="52" y="234">{t.l4}</text>
+        <text x="52" y="268" class="m">{t.l5}</text>
+        <text x="436" y="78">{t.r1}</text>
+        <text x="436" y="130">{t.r2}</text>
+        <text x="436" y="182">{t.r3}</text>
+        <text x="436" y="234">{t.r4}</text>
+        <text x="436" y="268" class="g">{t.r5}</text>
+      </g>
+      <g class="ln">
+        <path d="M188 92 V108" marker-end={`url(#th-${lang})`}/>
+        <path d="M188 144 V160" marker-end={`url(#th-${lang})`}/>
+        <path d="M188 196 V212" marker-end={`url(#th-${lang})`}/>
+        <path d="M572 92 V108" marker-end={`url(#tg-${lang})`} class="gd"/>
+        <path d="M572 144 V160" marker-end={`url(#tg-${lang})`} class="gd"/>
+        <path d="M572 196 V212" marker-end={`url(#tg-${lang})`} class="gd"/>
+      </g>
+      <text x="380" y="318" text-anchor="middle" class="m s">{t.vs}</text>
+    </svg>
+  </div>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+<style>
+.fig{margin:1.6rem 0 1.8rem}
+.fig-scroll{overflow-x:auto}
+.bx rect{fill:var(--card);stroke:var(--line);stroke-width:1}
+.in rect{fill:var(--code);stroke:var(--line);stroke-width:1}
+.t text{fill:var(--fg);font:14px var(--sans)}
+.t .h{font:600 15px var(--sans)}
+.t .m,.m{fill:var(--mute);font:12.5px var(--sans)}
+.t .g{fill:var(--plat-ink);font:12.5px var(--sans)}
+.s{font-size:12.5px}
+.ln path{fill:none;stroke:var(--mute);stroke-width:1.2}
+.ln .gd{stroke:var(--plat)}
+figcaption{margin-top:.7rem;color:var(--mute);font:13px/1.55 var(--sans)}
+</style>

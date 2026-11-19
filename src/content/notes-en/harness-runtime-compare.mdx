@@ -1,11 +1,12 @@
 ---
 title: "Seven Harnesses: Truth, Execution, Messaging and Embedding"
-dek: "Ask four questions first, then read the implementations. You should leave able to place Pure Agent yourself."
-summary: "Pin Claude Code, Codex, pi, OpenCode, Hermes, Alma and DeepSeek Harness to four axes, and name the seat still empty."
+dek: "“I can resume” hides two kinds of truth; “multi-agent” hides four builds. Leave able to tick the checklist yourself."
+summary: "Walk one user request across Claude Code, Codex, pi, OpenCode, Hermes, Alma and DeepSeek Harness on four axes, and name the seat still open."
 date: "2026-11-19"
+updated: "2026-11-19"
 topic: "Agent engineering"
 status: "draft"
-pinned: "compare draft · open-source pins from 2026-11-19 local clones"
+pinned: "open-source pins · 2026-11-19 local clones · compare draft"
 tags:
   - runtime
   - session log
@@ -15,8 +16,14 @@ tags:
 ---
 import Infer from '../../components/Infer.astro';
 import FigHarnessAxes from '../../components/FigHarnessAxes.astro';
+import FigTruthPaths from '../../components/FigTruthPaths.astro';
+import FigExecSplit from '../../components/FigExecSplit.astro';
+import FigMsgPatterns from '../../components/FigMsgPatterns.astro';
+import FigEmbedModes from '../../components/FigEmbedModes.astro';
+import FigEmptySeat from '../../components/FigEmptySeat.astro';
+import JourneyHarness from '../../components/JourneyHarness.astro';
 
-**In one line:** Frontier harnesses already look alike on “can I resume a session?”. They split on **where truth lives, who touches the outside world, how agents talk, and how you embed the thing**. DeepSeek Harness derives model-visible history from an append-only log, yet the loop still calls the model and tools—that gap between “log is truth” and “loop only emits commands” is still open.
+**In one line:** Frontier harnesses already look alike on “can I resume?”. They split on **where truth lives, who touches the outside world, how agents talk, and how you embed the thing**. DeepSeek Harness derives model-visible history from an append-only log, yet the loop still calls the model and tools—that gap between “log is truth” and “loop only emits commands” is still open.
 
 This note is not a product review and not the memory/skills series. It exists so you can judge Pure Agent’s end-state without being captured by one vendor story.
 
@@ -30,7 +37,7 @@ After reading you should answer:
 
 ## How to read
 
-Skim the panorama table, then walk the four axes. Line references for open-source trees are pinned to local read-only clones from 2026-11-19. Claude Code and Alma are closed source—docs only.
+Start with the four axes and Figure 1. Then walk one request—“fix this test”—through the mainstream path and the empty seat. Line references for open-source trees are pinned to local read-only clones from 2026-11-19. Claude Code and Alma are closed source—docs only.
 
 | Name | Commit |
 |---|---|
@@ -40,108 +47,133 @@ Skim the panorama table, then walk the four axes. Line references for open-sourc
 | OpenCode | `d33b5783338b` |
 | Hermes Agent | `0d5fdd60da58` |
 
-## Panorama
-
-| | One-line shape | What you mainly get |
-|---|---|---|
-| Claude Code | Closed terminal agent; SDK spawns a `claude` subprocess per `query()` | Product depth, process isolation, experimental teams |
-| Codex | Open Rust core; public TS SDK runs `codex exec`; optional app-server | Full core + optional multi-client protocol |
-| pi | Minimal TypeScript harness; in-process SDK + long-lived RPC child | Small core, extensions, readable session trees |
-| OpenCode | Optional headless HTTP; SDK runs the same router in memory by default | Multi-surface product, optional server |
-| Hermes | Python app; always-on gateway for IMs | Learning loop, channel reach |
-| Alma | Local-first desktop / phone app | Editable memory, chat UI over other agents |
-| DeepSeek Harness | Cordis plugin tree; SDK launches `dsh --profile sdk` | Log-derived model history, replaceable product layers |
-
-Same word—“harness”—different layers. Alma is UI; Hermes is an app with a gateway; Claude Code / Codex are full products with embed shells; pi / dsh sit closer to “something you import or spawn”. Pure Agent should align with that last layer.
-
 ## Four axes
 
 <FigHarnessAxes lang="en" />
 
-## Axis 1 — Where truth lives
+## Walk one request first
 
-**Claim A: the session is an append-only file.** Claude Code writes JSONL and reads it back on resume. Codex has rollout JSONL “so sessions can be replayed or inspected later”. pi stores a JSONL tree with `id` / `parentId`. That only means chat can come back—not that the live loop believes the file.
+Tables drift. Follow the same user line through mainstream loops and the empty seat before the details.
 
-**Claim B: model-visible history is derived only from the log.** Among the seven, DeepSeek Harness states this in the open:
+<JourneyHarness lang="en" />
 
-> The LLM message history is *derived* from the log, never stored separately; replay is re-derivation from the same events.
+## Panorama
 
-(`docs/subsystems/session.md` @ `2e39e70`). The loop builds requests via `deriveMessages()`.
-
-| | On disk | What the live loop trusts | “Log is sole truth”? |
-|---|---|---|---|
-| Claude Code | JSONL transcript | Docs do not specify internals | Not claimed |
-| Codex | Memory history + rollout + state DB | `run_turn` reads memory history | No |
-| pi | JSONL tree | In-flight: memory; finished: SessionManager | For finished trees |
-| OpenCode | SQLite sessions / durable events | Recorded Session history | Commit log, not command fold |
-| Hermes | SQLite persistence | Message list to the model | Canonical copy, not fold executor |
-| Alma | Product Memory objects | No event-log docs | N/A |
-| dsh | Append-only SessionEvent | `deriveMessages()` | **Yes for model-visible history** |
-
-Append-only is common. **Treating the log as the loop’s only input** is not. <Infer lang="en" /> Learning only “write JSONL” buys the entry ticket, not the differentiator. That differentiator continues on axis 2.
-
-## Axis 2 — Who runs side effects
-
-Log truth does not imply a pure loop.
-
-DeepSeek Harness stacks both: history from the log, and a loop that still calls `llm.stream` / `tools.execute`. In memory, `tool/call` is appended before dispatch; on disk, fail-closed flush before requests / tool effects lives in the **removable** plugin `dsh-session-checkpoint-policy`. Architecture docs say the agent loop itself is a plugin. Crash repair returns a physically valid prefix, then `interruptedTurnClosers` appends synthetic results—strong, but the executor remains a replaceable `AgentLoop` service.
-
-“Event-driven” is not “side-effect free” either. Pizza replaces a dialogue `while` with store subscriptions, yet LLM handlers still `await` the model. OpenSuperAgent’s outer loop is a 400ms pump. Those designs answer “what wakes you”, not “can effects enter the core”.
-
-The empty sentence for Pure Agent is:
-
-> The log is sole truth; `reduce` only emits effects; model and tool I/O live in the interpreter; replay checks effects instead of re-performing them.
-
-dsh finished the “model history” half. The second half is still open. The old runtime string `log-reconstruction desync` is gone from `2e39e70` (removed with runtime-invariant plugins in v0.2.0-rc.2). Keeping a desync assert would be Pure Agent’s own test, not current dsh behavior.
-
-## Axis 3 — How agents talk
-
-“One talks to the user; others work” is assembled a few ways:
-
-1. **Subagent-as-tool** — child run returns a tool result (Claude Code subagents, many `background: true` switches).
-2. **First-class sessions + mailbox / steer** — Codex mailbox; pi steer/followUp; dsh turns `sendMessage` into a `UserMessage` with `kind: 'agent-message'` then steers the same inbox (unified entry, typed).
-3. **Orchestration ledger outside the loop** — OpenSuperAgent inbox + pump; dsh-superagent-prototype effects with `relay` (wake) vs `notice` (inject without wake).
-4. **Product teams** — Claude Code experimental agent teams; Hermes `delegate_task`; Alma workflows + human approval.
-
-Most products do **not** unify user text, peer traffic, and external events into one message type. Pizza often wraps peer `_tell` as prefixed `USER_MESSAGE`—one entry, lost types. <Infer lang="en" /> A cleaner shape is one `Input` pipe with `user` / `peer` / `external` kept distinct.
-
-## Axis 4 — How you embed
-
-| | Primary embed | Always-on server? |
+| | In one line | What you mainly get |
 |---|---|---|
-| Claude Code | Subprocess per `query()` | Managed Agents are hosted; not a local app server |
-| Codex | Public TS SDK = `codex exec` | app-server exists; TS SDK does not default to it |
-| pi | In-process SDK | Long-lived RPC child, no port by default |
-| OpenCode | In-memory router | Optional HTTP on localhost |
-| Hermes | In-process Python | Gateway stays up for IMs |
-| Alma | No local SDK | Hosted HTTP / MCP |
-| dsh | In-process Cordis; SDK spawns `dsh` | `127.0.0.1:3080` is the **web** profile only |
+| Claude Code | Closed CLI agent; SDK `query()` spawns a `claude` subprocess | Product completeness, process isolation, experimental Agent teams |
+| Codex | Open Rust core; public TS SDK runs `codex exec`; optional app-server | Full core + optional multi-client protocol |
+| pi | Minimal TS harness; in-process SDK; optional long-lived RPC child | Small core, extensions, readable session tree |
+| OpenCode | Optional headless HTTP; SDK runs the same routes in memory by default | Multi-surface product, optional server |
+| Hermes | Python app; always-on gateway for IMs | Learning loop, channel reach |
+| Alma | Local-first desktop / phone app | Readable memory, chats that collect other agents’ sessions |
+| DeepSeek Harness | Cordis plugin tree; SDK spawns `dsh --profile sdk` | Log-derived model history, swappable product layers |
 
-Pattern: **embed defaults to in-process library or on-demand process**. Always-on servers appear after multi-client / IM / remote-desktop product reasons. That is also why Pure Agent should not copy dsh’s “loop is a plugin”: dsh’s immovable pieces are Cordis and event contracts; making `reduce` configurable recreates “no privileged core” and erases the open seat.
+Names say “harness”; they sell different layers. Alma is UI; Hermes is an app with a gateway; Claude Code / Codex are full products with embed shells; pi / dsh are closer to “a runtime you can import or spawn”. Align with the last layer.
+
+---
+
+## Axis 1: Where truth lives
+
+<FigTruthPaths lang="en" />
+
+**Claim A: resumable dump.** Claude Code writes JSONL and reads it back. Codex has rollout JSONL. pi stores a JSONL tree with `id` / `parentId`. That means chat can come back—not that the loop trusts the file *now*.
+
+**Claim B: model history only folds from the log.** Among the seven, DeepSeek Harness says this in public source: the LLM message history is *derived* from the log, never stored separately; replay is re-derivation. The loop builds requests via `session.deriveMessages()`.
+
+| | On disk | What the loop trusts now | Sole log truth? |
+|---|---|---|---|
+| Claude Code | JSONL transcript | Docs silent; subprocess owns the file | Not claimed |
+| Codex | Memory + rollout + state DB | `run_turn` reads memory history | No; rollout write failure does not stop the turn |
+| pi | JSONL tree | In-flight memory; finished context via SessionManager | For settled tree yes; in-flight no |
+| OpenCode | SQLite session / message / durable event | Runner reads recorded Session history | Commit record, not command-level fold |
+| Hermes | SQLite | Still feeds a message list to the model | Canonical copy, not the fold engine |
+| Alma | Product memory objects | Docs do not describe an event log | N/A |
+| dsh | Append SessionEvent | `deriveMessages()` | **Yes for model-visible history** |
+
+Append-only is common. **Treating the log as the loop’s only input** is not. OpenCode / Hermes / Codex persist hard; “what next” still lives in imperative loops and memory.
+
+<Infer /> Learning “write JSONL” buys the entry ticket, not the difference. The difference continues on axis 2.
+
+## Axis 2: Who runs side effects
+
+<FigExecSplit lang="en" />
+
+dsh stacks two claims: history comes from the log; the loop still `llm.stream`s and `tools.execute`s. In memory, tools `append('tool/call')` then `dispatch`. Disk write-ahead is a **removable** plugin (`dsh-session-checkpoint-policy`). Architecture docs say every part of the product is a plugin—including the agent loop. Crash recovery reconstitutes an interrupted turn via `interruptedTurnClosers`. Strong—and the actor is still a patchable `AgentLoop`.
+
+| | Loop executes? | How hard is write-ahead? |
+|---|---|---|
+| Codex | Yes, `run_turn` | Rollout not fail-closed |
+| pi | Yes, `tool.execute` | Append then run; no forced fsync |
+| OpenCode | Yes | Start tools after related events; SQLite claim to continue |
+| Hermes | Yes | Flush session DB before tools; fail → skip |
+| dsh | **Yes** | Hard in memory; disk is a plugin |
+
+**“Event-driven” ≠ “the loop does not execute.”** Pizza replaces a chat `while` with EventStore subscriptions; the LLM handler still `await`s the model. OpenSuperAgent polls every 400ms and hands a full turn to Pizza. They answer “who woke whom,” not “can side effects enter the core.”
+
+The empty-seat sentence:
+
+> The log is sole truth; `reduce` only emits effects; model and tool calls live in the interpreter; replay verifies those effects instead of redoing I/O.
+
+dsh finished the first half (model history). The second half is still open. The old runtime string `log-reconstruction desync` is gone from `2e39e70` with the removed invariant plugin.
+
+## Axis 3: How agents talk
+
+<FigMsgPatterns lang="en" />
+
+1. **Subagent as a tool** — nested turn, result as tool result (Claude Code subagents, many “background: true” switches).
+2. **Peer session + mailbox** — Codex mailbox preempt; pi steer / followUp; dsh `agent-message` then `steer` into one inbox (types stay distinct). Task boards in dsh do **not** wake agents.
+3. **Ledger outside the loop** — OpenSuperAgent SQLite inbox + pump; dsh-superagent-prototype `relay` / `notice`. Progress is a projection.
+4. **Product teams** — Claude Agent teams (experimental); Hermes `delegate_task`; Alma talks workflows and human approval, not subagents.
+
+| | User barge-in / peer / external |
+|---|---|
+| Most products | **Not** unified |
+| dsh | Same session log; kinds stay separate |
+| Pizza | Cross-agent `_tell` often wrapped as prefixed `USER_MESSAGE` — one door, lost types |
+
+<Infer /> One inbox helps; disguising peer talk as the user’s words accrues debt. Cleaner shape: one `Input` pipe with `user` / `peer` / `external` fields.
+
+## Axis 4: How you embed
+
+<FigEmbedModes lang="en" />
+
+| | Main embed | Always-on? |
+|---|---|---|
+| Claude Code | One subprocess per `query()`, stdio | Managed Agents hosted; not a local app-server |
+| Codex | Public TS SDK = `codex exec` + JSONL | app-server exists; TS SDK does not default to it |
+| pi | In-process `createAgentSession()` | `pi --mode rpc` is a long-lived child; no port by default |
+| OpenCode | In-memory SDK routes | Optional HTTP, localhost + password |
+| Hermes | In-process Python | Gateway is for IM, not an embed JSON-RPC core |
+| Alma | No local SDK | Hosted HTTP / MCP |
+| dsh | In-process Cordis; public SDK spawns `dsh` | Web profile listens on `127.0.0.1:3080`; sdk / acp / headless do not |
+
+For embedders, the default is almost always a **library** or **spawn when needed**. Always-on servers follow multi-client / IM / remote-desktop reasons. That is also why “everything is a plugin” cannot copy from dsh unchanged: if `reduce` itself is swappable, you erase the still-empty claim that the actor never enters the core.
+
+---
 
 ## The empty seat
 
-| | Log-derived model history | Loop never runs side effects | In-process `import` | Core guarantees not unpluggable |
-|---|---|---|---|---|
-| pi | Weak | No | **Yes** | Core loop yes; many features live in extensions |
-| dsh | **Strong** | No | Yes (also subprocess SDK) | No—loop replaceable |
-| Codex / Claude Code | Weak / undocumented | No | Public SDKs mostly subprocess | Strong products, not a pure TS in-process kernel |
-| OpenCode / Hermes | Medium | No | Limited | No |
+<FigEmptySeat lang="en" />
 
-Nobody firmly holds all four: TypeScript in-process import, append-only log as sole truth for history **and** effects, `reduce` that never performs I/O, and guarantees that are not profile plugins.
+Nobody yet holds all four: TypeScript in-process import; model history (and effects) derived from an append-only log; `reduce` never does I/O; those guarantees are not removable plugins.
+
+Pizza / Restate / Temporal prove event subscription, journal replay, and activation boundaries at production scale—while handlers still do I/O, or they are not a terminal coding-agent kernel. The seat stays empty.
 
 ## Checklist (fill after reading)
 
-**A. Truth** — resume JSONL only / derive model history (dsh) / also journal effects for replay checks (open seat)
+**A. Truth** — resumable dump / derive model history (dsh) / effects must enter the log first (empty seat)
 
-**B. Execution** — loop may call tools (mainstream) / loop emits effects only (open seat) / disk write-ahead as plugin (dsh) / as kernel guarantee (stricter)
+**B. Execution** — loop may call model & tools / loop only emits effects / disk write-ahead as plugin (dsh) / as core guarantee
 
-**C. Messaging** — subagent-as-tool / sessions+mailbox / outer ledger / unified Input with peer types
+**C. Messaging** — subagent-as-tool / peer + mailbox / ledger outside loop / unified Input with peer types
 
-**D. Embedding** — in-process only / library + on-demand bridge / default app server
+**D. Embedding** — in-process only / library + spawn bridge / default always-on app-server
 
-**E. Extension** — everything is a plugin including the loop (dsh) / small immovable core + unloadable modules
+**E. Extension** — everything is a plugin including the loop (dsh) / small immovable core, removable outer modules
 
-**F. Wording** — Primitive / Module / Capability (instead of the casual “lego” metaphor)
+**F. Vocabulary** — Primitive / Module / Capability (instead of casual “blocks”)
 
-This note is `draft`. After you tick the checklist, we turn the ticks into a Pure Agent spec—not the other way around.
+---
+
+Draft (`draft`). Tick the checklist first; then fold the ticks into a spec—not the other way around.

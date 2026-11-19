@@ -1,13 +1,14 @@
 ---
 title: "七家 Harness：真相、执行、通信与嵌入"
 titleEn: "Seven Harnesses: Truth, Execution, Messaging and Embedding"
-dek: "先问四件事，再读各家实现。读完应能自己判断 Pure Agent 该站在哪一侧。"
-summary: "把 Claude Code、Codex、pi、OpenCode、Hermes、Alma、DeepSeek Harness 压到四条轴线上对照，并标出还没人占稳的空位。"
-summaryEn: "Compare seven agent harnesses on four axes—truth, side effects, messaging, embedding—and name the seat still open."
+dek: "同一句「能续上会话」，藏着两种真相；同一句「多 Agent」，藏着四种拼法。读完应能自己勾决策清单。"
+summary: "用一条用户请求串起 Claude Code、Codex、pi、OpenCode、Hermes、Alma、DeepSeek Harness，沿四条轴对照，并标出还没人站稳的空位。"
+summaryEn: "Walk one user request across seven harnesses on four axes—truth, side effects, messaging, embedding—and name the seat still open."
 date: "2026-11-19"
+updated: "2026-11-19"
 topic: "Agent 工程"
 status: "draft"
-pinned: "对照稿 · 开源钉到 2026-11-19 本地克隆"
+pinned: "开源钉到 2026-11-19 本地克隆 · 对照稿"
 tags:
   - 运行时
   - 会话日志
@@ -17,11 +18,17 @@ tags:
 ---
 import Infer from '../../components/Infer.astro';
 import FigHarnessAxes from '../../components/FigHarnessAxes.astro';
+import FigTruthPaths from '../../components/FigTruthPaths.astro';
+import FigExecSplit from '../../components/FigExecSplit.astro';
+import FigMsgPatterns from '../../components/FigMsgPatterns.astro';
+import FigEmbedModes from '../../components/FigEmbedModes.astro';
+import FigEmptySeat from '../../components/FigEmptySeat.astro';
+import JourneyHarness from '../../components/JourneyHarness.astro';
 import Src from '../../components/Src.astro';
 
 **一句话结论：** 前沿 harness 在「会话能不能续上」上已经很像；真正分出阵营的，是**真相放哪、谁去动外界、Agent 之间怎么说话、别人怎样嵌进来**这四件事。DeepSeek Harness 把模型可见历史做成了日志上的唯一事实，但循环自己仍然去调模型和工具——这正是「日志是真相」和「循环是纯命令」之间还空着的那一格。
 
-这篇不是产品评测，也不是记忆 / Skill 专题（那几篇已经单独写过）。它只服务一个目的：让你读完以后，对 Pure Agent 的终局取舍有自己的判断，而不是被某一家的叙事带走。
+这篇不是产品评测，也不是记忆 / Skill 专题。它只服务一件事：让你读完以后，对 Pure Agent 的终局取舍有自己的判断，而不是被某一家的叙事带走。
 
 读完你应能回答：
 
@@ -29,11 +36,11 @@ import Src from '../../components/Src.astro';
 2. 为什么 dsh 说一切皆插件，却仍然不能叫「纯内核」？
 3. 前台跟人说话、后台干活，各家分别靠什么拼出来？
 4. 进程内库、按需子进程、常驻 App Server，各自在解决谁的问题？
-5. Pure Agent 若要占一个还没人站稳的位置，最站得住的切口在哪？
+5. 若要占一个还没人站稳的位置，最站得住的切口在哪？
 
 ## 怎么读这篇
 
-先看全景表，建立名字和形态；再沿四条轴往下走，每条轴只留两三家当标本；最后才落到「空位」和决策清单。中间出现的行号都钉在 2026-11-19 本地只读克隆上；Claude Code 与 Alma 闭源，只引官方文档。
+先看四条轴和图 1，建立坐标；再跟一条「修这个测试」走完主流与空位的时间线；然后每一轴只留两三家当标本。中间出现的行号都钉在 2026-11-19 本地只读克隆上；Claude Code 与 Alma 闭源，只引官方文档。
 
 开源钉钉：
 
@@ -44,6 +51,18 @@ import Src from '../../components/Src.astro';
 | pi | `653f332b6fe2` |
 | OpenCode | `d33b5783338b` |
 | Hermes Agent | `0d5fdd60da58` |
+
+## 四条轴
+
+<FigHarnessAxes />
+
+后面四节按这四条展开。读的时候可以自己在纸上画一列「想站哪」，读完再填文末清单。
+
+## 先跟一条请求走一遍
+
+抽象表容易漂。先用同一句话——用户说「修这个测试」——分别想象主流循环和还空着的那一侧，建立肌肉记忆，再进细节。
+
+<JourneyHarness />
 
 ## 全景：七家各自卖什么
 
@@ -57,27 +76,23 @@ import Src from '../../components/Src.astro';
 | Alma | 本地优先的桌面 / 手机应用 | 可读记忆、把各家会话收成聊天 |
 | DeepSeek Harness | Cordis 插件树；SDK 拉 `dsh --profile sdk` 子进程 | 日志派生模型历史、可替换的一切产品层 |
 
-一眼扫过去会发现：名字都叫 harness，卖的却不是同一层。Alma 是界面；Hermes 是带网关的应用；Claude Code / Codex 是完整产品加嵌入外壳；pi / dsh 更接近「可以被 import 或拉起的运行时」。Pure Agent 要对齐的，是后一层。
+一眼扫过去会发现：名字都叫 harness，卖的却不是同一层。Alma 是界面；Hermes 是带网关的应用；Claude Code / Codex 是完整产品加嵌入外壳；pi / dsh 更接近「可以被 import 或拉起的运行时」。要对齐的，是后一层。
 
-## 四条轴
-
-<FigHarnessAxes />
-
-后面四节按这四条展开。读的时候可以自己在纸上画一列「Pure Agent 想站哪」，读完再填。
+---
 
 ## 轴 1：真相在哪
 
 先分清两个常被混为一谈的说法。
 
-**说法 A：会话落成只追加的文件。** Claude Code 默认把会话写到本地 JSONL，恢复时读回（官方 Glossary / Sessions）。Codex 有 rollout JSONL，「so sessions can be replayed or inspected later」（`codex-rs/rollout/src/recorder.rs`）。pi 的会话是带 `id` / `parentId` 的 JSONL 树。这只说明「聊过的内容能回来」，不说明「循环此刻信的是这份文件」。
+<FigTruthPaths />
+
+**说法 A：会话落成只追加的文件。** Claude Code 默认把会话写到本地 JSONL，恢复时读回（官方 Glossary / Sessions）。Codex 有 rollout JSONL，「so sessions can be replayed or inspected later」。pi 的会话是带 `id` / `parentId` 的 JSONL 树。这只说明「聊过的内容能回来」，不说明「循环此刻信的是这份文件」。
 
 **说法 B：发给模型的历史只能从日志推导。** 七家里，公开源码把这话说死的是 DeepSeek Harness：
 
 > The LLM message history is *derived* from the log, never stored separately; replay is re-derivation from the same events.
 
-出处：`docs/subsystems/session.md`（提交 `2e39e70`）。循环组请求时走 `session.deriveMessages()`（`packages/core/agent-loop/src/agent.ts` 一带）。
-
-对照一下其余几家在轴 1 上的落点：
+出处：`docs/subsystems/session.md`（提交 `2e39e70`）。循环组请求时走 `session.deriveMessages()`。
 
 | | 落盘形态 | 循环当下信什么 | 算不算「日志唯一事实」 |
 |---|---|---|---|
@@ -91,19 +106,19 @@ import Src from '../../components/Src.astro';
 
 所以：只追加很常见；**把日志当成循环的唯一输入**并不常见。OpenCode / Hermes / Codex 都有很强的持久化，但「下一步做什么」仍然捏在命令式循环和内存结构手里。
 
-<Infer /> 若只学「落成 JSONL」，Pure Agent 学到的是入场券，不是差异。差异要从说法 B 继续往下挖——挖到轴 2。
+<Infer /> 若只学「落成 JSONL」，学到的是入场券，不是差异。差异要从说法 B 继续往下挖——挖到轴 2。
 
 ## 轴 2：谁执行副作用
 
 真相在日志里，并不自动等于「循环不会去动外界」。
 
-DeepSeek Harness 在同一份设计里把两件事叠在一起：历史从日志来；循环仍然 `llm.stream`、仍然 `tools.execute`（`packages/core/agent-loop/src/agent.ts`）。工具路径上，内存里会先 `append('tool/call')` 再 `dispatch`（`packages/core/tools/src/batch.ts`）；磁盘上的「请求前 / 工具副作用前必须 flush」则是**可卸插件** `dsh-session-checkpoint-policy`。架构文档写明：
+<FigExecSplit />
+
+DeepSeek Harness 在同一份设计里把两件事叠在一起：历史从日志来；循环仍然 `llm.stream`、仍然 `tools.execute`。工具路径上，内存里会先 `append('tool/call')` 再 `dispatch`；磁盘上的「请求前 / 工具副作用前必须 flush」则是**可卸插件** `dsh-session-checkpoint-policy`。架构文档写明：
 
 > Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself…
 
-出处：`docs/architecture.md`。于是「先写后做」在 dsh 里是默认组合的行为，不是不可替换的内核函数。进程崩溃后，物理上有效的日志前缀由存储交回，未闭合的一轮由 `interruptedTurnClosers` 补合成结果再 append（`packages/core/agent-loop/src/index.ts`、`packages/core/session/src/repair.ts`）。这很强，但执行者仍是那个可被 patch 掉的 `AgentLoop` 服务。
-
-把镜头拉开：
+于是「先写后做」在 dsh 里是默认组合的行为，不是不可替换的内核函数。进程崩溃后，物理上有效的日志前缀由存储交回，未闭合的一轮由 `interruptedTurnClosers` 补合成结果再 append。这很强，但执行者仍是那个可被 patch 掉的 `AgentLoop` 服务。
 
 | | 循环是否亲自执行 | 先写后做有多硬 |
 |---|---|---|
@@ -113,9 +128,9 @@ DeepSeek Harness 在同一份设计里把两件事叠在一起：历史从日志
 | Hermes | 是 | 工具前 flush 到 session DB，失败则不执行 |
 | dsh | **是** | 内存层硬；磁盘层是插件；resume 补合成 closer |
 
-这里出现一个容易被宣传带偏的点：**「事件驱动」也不等于「循环不执行」。** Pizza 用 `EventStore` 订阅替换对话级 `while`，但 LLM handler 里仍然直接 `await` 模型；OpenSuperAgent 外层甚至是 400ms 轮询泵，内层再把一整轮交给 Pizza。它们回答的是「谁被什么叫醒」，不是「副作用能不能进内核」。
+这里有一个容易被宣传带偏的点：**「事件驱动」也不等于「循环不执行」。** Pizza 用 `EventStore` 订阅替换对话级 `while`，但 LLM handler 里仍然直接 `await` 模型；OpenSuperAgent 外层甚至是 400ms 轮询泵，内层再把一整轮交给 Pizza。它们回答的是「谁被什么叫醒」，不是「副作用能不能进内核」。
 
-若把 Pure Agent 的切口画在这里，句子会变成：
+若把切口画在这里，句子会变成：
 
 > 日志是唯一事实；`reduce` 只产出 effect；真正的模型调用和工具调用永远在 interpreter 里；重放时核对这些 effect，而不是再执行一遍。
 
@@ -125,15 +140,15 @@ DeepSeek Harness 在同一份设计里把两件事叠在一起：历史从日志
 
 「一个跟用户说话，其它在后台干活」听起来像产品功能，落到运行时只有几种拼法。
 
-**拼法一：子代理是工具。** 主会话调用一个工具，工具内部再开一轮；结果作为 tool result 回来。Claude Code 的 subagent、Sema 的 `sub_agent`、许多「后台 true」开关，都是这条。主会话的上下文不被子步骤刷屏，但子代理通常不是一等公民会话。
+<FigMsgPatterns />
+
+**拼法一：子代理是工具。** 主会话调用一个工具，工具内部再开一轮；结果作为 tool result 回来。Claude Code 的 subagent、许多「后台 true」开关，都是这条。主会话的上下文不被子步骤刷屏，但子代理通常不是一等公民会话。
 
 **拼法二：独立会话 + 邮箱 / 队列。** Codex 有 mailbox，采样中途可以「为了邮件抢占」；pi 默认不做 sub-agent，但同一 agent 有 steer / followUp 队列；dsh 的子代理树里，`sendMessage` 会先做成 `kind: 'agent-message'` 的用户消息，再 `steer` 进同一套 inbox——入口统一，类型仍在。任务板在 dsh 里**不**叫醒 agent。
 
 **拼法三：编排账在循环外。** OpenSuperAgent：Router / Worker 同进程多 facade，通信是 SQLite inbox + 定时泵，不是对等消息。dsh-superagent-prototype：main 与 `worker-<ticket>` 靠 effect 队列、`relay`（唤醒）和 `notice`（注入但不唤醒）分工。前台进度是投影；后台完成是之后某一次输入。
 
 **拼法四：产品级团队。** Claude Code 的 Agent teams（实验）：lead、队友、共享任务，用户可直连队友；限制包括进程内队友不能随 `/resume` 恢复。Hermes 有 `delegate_task`。Alma 不谈子代理，谈的是 workflow 与人的审批。
-
-对照「要不要统一成一种消息」：
 
 | | 用户插话 / 对端消息 / 外部事件 |
 |---|---|
@@ -145,7 +160,9 @@ DeepSeek Harness 在同一份设计里把两件事叠在一起：历史从日志
 
 ## 轴 4：怎样被嵌入
 
-这条轴决定「Pure Agent 对集成方意味着什么」。
+这条轴决定「对集成方意味着什么」。
+
+<FigEmbedModes />
 
 | | 主嵌入方式 | 常驻服务？ |
 |---|---|---|
@@ -159,11 +176,15 @@ DeepSeek Harness 在同一份设计里把两件事叠在一起：历史从日志
 
 规律很稳：**要给别人 embed，默认答案几乎都是「进程内库」或「需要时拉起一个进程」。** 常驻服务器出现在已经有多客户端、IM、桌面远程这些产品理由之后。Codex 自己的公开 TS SDK 都没有把 app-server 当成默认入口。
 
-这也解释了为什么「一切皆插件」不能从 dsh 原样搬进 Pure Agent：dsh 的不可拔掉的是 Cordis 框架和事件契约，循环实现可以换；Pure Agent 若把 `reduce` 也做成配置项，就回到「没有特权核心」——那正好取消「执行者永远在 core 外」这句还没人占稳的话。
+这也解释了为什么「一切皆插件」不能从 dsh 原样搬进来：dsh 的不可拔掉的是 Cordis 框架和事件契约，循环实现可以换；若把 `reduce` 也做成配置项，就回到「没有特权核心」——那正好取消「执行者永远在 core 外」这句还没人占稳的话。
+
+---
 
 ## 空位：谁还没站稳
 
-把四条轴叠在一张表上（只标与 Pure Agent 相关的格）：
+把四条轴叠在一张图上：
+
+<FigEmptySeat />
 
 | | 日志派生模型历史 | 循环不执行副作用 | 进程内可 import | 核心保证不可被插件拔掉 |
 |---|---|---|---|---|
@@ -183,7 +204,7 @@ Pizza / Restate / Temporal 从侧面证明：事件订阅、journal 重放、act
 
 ## 决策清单（读完后填）
 
-下面不是我替你做的决定，是你读完四条轴后应能自己勾的题。勾完再谈 Pure Agent 的规格书。
+下面不是替你做的决定，是你读完四条轴后应能自己勾的题。勾完再谈规格书。
 
 **A. 真相**
 
@@ -234,4 +255,4 @@ Pizza / Restate / Temporal 从侧面证明：事件订阅、journal 重放、act
 
 ---
 
-这篇是草稿（`draft`）。你勾完上面的清单后，我们再把勾选结果收成 Pure Agent 的规格，而不是反过来用规格压你的判断。
+这篇是草稿（`draft`）。你勾完上面的清单后，我们再把勾选结果收成规格，而不是反过来用规格压你的判断。

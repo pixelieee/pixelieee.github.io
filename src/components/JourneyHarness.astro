@@ -1,0 +1,110 @@
+---
+/** 用同一条用户请求，走完「主流循环」与「空位形态」两次，建立直觉 */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    label: { main: '主流', seat: '空位', both: '两边都有' },
+    steps: [
+      {
+        when: '第 0 秒 · 用户说「修这个测试」',
+        lane: 'both',
+        title: '输入进入同一扇门',
+        body: '无论哪边，这件事都应该变成一条可追加的事实：谁在什么时候说了什么。差别不在「要不要记」，而在「循环下一步信谁」。',
+      },
+      {
+        when: '主流 · 当下',
+        lane: 'main',
+        title: '内存 history 先变，日志多半随后跟上',
+        body: 'Codex / pi / OpenCode / Hermes 都会尽快把回合推进下去：采样、执行工具、再写回。JSONL 或 SQLite 让你明天还能打开；但此刻驱动决策的，仍是内存里的结构。rollout 写失败，Codex 甚至可以继续跑。',
+      },
+      {
+        when: 'dsh · 当下',
+        lane: 'main',
+        title: '模型看见的历史从日志折出；动手的仍是 AgentLoop',
+        body: 'deriveMessages() 让「发给模型的内容」没有第二份真相。可是 llm.stream 与 tools.execute 仍在循环里。磁盘上的先写后做，是可卸的 checkpoint 插件——卸掉以后，产品仍能转。',
+      },
+      {
+        when: '空位 · 同一时刻',
+        lane: 'seat',
+        title: 'reduce 只吐 effect；interpreter 先记再做',
+        body: '核看见的只有日志前缀。它产出「该调模型 / 该跑工具」这类命令，自己不碰网络和文件系统。interpreter 先把命令 append 进去，再执行；崩溃后重放，是核对这些命令是否一致，而不是把副作用再做一遍。',
+      },
+      {
+        when: '后台还有人在干活',
+        lane: 'both',
+        title: '拼法决定「完成」长什么样',
+        body: '若子代理只是工具，完成 = tool result。若是独立会话加邮箱，完成 = 一封可抢占的信。若编排账在循环外，完成 = inbox 里多了一行，等泵或 relay 叫醒前台。别把这三种都叫「多 Agent」。',
+      },
+      {
+        when: '你要把它嵌进自己的产品',
+        lane: 'both',
+        title: '默认答案几乎总是库，或按需拉进程',
+        body: 'Claude / Codex 的公开 TS SDK、dsh 的 SDK，都是 spawn。pi 默认进程内。常驻 App Server 是多客户端产品的后手，不是嵌入方的第一选择——Codex 自己的 TS SDK 都没有默认去连 app-server。',
+      },
+    ],
+  },
+  en: {
+    label: { main: 'mainstream', seat: 'empty seat', both: 'both' },
+    steps: [
+      {
+        when: 't=0 · user says “fix this test”',
+        lane: 'both',
+        title: 'Input enters one door',
+        body: 'Either way it should become an appendable fact. The split is not “whether to record”, but “what the loop trusts next”.',
+      },
+      {
+        when: 'Mainstream · now',
+        lane: 'main',
+        title: 'In-memory history moves first; the dump usually follows',
+        body: 'Codex / pi / OpenCode / Hermes push the turn: sample, run tools, write back. JSONL or SQLite lets you reopen tomorrow; what drives decisions now is still the in-memory structure. Codex can keep going even if rollout write fails.',
+      },
+      {
+        when: 'dsh · now',
+        lane: 'main',
+        title: 'Model-visible history folds from the log; the loop still acts',
+        body: 'deriveMessages() removes a second truth for what the model sees. llm.stream and tools.execute still live in the loop. Disk write-ahead is a removable checkpoint plugin—remove it and the product still runs.',
+      },
+      {
+        when: 'Empty seat · same moment',
+        lane: 'seat',
+        title: 'reduce only emits effects; the interpreter records then acts',
+        body: 'The core sees only the log prefix. It emits “call model / run tool” commands and never touches the network or filesystem itself. The interpreter appends the command first, then runs it; replay verifies those commands instead of redoing side effects.',
+      },
+      {
+        when: 'Someone else is still working',
+        lane: 'both',
+        title: 'The build decides what “done” looks like',
+        body: 'Subagent-as-tool → tool result. Peer session + mailbox → a preempting letter. Ledger outside the loop → a new inbox row until a pump or relay wakes the front. Do not call all three “multi-agent”.',
+      },
+      {
+        when: 'You embed it in your product',
+        lane: 'both',
+        title: 'Default is almost always a library or spawn-on-demand',
+        body: 'Claude / Codex public TS SDKs and the dsh SDK all spawn. pi defaults in-process. Always-on app servers are a multi-client product move—Codex’s own TS SDK does not default to app-server.',
+      },
+    ],
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<ol class="journey" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  {t.steps.map((s) => (
+    <li class={s.lane}>
+      <div class="j-when">{s.when}<span class="j-lane">{t.label[s.lane]}</span></div>
+      <div class="j-title">{s.title}</div>
+      <p class="j-body">{s.body}</p>
+    </li>
+  ))}
+</ol>
+<style>
+.journey{list-style:none;margin:2em 0;padding:0 0 0 22px;border-left:1px solid var(--line);position:relative}
+.journey li{position:relative;padding:0 0 1.5em;margin:0}
+.journey li:last-child{padding-bottom:.2em}
+.journey li::before{content:"";position:absolute;left:-26.5px;top:.55em;width:8px;height:8px;background:var(--bg);border:1.5px solid var(--mute);border-radius:1px}
+.journey li.seat::before{border-color:var(--plat)}
+.journey li.both::before{background:linear-gradient(135deg,var(--plat-hi),var(--plat) 55%,var(--plat-lo));border-color:var(--plat)}
+.j-when{font:12px/1.6 var(--mono);color:var(--mute);display:flex;gap:10px;flex-wrap:wrap}
+.j-lane{color:var(--plat-ink)}
+.j-title{font-weight:600;margin:2px 0 4px;line-height:1.6}
+.j-body{margin:0!important;color:var(--fg-2);font-size:15.5px;line-height:1.8}
+</style>

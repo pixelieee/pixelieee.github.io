@@ -1,0 +1,91 @@
+---
+/** 空位：四条件同时满足的格子还没人站稳 */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    a0: '四条件叠在一起，还没人同时站稳',
+    c1: 'TS 进程内可 import',
+    c2: '历史（与 effect）从日志派生',
+    c3: 'reduce 永不做 I/O',
+    c4: '这些保证不可被插件拔掉',
+    r1: 'pi',
+    r1s: '强 · 弱 · 否 · 部分',
+    r2: 'dsh',
+    r2s: '有 · 强（历史）· 否 · 否',
+    r3: 'Codex / Claude',
+    r3s: '公开 SDK 多为子进程',
+    r4: '空位',
+    r4s: '四格同时为「是」',
+    cap: '图 6　空位不是「再做一个 dsh」。它是：进程内 TS 内核 + 日志唯一事实 + 执行者在核外 + 保证不可卸。',
+  },
+  en: {
+    a0: 'Nobody firmly holds all four at once',
+    c1: 'TS in-process import',
+    c2: 'history (+ effects) derived from log',
+    c3: 'reduce never does I/O',
+    c4: 'guarantees not plugin-removable',
+    r1: 'pi',
+    r1s: 'strong · weak · no · partial',
+    r2: 'dsh',
+    r2s: 'yes · strong (history) · no · no',
+    r3: 'Codex / Claude',
+    r3s: 'public SDKs mostly subprocess',
+    r4: 'empty seat',
+    r4s: 'all four = yes',
+    cap: 'Figure 6. The seat is not “another dsh”. It is: in-process TS core + log as sole truth + actor outside core + non-removable guarantees.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 300" role="img" aria-label={t.a0}>
+      <g class="bx">
+        <rect x="12" y="48" width="170" height="72" rx="10"/>
+        <rect x="200" y="48" width="170" height="72" rx="10"/>
+        <rect x="388" y="48" width="170" height="72" rx="10"/>
+        <rect x="576" y="48" width="172" height="72" rx="10"/>
+        <rect x="12" y="148" width="236" height="56" rx="10"/>
+        <rect x="262" y="148" width="236" height="56" rx="10"/>
+        <rect x="512" y="148" width="236" height="56" rx="10"/>
+        <rect x="200" y="224" width="360" height="52" rx="10" class="seat"/>
+      </g>
+      <g class="t">
+        <text x="97" y="78" text-anchor="middle" class="h">{t.c1}</text>
+        <text x="285" y="78" text-anchor="middle" class="h">{t.c2}</text>
+        <text x="473" y="78" text-anchor="middle" class="h">{t.c3}</text>
+        <text x="662" y="78" text-anchor="middle" class="h">{t.c4}</text>
+        <text x="130" y="172" text-anchor="middle">{t.r1}</text>
+        <text x="130" y="190" text-anchor="middle" class="m">{t.r1s}</text>
+        <text x="380" y="172" text-anchor="middle">{t.r2}</text>
+        <text x="380" y="190" text-anchor="middle" class="m">{t.r2s}</text>
+        <text x="630" y="172" text-anchor="middle">{t.r3}</text>
+        <text x="630" y="190" text-anchor="middle" class="m">{t.r3s}</text>
+        <text x="380" y="246" text-anchor="middle" class="seat-t">{t.r4}</text>
+        <text x="380" y="264" text-anchor="middle" class="g">{t.r4s}</text>
+      </g>
+      <g class="ln">
+        <path d="M97 120 V148"/>
+        <path d="M285 120 V148"/>
+        <path d="M473 120 V200 H380"/>
+        <path d="M662 120 V200 H630"/>
+        <path d="M380 204 V224" class="gd"/>
+      </g>
+    </svg>
+  </div>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+<style>
+.fig{margin:1.6rem 0 1.8rem}
+.fig-scroll{overflow-x:auto}
+.bx rect{fill:var(--card);stroke:var(--line);stroke-width:1}
+.bx .seat{fill:var(--plat-soft);stroke:var(--plat)}
+.t text{fill:var(--fg);font:13px var(--sans)}
+.t .h{font:600 12.5px var(--sans)}
+.t .m,.m{fill:var(--mute);font:11.5px var(--mono)}
+.t .g{fill:var(--plat-ink);font:12px var(--sans)}
+.seat-t{font:600 15px var(--sans);fill:var(--fg)}
+.ln path{fill:none;stroke:var(--mute);stroke-width:1.1;stroke-dasharray:3 3}
+.ln .gd{stroke:var(--plat);stroke-dasharray:none}
+figcaption{margin-top:.7rem;color:var(--mute);font:13px/1.55 var(--sans)}
+</style>

@@ -1,0 +1,110 @@
+---
+/** 轴 2：循环亲自执行 vs reduce 只产 effect */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    a0: '日志是真相，并不自动等于循环不碰外界',
+    top: '主流（含 dsh）',
+    bot: '空位：reduce + interpreter',
+    t1: 'fold / derive',
+    t2: 'AgentLoop',
+    t3: 'llm.stream',
+    t4: 'tools.execute',
+    t5: 'append 结果',
+    b1: 'reduce(log) → effects',
+    b2: 'interpreter',
+    b3: '先 append 命令',
+    b4: '再真正调用模型 / 工具',
+    b5: '重放：核对 effect，不重做 I/O',
+    note: 'dsh：历史从日志来；执行仍在可替换的 AgentLoop 里。磁盘「先写后做」还是可卸插件。',
+    cap: '图 3　上半：循环既读真相又动手。下半：核只产出命令；动手的人永远在核外，重放时只核对「该发生什么」，不再执行一遍。',
+  },
+  en: {
+    a0: 'Log-as-truth does not mean the loop never touches the world',
+    top: 'Mainstream (including dsh)',
+    bot: 'Empty seat: reduce + interpreter',
+    t1: 'fold / derive',
+    t2: 'AgentLoop',
+    t3: 'llm.stream',
+    t4: 'tools.execute',
+    t5: 'append results',
+    b1: 'reduce(log) → effects',
+    b2: 'interpreter',
+    b3: 'append the command first',
+    b4: 'then call model / tools',
+    b5: 'replay: verify effects, do not redo I/O',
+    note: 'dsh: history from the log; execution still lives in a swappable AgentLoop. Disk write-ahead is a removable plugin.',
+    cap: 'Figure 3. Top: the loop both reads truth and acts. Bottom: the core only emits commands; the actor stays outside; replay checks what should have happened.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 360" role="img" aria-label={t.a0}>
+      <defs>
+        <marker id={`ex-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)"/>
+        </marker>
+        <marker id={`eg-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)"/>
+        </marker>
+      </defs>
+      <g class="bx">
+        <rect x="12" y="12" width="736" height="148" rx="12"/>
+        <rect x="12" y="184" width="736" height="148" rx="12"/>
+      </g>
+      <g class="in">
+        <rect x="28" y="52" width="120" height="44" rx="8"/>
+        <rect x="188" y="52" width="120" height="44" rx="8"/>
+        <rect x="348" y="40" width="120" height="36" rx="8"/>
+        <rect x="348" y="88" width="120" height="36" rx="8"/>
+        <rect x="508" y="52" width="120" height="44" rx="8"/>
+        <rect x="28" y="236" width="160" height="44" rx="8"/>
+        <rect x="228" y="236" width="120" height="44" rx="8"/>
+        <rect x="388" y="224" width="140" height="36" rx="8"/>
+        <rect x="388" y="272" width="140" height="36" rx="8"/>
+        <rect x="568" y="236" width="160" height="44" rx="8"/>
+      </g>
+      <g class="t">
+        <text x="28" y="36" class="h">{t.top}</text>
+        <text x="28" y="208" class="h">{t.bot}</text>
+        <text x="88" y="78" text-anchor="middle">{t.t1}</text>
+        <text x="248" y="78" text-anchor="middle">{t.t2}</text>
+        <text x="408" y="62" text-anchor="middle">{t.t3}</text>
+        <text x="408" y="110" text-anchor="middle">{t.t4}</text>
+        <text x="568" y="78" text-anchor="middle">{t.t5}</text>
+        <text x="108" y="262" text-anchor="middle">{t.b1}</text>
+        <text x="288" y="262" text-anchor="middle">{t.b2}</text>
+        <text x="458" y="246" text-anchor="middle">{t.b3}</text>
+        <text x="458" y="294" text-anchor="middle">{t.b4}</text>
+        <text x="648" y="262" text-anchor="middle" class="g">{t.b5}</text>
+      </g>
+      <g class="ln">
+        <path d="M148 74 H188" marker-end={`url(#ex-${lang})`}/>
+        <path d="M308 74 H348" marker-end={`url(#ex-${lang})`}/>
+        <path d="M468 58 H508 V74" marker-end={`url(#ex-${lang})`}/>
+        <path d="M468 106 H490 V74" />
+        <path d="M188 280 H228" marker-end={`url(#eg-${lang})`} class="gd"/>
+        <path d="M348 258 H388" marker-end={`url(#eg-${lang})`} class="gd"/>
+        <path d="M528 242 H548 V258 H568" marker-end={`url(#eg-${lang})`} class="gd"/>
+        <path d="M528 290 H548 V258" class="gd"/>
+      </g>
+      <text x="650" y="140" class="m" text-anchor="end">{t.note}</text>
+    </svg>
+  </div>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+<style>
+.fig{margin:1.6rem 0 1.8rem}
+.fig-scroll{overflow-x:auto}
+.bx rect{fill:var(--card);stroke:var(--line);stroke-width:1}
+.in rect{fill:var(--code);stroke:var(--line);stroke-width:1}
+.t text{fill:var(--fg);font:13.5px var(--sans)}
+.t .h{font:600 15px var(--sans)}
+.t .g{fill:var(--plat-ink);font-size:12.5px}
+.m{fill:var(--mute);font:12px var(--sans)}
+.ln path{fill:none;stroke:var(--mute);stroke-width:1.2}
+.ln .gd{stroke:var(--plat)}
+figcaption{margin-top:.7rem;color:var(--mute);font:13px/1.55 var(--sans)}
+</style>

@@ -1,0 +1,134 @@
+---
+/** 轴 3：四种「一个说话、其余干活」的拼法 */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    a0: '「一个跟人说话，其余在后台干活」只有四种常见拼法',
+    p1: '① 子代理是工具',
+    p1a: '主会话',
+    p1b: 'tool call',
+    p1c: '内嵌一轮',
+    p1d: '结果当 tool result',
+    p2: '② 独立会话 + 邮箱',
+    p2a: '主会话 inbox',
+    p2b: 'steer / mailbox',
+    p2c: '子会话',
+    p2d: '类型仍分开',
+    p3: '③ 循环外编排账',
+    p3a: 'Router',
+    p3b: 'SQLite inbox',
+    p3c: '定时泵 / relay',
+    p3d: 'Worker facade',
+    p4: '④ 产品级团队',
+    p4a: 'Lead',
+    p4b: '直连通道',
+    p4c: 'Teammate',
+    p4d: '用户可绕过 Lead',
+    warn: '统一入口有价值；把 peer 话伪装成 USER_MESSAGE 会欠类型账',
+    cap: '图 4　四种拼法。选哪一种，决定「后台完成」是工具返回值、邮箱抢占、投影更新，还是产品里的队友消息。',
+  },
+  en: {
+    a0: '“One talks to the user; others work” usually means one of four builds',
+    p1: '① Subagent as a tool',
+    p1a: 'main session',
+    p1b: 'tool call',
+    p1c: 'nested turn',
+    p1d: 'result as tool result',
+    p2: '② Peer session + mailbox',
+    p2a: 'main inbox',
+    p2b: 'steer / mailbox',
+    p2c: 'child session',
+    p2d: 'types stay distinct',
+    p3: '③ Ledger outside the loop',
+    p3a: 'Router',
+    p3b: 'SQLite inbox',
+    p3c: 'poll / relay',
+    p3d: 'Worker facade',
+    p4: '④ Product-level teams',
+    p4a: 'Lead',
+    p4b: 'direct channel',
+    p4c: 'Teammate',
+    p4d: 'user can bypass Lead',
+    warn: 'One inbox helps; wrapping peer talk as USER_MESSAGE loses types',
+    cap: 'Figure 4. Four builds. Your choice decides whether “background done” is a tool result, a mailbox preempt, a projected update, or a teammate message.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 320" role="img" aria-label={t.a0}>
+      <defs>
+        <marker id={`ms-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)"/>
+        </marker>
+      </defs>
+      <g class="bx">
+        <rect x="12" y="12" width="360" height="132" rx="12"/>
+        <rect x="388" y="12" width="360" height="132" rx="12"/>
+        <rect x="12" y="160" width="360" height="132" rx="12"/>
+        <rect x="388" y="160" width="360" height="132" rx="12"/>
+      </g>
+      <g class="in">
+        <rect x="28" y="48" width="88" height="36" rx="8"/>
+        <rect x="148" y="48" width="88" height="36" rx="8"/>
+        <rect x="268" y="48" width="88" height="36" rx="8"/>
+        <rect x="404" y="48" width="88" height="36" rx="8"/>
+        <rect x="524" y="48" width="88" height="36" rx="8"/>
+        <rect x="644" y="48" width="88" height="36" rx="8"/>
+        <rect x="28" y="196" width="88" height="36" rx="8"/>
+        <rect x="148" y="196" width="88" height="36" rx="8"/>
+        <rect x="268" y="196" width="88" height="36" rx="8"/>
+        <rect x="404" y="196" width="88" height="36" rx="8"/>
+        <rect x="524" y="196" width="88" height="36" rx="8"/>
+        <rect x="644" y="196" width="88" height="36" rx="8"/>
+      </g>
+      <g class="t">
+        <text x="28" y="34" class="h">{t.p1}</text>
+        <text x="404" y="34" class="h">{t.p2}</text>
+        <text x="28" y="182" class="h">{t.p3}</text>
+        <text x="404" y="182" class="h">{t.p4}</text>
+        <text x="72" y="70" text-anchor="middle">{t.p1a}</text>
+        <text x="192" y="70" text-anchor="middle">{t.p1b}</text>
+        <text x="312" y="70" text-anchor="middle">{t.p1c}</text>
+        <text x="192" y="118" text-anchor="middle" class="m">{t.p1d}</text>
+        <text x="448" y="70" text-anchor="middle">{t.p2a}</text>
+        <text x="568" y="70" text-anchor="middle">{t.p2b}</text>
+        <text x="688" y="70" text-anchor="middle">{t.p2c}</text>
+        <text x="568" y="118" text-anchor="middle" class="m">{t.p2d}</text>
+        <text x="72" y="218" text-anchor="middle">{t.p3a}</text>
+        <text x="192" y="218" text-anchor="middle">{t.p3b}</text>
+        <text x="312" y="218" text-anchor="middle">{t.p3c}</text>
+        <text x="192" y="266" text-anchor="middle" class="m">{t.p3d}</text>
+        <text x="448" y="218" text-anchor="middle">{t.p4a}</text>
+        <text x="568" y="218" text-anchor="middle">{t.p4b}</text>
+        <text x="688" y="218" text-anchor="middle">{t.p4c}</text>
+        <text x="568" y="266" text-anchor="middle" class="m">{t.p4d}</text>
+      </g>
+      <g class="ln">
+        <path d="M116 66 H148" marker-end={`url(#ms-${lang})`}/>
+        <path d="M236 66 H268" marker-end={`url(#ms-${lang})`}/>
+        <path d="M492 66 H524" marker-end={`url(#ms-${lang})`}/>
+        <path d="M612 66 H644" marker-end={`url(#ms-${lang})`}/>
+        <path d="M116 214 H148" marker-end={`url(#ms-${lang})`}/>
+        <path d="M236 214 H268" marker-end={`url(#ms-${lang})`}/>
+        <path d="M492 214 H524" marker-end={`url(#ms-${lang})`}/>
+        <path d="M612 214 H644" marker-end={`url(#ms-${lang})`}/>
+      </g>
+    </svg>
+  </div>
+  <p class="warn">{t.warn}</p>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+<style>
+.fig{margin:1.6rem 0 1.8rem}
+.fig-scroll{overflow-x:auto}
+.bx rect{fill:var(--card);stroke:var(--line);stroke-width:1}
+.in rect{fill:var(--code);stroke:var(--line);stroke-width:1}
+.t text{fill:var(--fg);font:12.5px var(--sans)}
+.t .h{font:600 14px var(--sans)}
+.t .m,.m{fill:var(--mute);font-size:12px}
+.ln path{fill:none;stroke:var(--mute);stroke-width:1.2}
+.warn{margin:.4rem 0 0;color:var(--plat-ink);font:13px/1.6 var(--sans)}
+figcaption{margin-top:.55rem;color:var(--mute);font:13px/1.55 var(--sans)}
+</style>

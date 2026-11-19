@@ -1,0 +1,87 @@
+---
+/** 轴 4：三种嵌入形态 */
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    a0: '别人怎样把 harness 嵌进自己的程序',
+    m1: '进程内库',
+    m1a: 'import createSession()',
+    m1b: '同地址空间',
+    m1c: 'pi 默认 · dsh Cordis',
+    m2: '按需子进程',
+    m2a: 'spawn CLI',
+    m2b: 'stdio / JSONL',
+    m2c: 'Claude SDK · Codex TS · dsh SDK',
+    m3: '常驻服务',
+    m3a: 'app-server / HTTP / gateway',
+    m3b: '多客户端 / IM',
+    m3c: 'Codex 可选 · OpenCode 可开 · Hermes gateway',
+    rule: '要给别人 embed：默认几乎总是「库」或「需要时拉进程」。常驻服务出现在已有多客户端理由之后。',
+    cap: '图 5　三种嵌入。公开 SDK 选哪一种，比「内核里有没有 server」更能说明产品对外承诺什么。',
+  },
+  en: {
+    a0: 'How others embed a harness',
+    m1: 'In-process library',
+    m1a: 'import createSession()',
+    m1b: 'same address space',
+    m1c: 'pi default · dsh Cordis',
+    m2: 'On-demand subprocess',
+    m2a: 'spawn CLI',
+    m2b: 'stdio / JSONL',
+    m2c: 'Claude SDK · Codex TS · dsh SDK',
+    m3: 'Always-on service',
+    m3a: 'app-server / HTTP / gateway',
+    m3b: 'multi-client / IM',
+    m3c: 'Codex optional · OpenCode optional · Hermes gateway',
+    rule: 'For embedders, the default is almost always a library or a spawn-when-needed process. Always-on servers appear after multi-client reasons exist.',
+    cap: 'Figure 5. Three embed modes. Which one the public SDK picks says more about the product promise than whether a server exists somewhere in the tree.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 250" role="img" aria-label={t.a0}>
+      <g class="bx">
+        <rect x="12" y="12" width="236" height="168" rx="12"/>
+        <rect x="262" y="12" width="236" height="168" rx="12"/>
+        <rect x="512" y="12" width="236" height="168" rx="12"/>
+      </g>
+      <g class="in">
+        <rect x="32" y="56" width="196" height="32" rx="8"/>
+        <rect x="32" y="100" width="196" height="32" rx="8"/>
+        <rect x="282" y="56" width="196" height="32" rx="8"/>
+        <rect x="282" y="100" width="196" height="32" rx="8"/>
+        <rect x="532" y="56" width="196" height="32" rx="8"/>
+        <rect x="532" y="100" width="196" height="32" rx="8"/>
+      </g>
+      <g class="t">
+        <text x="28" y="38" class="h">{t.m1}</text>
+        <text x="278" y="38" class="h">{t.m2}</text>
+        <text x="528" y="38" class="h">{t.m3}</text>
+        <text x="130" y="76" text-anchor="middle">{t.m1a}</text>
+        <text x="130" y="120" text-anchor="middle">{t.m1b}</text>
+        <text x="130" y="158" text-anchor="middle" class="m">{t.m1c}</text>
+        <text x="380" y="76" text-anchor="middle">{t.m2a}</text>
+        <text x="380" y="120" text-anchor="middle">{t.m2b}</text>
+        <text x="380" y="158" text-anchor="middle" class="m">{t.m2c}</text>
+        <text x="630" y="76" text-anchor="middle">{t.m3a}</text>
+        <text x="630" y="120" text-anchor="middle">{t.m3b}</text>
+        <text x="630" y="158" text-anchor="middle" class="m">{t.m3c}</text>
+      </g>
+      <text x="380" y="216" text-anchor="middle" class="rule">{t.rule}</text>
+    </svg>
+  </div>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+<style>
+.fig{margin:1.6rem 0 1.8rem}
+.fig-scroll{overflow-x:auto}
+.bx rect{fill:var(--card);stroke:var(--line);stroke-width:1}
+.in rect{fill:var(--code);stroke:var(--line);stroke-width:1}
+.t text{fill:var(--fg);font:13px var(--sans)}
+.t .h{font:600 15px var(--sans)}
+.t .m,.m{fill:var(--mute);font:11.5px var(--mono)}
+.rule{fill:var(--plat-ink);font:12.5px var(--sans)}
+figcaption{margin-top:.7rem;color:var(--mute);font:13px/1.55 var(--sans)}
+</style>
