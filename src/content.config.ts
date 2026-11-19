@@ -13,6 +13,8 @@ const schema = z.object({
   topic: z.string().default('Agent 工程'),
   status: z.enum(['published', 'draft', 'todo']).default('draft'),
   pinned: z.string().optional(),
+  /** 组成部件 / 主题标签，便于按「记忆、运行时、多 Agent」检索。 */
+  tags: z.array(z.string()).optional(),
 });
 
 const notes = defineCollection({
