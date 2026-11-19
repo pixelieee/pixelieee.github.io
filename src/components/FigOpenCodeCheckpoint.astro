@@ -1,0 +1,68 @@
+---
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const title = en ? 'Following two markers through one checkpoint' : '跟踪一份技能首尾的两个标记';
+const full = en ? 'Full tool result' : '完整工具结果';
+---
+<figure class="trace" lang={en ? 'en' : 'zh-CN'} aria-label={title}>
+  <div class="stage">
+    <div class="stage-label">{en ? 'Before compaction' : '压缩前'}</div>
+    <div class="stage-detail">
+      <div class="stage-title">{full}</div>
+      <div class="strip full" aria-label={en ? 'HEAD, filler, TAIL' : '头部标记、填充、尾部标记'}>
+        <span>HEAD</span><i aria-hidden="true"></i><span>TAIL</span>
+      </div>
+    </div>
+  </div>
+  <div class="stage">
+    <div class="stage-label">{en ? 'During compaction' : '压缩时'}</div>
+    <div class="stage-detail">
+      <div class="stage-title">{en ? 'Input to the summarizer' : '摘要模型收到的输入'}</div>
+      <div class="strip cut"><span>HEAD</span><i aria-hidden="true"></i><span>[truncated]</span></div>
+      <div class="detail">{en ? 'First 2,000 UTF-16 code units of the wrapped result' : '取含工具封装的输出前 2,000 个 UTF-16 代码单元'}</div>
+    </div>
+  </div>
+  <div class="stage resumed">
+    <div class="stage-label">{en ? 'After restart' : '重启并续聊'}</div>
+    <div class="stage-detail">
+      <div class="stage-title">{en ? 'Markers in the resumed request' : '恢复后请求中的实验标记'}</div>
+      <div class="history"><span>STUB_CHECKPOINT</span><span>TURN_KEEP</span><span>TURN_RESTART</span></div>
+    </div>
+  </div>
+  <div class="archive">
+    <b>SQLite</b>
+    <span>{en ? 'The stored skill result still contains HEAD and TAIL.' : '旧的 skill 结果仍含 HEAD 和 TAIL。'}</span>
+  </div>
+  <figcaption>{en ? 'Figure 1. The named markers show three reads of the same session. The patterned strips stand for filler. Their widths do not encode character counts.' : '图 1　用同一会话里的标记对照三次读取。条纹代表填充文本，条带宽度不表示字符数。'}</figcaption>
+</figure>
+<style>
+  .trace { font-family: var(--sans); }
+  .stage { display: grid; grid-template-columns: minmax(8.75em, 24%) minmax(0, 1fr); }
+  .stage-label { position: relative; padding: 14px 12px 0 20px; color: var(--mute); font-size: 13px; line-height: 1.5; }
+  .stage-label::before { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; border-left: 1px solid var(--line); }
+  .stage:first-child .stage-label::before { top: 23px; }
+  .resumed .stage-label::before { bottom: calc(100% - 23px); }
+  .stage-label::after { content: ''; position: absolute; top: 20px; left: 1px; width: 7px; height: 7px; border: 1px solid var(--mute); border-radius: 50%; background: var(--bg); }
+  .resumed .stage-label::after { background: var(--plat); border-color: var(--plat); }
+  .stage-detail { min-width: 0; padding: 10px 0 15px; }
+  .stage-title { margin-bottom: 6px; color: var(--fg); font-size: 14px; font-weight: 600; }
+  .strip, .history { display: flex; align-items: stretch; gap: 4px; }
+  .strip { width: 100%; }
+  .strip span, .history span { padding: 3px 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: 12px/1.6 var(--mono); }
+  .strip i { flex: 1; border: 1px solid var(--line); background: repeating-linear-gradient(115deg, transparent 0 5px, var(--line) 5px 6px); }
+  .cut { width: 78%; }
+  .cut span:last-child { border-style: dashed; color: var(--mute); }
+  .detail { margin-top: 4px; color: var(--mute); font-size: 12px; line-height: 1.5; }
+  .history { flex-wrap: wrap; }
+  .history span:first-child { background: var(--plat-soft); }
+  .archive { display: flex; align-items: baseline; gap: 12px; margin-top: 4px; padding: 9px 12px; border-left: 2px solid var(--plat); background: var(--card); font-size: 13px; line-height: 1.6; color: var(--fg-2); }
+  .archive b { color: var(--fg); font: 600 12px var(--mono); }
+  @media(max-width: 590px) {
+    .stage { grid-template-columns: 1fr; margin-left: 4px; padding-left: 15px; border-left: 1px solid var(--line); }
+    .stage-label { padding: 4px 0 0; }
+    .stage-label::before { display: none; }
+    .stage-label::after { left: -20px; top: 10px; }
+    .stage-detail { padding: 2px 0 18px; }
+    .cut { width: 88%; }
+  }
+</style>

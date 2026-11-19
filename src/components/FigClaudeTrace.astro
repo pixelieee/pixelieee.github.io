@@ -1,0 +1,54 @@
+---
+interface Props { lang?: 'zh' | 'en' }
+const en = Astro.props.lang === 'en';
+const copy = en ? {
+  title: 'One edit, three requests', startup: 'Startup instructions', history: 'Tool history',
+  rows: [
+    ['After Edit', 'Writer · request 4', 'INDEX_BEFORE', 'Edit contains INDEX_AFTER', 'The file on disk has already changed.'],
+    ['Fresh process', 'Same repo · request 1', 'INDEX_AFTER', 'No tool calls', 'The topic detail is absent.'],
+    ['After Read', 'Same repo · request 2', 'INDEX_AFTER', 'Read returns DETAIL_QUARTZ', 'The body arrives in a tool result.'],
+  ],
+  caption: 'Each row is a separate outgoing request from CLI 2.1.327. The two columns identify where the markers occurred in its payload.'
+} : {
+  title: '一次改写，三份请求', startup: '启动时加载的说明', history: '工具调用与结果',
+  rows: [
+    ['Edit 完成', '写入进程 · 第 4 次请求', 'INDEX_BEFORE', 'Edit 参数含 INDEX_AFTER', '此时磁盘上的索引已经改了。'],
+    ['重启', '同仓新进程 · 第 1 次请求', 'INDEX_AFTER', '尚无工具调用', '请求里还找不到主题正文。'],
+    ['Read 完成', '同仓新进程 · 第 2 次请求', 'INDEX_AFTER', 'Read 返回 DETAIL_QUARTZ', '正文随工具结果进入。'],
+  ],
+  caption: '每行是一份 2.1.327 客户端实际发出的请求。右侧两列分别标出标记在报文里的位置。'
+};
+---
+<figure class="request-trace" lang={en ? 'en' : 'zh-CN'}>
+  <div class="trace-title">{copy.title}</div>
+  <div class="trace-columns" aria-hidden="true"><span></span><span>{copy.startup}</span><span>{copy.history}</span></div>
+  <ol class="ticks">
+    {copy.rows.map(([name, ordinal, marker, event, result]) => (
+      <li>
+        <div class="phase"><strong>{name}</strong><small>{ordinal}</small></div>
+        <div class="cell index"><span class="mobile">{copy.startup}</span><b>{marker}</b></div>
+        <div class="cell event"><span class="mobile">{copy.history}</span><strong>{event}</strong><small>{result}</small></div>
+      </li>
+    ))}
+  </ol>
+  <figcaption>{copy.caption}</figcaption>
+</figure>
+<style>
+  .request-trace .trace-title { font: 550 1.25rem/1.45 var(--serif); color: var(--fg); margin-bottom: .9rem; }
+  .trace-columns, .ticks > li { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1fr) minmax(0, 1.5fr); gap: 1rem; }
+  .trace-columns { border-bottom: 1px solid var(--line); padding: 0 0 .5rem; font: 500 .75rem/1.4 var(--sans); color: var(--mute); }
+  .request-trace .ticks { list-style: none; margin: 0; padding: 0; }
+  .ticks > li { align-items: start; margin: 0; padding: .8rem 0; border-bottom: 1px solid var(--line); }
+  .phase strong, .event strong { font: 550 .88rem/1.5 var(--sans); }
+  .ticks small { display: block; font: 400 .75rem/1.6 var(--sans); color: var(--mute); }
+  .index b { font: 500 .8rem/1.5 var(--mono); background: var(--plat-soft); padding: .15em .35em; color: var(--fg); }
+  .mobile { display: none; }
+  @media(max-width: 560px) {
+    .trace-columns { display: none; }
+    .ticks { border-top: 1px solid var(--line); }
+    .ticks > li { grid-template-columns: minmax(0,1fr) minmax(0,1.35fr); gap: .5rem .75rem; }
+    .phase { grid-column: 1 / -1; display: flex; gap: .55rem; align-items: baseline; }
+    .mobile { display: block; font: 400 .68rem/1.5 var(--sans); margin-bottom: .15rem; color: var(--mute); }
+    .event strong { overflow-wrap: anywhere; }
+  }
+</style>

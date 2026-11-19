@@ -1,9 +1,9 @@
 ---
 title: "Pi：一份会话日志，多个模型上下文"
 titleEn: "Pi: One Session Log, Several Model Contexts"
-dek: "放弃的尝试还在日志里。下一次请求能否看见它，要看当前分支、压缩边界，以及这个项目加载了哪些文件。"
-summary: "沿一条分叉追踪日志与压缩，解释项目指令和 Skill 为什么能跨会话复用，以及谁负责把经验写回。"
-summaryEn: "Follow a fork through replay and compaction, then trace how project instructions and skills change between sessions."
+dek: "同一句 /skill:release 怎样同时带着旧规则和新步骤？一次失败的 edit，又为什么出现在压缩器的已修改清单里？"
+summary: "在同一会话改写规则和 Skill，逐轮比对 provider 请求，再用一次失败的文件编辑追踪压缩器留下的记录。"
+summaryEn: "Compare provider transcripts across a skill edit, reload and restart, then trace a failed file edit into compaction."
 date: "2026-11-18"
 topic: "Agent 工程"
 status: "published"
@@ -11,6 +11,7 @@ pinned: "pi @ f0f9478"
 ---
 import Src from '../../components/Src.astro';
 import FigPiBranch from '../../components/FigPiBranch.astro';
+import FigPiSkillRequests from '../../components/FigPiSkillRequests.astro';
 import Infer from '../../components/Infer.astro';
 
 export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945e9c2b04922e29f7ca" };
@@ -18,6 +19,16 @@ export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945
 在 Pi 里尝试方案 A，退回同一个问题，改走方案 B。随后恢复会话，A 的原话仍在 JSONL 里，模型却可以一次也看不到它。反过来，项目中的一条规则即使从未出现在任何对话里，也可以在全新会话的第一轮生效。理解 Pi 的记忆，得分别问清楚：**恢复了哪些事件，选了哪条分支，又从磁盘加载了哪些资源？**
 
 本文读的是 `@earendil-works/pi-coding-agent`，固定提交的包版本为 1.5.2。实验直接调用该提交的 TypeScript；模型服务、桌面客户端和第三方扩展不参与实验。<Src {...source} p="packages/coding-agent/package.json" l="1-16" />
+
+## 同一次调用，可以同时看到旧规则和新步骤
+
+我给一个 `release` Skill 放了两处容易辨认的文字：目录描述是 `DESC_A`，正文是 `BODY_A`。项目的 `AGENTS.md` 另写 `RULE_A`。第一次调用之后，把三个 A 都换成 B，再创建一个叫 `late` 的 Skill。保持会话开启，再次发出同一句 `/skill:release`。
+
+在 Pi 真正交给测试 provider 的请求里，当前有效的系统规则还是 **A**，这次调用展开的步骤已经是 **B**；更早的用户消息里还保留着上一份 **A**。表面上矛盾的三个答案各自都对。规则和目录来自上次加载资源时构造的系统提示词，命令执行时按路径读正文，旧消息则沿当前分支继续发送。切换下图，可以看见到底是哪一行先变。
+
+<FigPiSkillRequests />
+
+还有一步容易误读。我原以为 `/reload` 之后，只要在协议记录里搜到 `RULE_A` 就能判定刷新失败。结果旧标记确实还在，Pi 自己重放出来的**当前有效规则却只有 B**。上层会话计算有变化的具名段落，把差异作为另一条 system 消息发送。在这条测试 provider 路径中可以看见整串更新；只支持开头一条系统消息的适配器可以先把更新折叠起来。这解释了为什么查看原始请求和查看最终系统提示词时会得到不同的检索结果。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1826-1848" /> <Src {...source} p="packages/ai/src/types.ts" l="562-581" /> <Src {...source} p="packages/ai/src/utils/transcript.ts" l="68-110" />
 
 ## 同一条经验，三条读取路径
 
@@ -42,6 +53,27 @@ export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945
 路径和压缩边界选定之后，Pi 还会对每条消息应用当前分支上最后一条针对它的 `context_edit`。编辑可以替换消息正文，或以 `replacement: null` 将它移出模型上下文。原始记录仍在日志里。默认的溢出恢复就会用到这个机制。Pi 先写入针对失败尝试的省略编辑，再做压缩。即便压缩失败或被取消，也会保留这些编辑。下次重建上下文时，那次尝试已经不可见，分支上却没有新增检查点。 <Src {...source} p="packages/coding-agent/docs/session-format.md" l="229-245" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="87-98" />
 
 默认压缩给近期消息留出原文，把更早的材料交给模型概括；`reserveTokens` 参与决定**何时**触发，`keepRecentTokens` 参与决定**保留多少近期内容**。固定版本的默认值分别是 16,384 和 20,000，可按模型覆盖。另一种摘要发生在 `/tree` 切分支时：用户可以要求总结离开的分支，取共同祖先以后到原叶之间的材料，向目标分支写入一条 `branch_summary`。这解释了为什么有时 B 知道 A 的教训，却没有 A 的完整对话。<Src {...source} p="packages/coding-agent/docs/compaction.md" l="25-50" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="172-185" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="421-437" />
+
+## 压缩到底从哪儿取得“修改过的文件”？
+
+再回到发布任务。这次我让测试 provider 调用 Pi 自带的 `edit`，把 `release.md` 中一段根本不存在的旧文字换掉。工具返回错误，磁盘上的文件仍是 `unchanged`。等新一轮开始，我把真实会话交给 Pi 的压缩准备函数，给近期原文留 1 token，以便将这次调用纳入待总结区。文件列表里出现了 `release.md`。
+
+```json title="同一次失败操作的三处观察"
+{
+  "toolError": true,
+  "onDisk": "unchanged",
+  "readFiles": [],
+  "modifiedFiles": ["release.md"]
+}
+```
+
+这个列表的来源可以精确到三步。先在**可见消息**里找 assistant 发出的 `read`、`write`、`edit` 工具调用；对于通过 codemode 间接发出的调用，还会读工具结果里的嵌套调用记录。再按参数里的 `path` 归类、去重。如果同一路径既读过又尝试编辑，只列入修改一栏。最后把清单附到摘要末尾，也放入结构化的 `details`。这条路径没有逐项检验直接编辑是否成功，也没有读 Git 差异。<Src {...source} p="packages/coding-agent/src/core/compaction/utils.ts" l="29-74" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="899-919" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="1037-1056" />
+
+这还会影响第二次压缩。默认压缩器会把上一次非扩展检查点中记录的文件集合并入新集合；旧摘要本身也会作为更新摘要的输入。因此，只凭较晚的 `modifiedFiles` 能找到一个**值得重新检查的路径**，要回答“发布清单究竟更新了没有”，仍需回到工具结果或产物。上面的实验实测到压缩准备层，摘要文本的生成与后续合并是沿源码核对的。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="51-83" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="713-733" />
+
+### 一个很长的工具回合会被从哪儿切开
+
+如果预算边界落在一轮排错的中间，Pi 不会随意从一个工具返回值开始保留。它在当前分支的有效消息上选合法切点，把材料分成三段：这一轮以前的历史、这一轮已完成的前半段、继续保留原文的尾部。前两段都有材料时，分别生成历史摘要与回合前缀摘要，再用 `Turn Context (split turn)` 接起来。已经有旧摘要而没有新增的早期历史时，旧摘要可以直接承担第一段。这样最新的工具交换还能接上它所回答的问题。代价是连续压缩依赖先前概括过的内容，早先漏掉的选择理由未必会在下一次重新出现。<Src {...source} p="packages/coding-agent/docs/compaction.md" l="87-98" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="863-919" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="980-1020" />
 
 ## 项目指令怎样进入下一轮
 
@@ -89,10 +121,43 @@ console.log('edited A', log.buildSessionContext().messages.map(m=>m.content));
 
 本实验前四行只改变了分支或压缩边界。第五行在 A 的原始消息仍然存在时，单独通过一条编辑把它移出请求。本次另运行了官方的 Skill 解析、同名优先级和会话上下文重建测试。对照整个调用链，这些观察能解释历史如何被筛选，无法衡量模型自己撰写摘要时遗漏事实的比例。<Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="126-147" /> <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="211-246" />
 
+## 自己复核发往 provider 的请求
+
+[下载 Pi 的请求与压缩实验](/experiments/pi-skill-lifecycle.mjs)。把脚本保存到固定提交的仓库根目录。它创建临时 agent 目录、临时项目和内存会话，用 Pi 官方的测试 provider 返回固定文本或工具调用。`edit` 用的是真实工具；实验完成会核对文件内容、错误标志以及压缩准备结果。离线观测点在 provider 收到规范化消息之处，各厂商的 HTTP 适配与真实模型的选择不在实验范围内。
+
+脚本关闭外部扩展。项目规则仍按 Pi 的真实行为沿临时项目的祖先目录读取；那些目录如果已有 `AGENTS.md`，本机测试 provider 也会收到。脚本只打印实验标记。我的运行环境是 Node 22.23.1。下列命令在干净检出构建 schema，并从同版本已发布包提取 SDK 所需的模型目录。
+
+```sh title="在固定提交的 Pi 仓库根目录运行"
+npm ci --ignore-scripts
+npm run build --workspace packages/schema
+npm pack @earendil-works/pi-ai@1.5.2 --silent
+node -e "require('node:fs').mkdirSync('packages/ai/src/providers/data',{recursive:true})"
+tar -xf earendil-works-pi-ai-1.5.2.tgz -C packages/ai/src/providers/data --strip-components 4 package/dist/providers/data
+node --import ./packages/coding-agent/src/experimental/source-resolver.ts pi-skill-lifecycle.mjs
+```
+
+检查刷新时，短短这一段足以解释实验里的旧标记。当前分支的段落与这次构建出的段落做差，只有差异会成为更新消息。实验脚本因此同时打印原始 system 更新和重放后的有效规则。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1839-1848" />
+
+```ts title="agent-session.ts · 1843–1847"
+const sections = diffSystemPromptSections(
+    getCurrentSystemMessage(messages)?.sections ?? {},
+    buildSystemPromptSections(options),
+);
+return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
+```
+
 ## 哪些变化能跨会话积累
 
 这版默认 coding agent 里，可追到的持久写入是会话条目、对用户或项目文件的编辑，以及扩展明确实现的写入。默认压缩和切分支能改变后续上下文；在上述路径里，没有找到从成功会话自动提炼 Skill、按使用次数改写它、再归档旧版本的维护器。要让发布经验在**新项目会话**里重复生效，可以有意识地更新相应指令或 Skill，并用一次全新会话检查可见范围。若要跨仓库共享，位置和分发方式也要相应改变。<Src {...source} p="packages/coding-agent/docs/skills.md" l="58-67" /> <Src {...source} p="packages/coding-agent/docs/skills.md" l="87-93" />
 
 Pi 给扩展留了不同层次的接口。`pi.appendEntry()` 能让扩展状态随会话保存，但该条目本身不进入模型上下文；自定义消息可以进入。`session_before_compact` 可以替换摘要策略，`before_agent_start` 可以改本轮的输入。这些接口足以构建带复盘的应用。评估某个具体 Pi 部署时，还需找出实际安装的扩展、谁触发写入、写到哪里，以及新会话谁来读。<Infer /> 把复用交给可编辑文件使改动容易审阅，同时也意味着，一条只在对话中获得、从未写回的经验，可能在原会话之外完全不可见。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="122-134" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="532-552" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="615-635" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="1625-1633" />
+
+### 两个官方扩展示例，把“进化”落实到是谁写、谁读
+
+看 `todo` 示例，工具每次返回时在结构化的 `details` 里放整份待办快照和下一个 ID。扩展收到 `session_start` 或 `session_tree`，先清掉内存变量，再沿当前分支回放属于 `todo` 的工具结果。切回较早叶节点，扩展便能恢复那个分支的任务状态。这里有持久化，也有恢复，范围由这份会话与所选分支划定。<Src {...source} p="packages/coding-agent/examples/extensions/todo.ts" l="106-138" /> <Src {...source} p="packages/coding-agent/examples/extensions/todo.ts" l="147-177" />
+
+要把一次排错明确交给**另一个会话**，官方还给了一个 `/handoff` 示例。它从旧分支收集材料，结合用户提供的下一步目标生成交接草稿。用户可编辑、可取消。新会话保存父会话引用并将草稿放进编辑器，由用户决定是否发送。这条链的产物是一条面向下一次任务的提示词；安装这个扩展、触发命令和确认交接是三个可定位的决定。两个示例都没有把这次经验发布成所有项目都能发现的 `SKILL.md`。<Src {...source} p="packages/coding-agent/examples/extensions/handoff.ts" l="85-116" /> <Src {...source} p="packages/coding-agent/examples/extensions/handoff.ts" l="161-190" />
+
+我的判断是，Pi 在排错时最有价值的特性，是能从一个意外答案追溯到**哪一条分支、哪次资源加载、哪次显式调用**。代价同样具体：用户修正过的步骤可能同时存在于旧消息和新文件中，压缩清单也可能只记录了尝试修改的路径。要证明一条经验已经变成可迁移的做法，最直接的检查是从一个全新会话调用目标 Skill，观察实际展开的步骤。
 
 Pi 沿当前叶节点重建消息，Hermes 另提供主动检索会话历史的工具。判断一次回答怎样用到了旧材料，前者可以查分支，后者还可以查历史工具调用。 [对照 Hermes 的实现](/notes/hermes-memory-skills/#会话历史与-session_search)

@@ -1,0 +1,53 @@
+---
+interface Props { lang?: 'zh' | 'en' }
+const en = Astro.props.lang === 'en';
+const text = en ? {
+  legend: 'Change the linked worktree’s skill directory', index: 'Memory index', skills: 'Skill catalog',
+  opts: ['Absent', 'Empty', 'Own skill'], states: [
+    ['DESC_RELEASE', 'Falls back to the main checkout.'],
+    ['—', 'The directory exists. Fallback stops, even with no local entries.'],
+    ['DESC_SIDE', 'Only the linked checkout’s test skill appears.'],
+  ], cap: 'Three fresh processes, one linked checkout. The prompt and CLI configuration were identical.'
+} : {
+  legend: '改变 linked worktree 的技能目录', index: '启动时的记忆索引', skills: '技能目录中的简介',
+  opts: ['目录缺席', '空目录', '有自己的 Skill'], states: [
+    ['DESC_RELEASE', '回退到主 checkout，列出那里的技能。'],
+    ['—', '本地目录已存在。即使里面空无一物，回退也已停用。'],
+    ['DESC_SIDE', '只列出 linked checkout 自己的测试技能。'],
+  ], cap: '同一个 linked checkout，三个新进程。每次的提示词和 CLI 配置相同。'
+};
+---
+<figure class="checkout-scope" lang={en ? 'en' : 'zh-CN'}>
+  <fieldset>
+    <legend>{text.legend}</legend>
+    <div class="choices">
+      {text.opts.map((label, n) => <label><input type="radio" name={`cc-skill-root-${en ? 'en' : 'zh'}`} value={n} checked={n === 0} /><span>{label}</span></label>)}
+    </div>
+    <div class="comparison">
+      <div class="measure"><span>{text.index}</span><strong>INDEX_AFTER</strong></div>
+      <div class="measure"><span>{text.skills}</span>
+        {text.states.map(([marker, tip], n) => <div class={`state state-${n}`}><strong>{marker}</strong><p>{tip}</p></div>)}
+      </div>
+    </div>
+  </fieldset>
+  <figcaption>{text.cap}</figcaption>
+</figure>
+<style>
+  .checkout-scope fieldset { margin: 0; border: 0; padding: 0; min-width: 0; }
+  .checkout-scope legend { font: 550 1.22rem/1.45 var(--serif); padding: 0; color: var(--fg); }
+  .choices { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin: .7rem 0 .8rem; }
+  .choices label { font: 500 .86rem/1.6 var(--sans); cursor: pointer; display: inline-flex; align-items: center; gap: .32rem; }
+  .choices input { margin: 0; accent-color: var(--fg); }
+  .comparison { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); border-block: 1px solid var(--line); padding: .9rem 0; gap: .8rem; }
+  .measure > span { display: block; color: var(--mute); font: .77rem/1.4 var(--sans); margin-bottom: .45rem; }
+  .measure strong { color: var(--fg); font: 500 .86rem/1.5 var(--mono); padding: .1rem .3rem; background: var(--plat-soft); }
+  .measure p { margin: .4rem 0 0; color: var(--fg-2); font: .84rem/1.6 var(--sans); }
+  .state { display: none; }
+  fieldset:has(input[value="0"]:checked) .state-0,
+  fieldset:has(input[value="1"]:checked) .state-1,
+  fieldset:has(input[value="2"]:checked) .state-2 { display: block; }
+  @media print {
+    .choices { display: none; }
+    .state { display: block; margin-bottom: .5em; }
+  }
+</style>
