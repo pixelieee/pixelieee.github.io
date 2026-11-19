@@ -1,28 +1,13 @@
 ﻿---
-import mature from '../../public/portraits/mature-original/ascii/portrait.txt?raw';
-import chibi from '../../public/portraits/chibi-original/ascii/portrait.txt?raw';
+import artwork from '../../public/pixel-portrait.txt?raw';
 
-const portraits = [
-  { id: 'mature', source: mature, zh: '成熟态', en: 'Mature', altZh: '成熟态 ASCII 头像', altEn: 'Mature ASCII portrait' },
-  { id: 'chibi', source: chibi, zh: '小形态', en: 'Chibi', altZh: '小形态 ASCII 头像', altEn: 'Chibi ASCII portrait' },
-];
+const portrait = artwork.trimEnd().replace(/\r\n/g, '\n');
 ---
 <div class="ascii-portrait">
-  {portraits.map(({ id, source, altZh, altEn }) => (
-    <pre data-portrait={id} role="img" aria-label={altZh} data-alt-zh={altZh} data-alt-en={altEn} hidden={id !== 'mature'}><span>{source.replace(/\r\n/g, '\n').replace(/\n$/, '')}</span></pre>
-  ))}
+  <pre role="img" aria-label="pixel notes ASCII portrait">{portrait}</pre>
   <div class="scan" aria-hidden="true"></div>
   <div class="cursor-glow" aria-hidden="true"></div>
 </div>
-<fieldset class="portrait-picker" hidden>
-  <legend class="visually-hidden" data-zh="选择字符头像" data-en="Choose an ASCII portrait">选择字符头像</legend>
-  {portraits.map(({ id, zh, en }) => (
-    <label>
-      <input class="visually-hidden" type="radio" name="home-portrait" value={id} checked={id === 'mature'} />
-      <span data-zh={zh} data-en={en}>{zh}</span>
-    </label>
-  ))}
-</fieldset>
 
 <style>
   .ascii-portrait {
@@ -48,7 +33,7 @@ const portraits = [
     user-select: none;
   }
 
-  .scan :global(span), .cursor-glow :global(span) {
+  .ascii-portrait :global(span) {
     position: absolute;
     width: 1ch;
     height: 1em;
@@ -109,54 +94,16 @@ const portraits = [
   }
 
   @media print {
-    .scan, .cursor-glow, .portrait-picker { display: none; }
-  }
-
-  .portrait-picker {
-    border: 0;
-    margin: 8px 0 0;
-    padding: 0;
-    min-inline-size: 0;
-    text-align: center;
-    font: 500 12px/1.5 var(--sans);
-  }
-
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    padding: 0;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .portrait-picker label { display: inline-block; cursor: pointer; }
-  .portrait-picker label span {
-    display: inline-block;
-    padding: 5px 9px;
-    color: var(--mute);
-    text-underline-offset: .35em;
-  }
-  .portrait-picker input:checked + span {
-    color: var(--fg);
-    text-decoration: underline 2px var(--plat);
-  }
-  .portrait-picker label:hover span { color: var(--fg); }
-  .portrait-picker input:focus-visible + span {
-    outline: 2px solid currentColor;
-    outline-offset: 2px;
-    border-radius: 3px;
+    .scan, .cursor-glow { display: none; }
   }
 </style>
 
 <script>
   function mountPortrait(art: HTMLElement) {
-    const options = art.nextElementSibling as HTMLFieldSetElement;
-    const pictures = Array.from(art.querySelectorAll<HTMLPreElement>('pre[data-portrait]'));
-    let base = pictures[0];
+    const base = art.querySelector('pre')!;
     const scan = art.querySelector<HTMLElement>('.scan')!;
     const glow = art.querySelector<HTMLElement>('.cursor-glow')!;
+    const rows = (base.textContent ?? '').split('\n');
     const columns = 72;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
     const duration = 2200;
@@ -172,26 +119,20 @@ const portraits = [
       return span;
     }
 
-    function readGrid(picture: HTMLPreElement) {
-      const rows = (picture.textContent ?? '').split('\n');
-      const width = columns * .6;
-      const centerX = width * .55;
-      const centerY = rows.length * .44;
-      const reach = [
-        width + rows.length,
-        rows.length,
-        Math.hypot(centerX, Math.max(centerY, rows.length - centerY)),
-      ];
-      // Arrival times for a diagonal pass, a rising horizontal pass and a ripple.
-      const ink = rows.flatMap((row, y) => Array.from(row, (glyph, x) => ({
-        x, y, glyph, seed: x * 31 + y * 13,
-        arrival: [x * .6 + y, rows.length - 1 - y, Math.hypot(.6 * x - centerX, y - centerY)]
-          .map((distance, index) => distance / reach[index] * (duration - dwell)),
-      })).filter(({ glyph }) => glyph !== ' '));
-      return { rows, reach, ink };
-    }
-
-    let { rows, reach, ink } = readGrid(base);
+    const width = columns * .6;
+    const centerX = width * .55;
+    const centerY = rows.length * .44;
+    const reach = [
+      width + rows.length,
+      rows.length,
+      Math.hypot(centerX, Math.max(centerY, rows.length - centerY)),
+    ];
+    // Arrival times for a diagonal pass, a rising horizontal pass and a ripple.
+    const ink = rows.flatMap((row, y) => Array.from(row, (glyph, x) => ({
+      x, y, glyph, seed: x * 31 + y * 13,
+      arrival: [x * .6 + y, rows.length - 1 - y, Math.hypot(.6 * x - centerX, y - centerY)]
+        .map((distance, index) => distance / reach[index] * (duration - dwell)),
+    })).filter(({ glyph }) => glyph !== ' '));
 
     let pass = -1;
     let start = 0;
@@ -325,35 +266,13 @@ const portraits = [
     });
     window.addEventListener('scroll', lightPointer, { passive: true });
     window.addEventListener('resize', lightPointer);
-    new ResizeObserver(lightPointer).observe(art);
+    new ResizeObserver(lightPointer).observe(base);
     new IntersectionObserver(([entry]) => {
       visible = entry.isIntersecting;
       sync();
     }).observe(art);
     document.addEventListener('visibilitychange', sync);
     reduced.addEventListener('change', sync);
-
-    function labelPictures() {
-      const english = document.documentElement.dataset.ui === 'en';
-      for (const picture of pictures) {
-        picture.setAttribute('aria-label', (english ? picture.dataset.altEn : picture.dataset.altZh)!);
-      }
-    }
-    document.addEventListener('ui-change', labelPictures);
-    labelPictures();
-    options.addEventListener('change', (event) => {
-      const selected = (event.target as HTMLInputElement).value;
-      const next = pictures.find((picture) => picture.dataset.portrait === selected);
-      if (!next || next === base) return;
-      base.hidden = true;
-      next.hidden = false;
-      base = next;
-      ({ rows, reach, ink } = readGrid(base));
-      glow.replaceChildren();
-      pass = -1;
-      sync();
-    });
-    options.hidden = false;
   }
 
   const art = document.querySelector<HTMLElement>('.ascii-portrait');
