@@ -2,28 +2,29 @@
 const {lang = 'zh'} = Astro.props;
 const en = lang === 'en';
 const stages = en ? [
-  ['First step', 'Catalog C₁', 'The step publishes the name and description as a durable message.'],
-  ['Change the body', 'C₁ still visible', 'The digest still matches. The next skill call can read the new body. No new catalog message is needed.'],
-  ['Replace C₁ with a checkpoint', 'C₁ in log only', 'The original event survives, but the model-facing surface now contains the checkpoint in its place.'],
-  ['Start the next step', 'Catalog C₂', 'The visible catalog is missing. The step publishes the same entries again, even though no skill file changed.'],
+  ['Step 1', 'Publish catalog C₁', 'Names and descriptions are appended as a tagged catalog message on the session surface.'],
+  ['Edit skill body only', 'C₁ still visible', 'Digest unchanged—no new catalog is emitted, while the next skill call reads the new body from disk.'],
+  ['Checkpoint shadows C₁', 'C₁ in log only', 'The catalog event survives in the raw log, but surfaceOp: replace swaps it out of model view.'],
+  ['Next step', 'Republish catalog C₂', 'No catalog event remains in surface.nodes, so DSH emits the exact same entries again even though no file changed.'],
 ] : [
-  ['首个步骤', '发布目录 C₁', '名称和描述成为一条可持久化的目录消息。'],
-  ['只改正文', 'C₁ 仍可见', '目录摘要相同，这一步可以不发目录。调用 Skill 时已可读到新正文。'],
-  ['用检查点覆盖 C₁', 'C₁ 只在日志里', '目录事件仍能查到。此时模型能看到的位置，已经换成了压缩消息。'],
-  ['开始下一步', '重新发布 C₂', '可见消息里找不到原目录。即使文件完全没变，这一步也会重新发布相同条目。'],
+  ['第 1 步', '发布清单 C₁', '名称与简介作为带来源标记的清单消息写入当前 surface。'],
+  ['只改 Skill 正文', 'C₁ 仍在视图中', '摘要未变，不重发清单；下次调用 Skill 时直接从磁盘读到新正文。'],
+  ['压缩遮蔽 C₁', 'C₁ 退回原始日志', '原事件留在日志里可查，但模型眼前的 surface 已被检查点消息替换。'],
+  ['开始下一步', '自动重发清单 C₂', 'surface.nodes 里已找不到上次清单，即使文件一字未动也会重新发布。'],
 ];
 ---
-<figure class="catalog">
+<figure class="catalog" lang={en ? 'en' : 'zh-CN'}>
   <ol>{stages.map(([when, state, description]) => <li><div class="step">{when}</div><div class="fact"><strong>{state}</strong><span>{description}</span></div></li>)}</ol>
-  <figcaption>{en ? 'Two upstream cases, shown on the same timeline. The body-edit case changes a file. The checkpoint case replaces one surface message. Each is sufficient to test a different input of the catalog decision.' : '图 2　把两组独立回归用例画在同一条时间线上。正文修改改变磁盘，检查点改变模型能看到的消息；两者分别检验目录发布判断的一项输入。'}</figcaption>
+  <figcaption>{en ? 'Figure 3. Two upstream regression cases on one timeline: body edits test disk reads; compaction shadowing tests whether tool-skill tracks what remains visible on the surface.' : '图 3\u3000两组上游回归用例合在一条时间线上：只改正文检验读盘，压缩遮蔽检验消费端是否盯着模型还能看到什么。'}</figcaption>
 </figure>
 <style>
+  .catalog { margin: 1.8em 0; }
   .catalog ol{list-style:none;padding:0;margin:0}
-  .catalog li{display:grid;grid-template-columns:minmax(95px,32%) 1fr;gap:.85rem;position:relative;padding:.8rem 0;margin:0;border-top:1px solid var(--line)}
-  .step{font:.83rem/1.65 var(--mono);color:var(--mute);overflow-wrap:anywhere}
+  .catalog li{display:grid;grid-template-columns:minmax(95px,30%) 1fr;gap:.85rem;position:relative;padding:.75rem 0;margin:0;border-top:1px solid var(--line)}
+  .step{font:.82rem/1.65 var(--mono);color:var(--mute);overflow-wrap:anywhere}
   .fact{position:relative;border-left:1px solid var(--line);padding-left:1.05rem}
-  .fact::before{content:'';position:absolute;left:-3.5px;top:.57rem;width:6px;height:6px;background:var(--bg);border:1px solid var(--mute)}
+  .fact::before{content:'';position:absolute;left:-3.5px;top:.55rem;width:6px;height:6px;background:var(--bg);border:1px solid var(--mute)}
   li:last-child .fact::before{background:var(--plat);border-color:var(--plat-ink)}
-  strong{display:block;font:600 .99rem/1.5 var(--sans);color:var(--fg)}
-  span{display:block;font:.9rem/1.7 var(--sans);color:var(--fg-2);margin-top:.18rem}
+  strong{display:block;font:600 .97rem/1.5 var(--sans);color:var(--fg)}
+  span{display:block;font:.89rem/1.7 var(--sans);color:var(--fg-2);margin-top:.15rem}
 </style>

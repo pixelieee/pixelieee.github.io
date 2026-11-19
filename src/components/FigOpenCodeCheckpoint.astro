@@ -1,68 +1,149 @@
 ---
+// 图 2：交互式对照同一条 Skill 工具输出在「压缩前 / 压缩时 / 重启续聊后」的三种视图，同时对照底部始终完整的 SQLite 原文。
 const { lang = 'zh' } = Astro.props;
 const en = lang === 'en';
-const title = en ? 'Following two markers through one checkpoint' : '跟踪一份技能首尾的两个标记';
-const full = en ? 'Full tool result' : '完整工具结果';
+const T = {
+  zh: {
+    aria: '跟踪一份 Skill 工具结果首尾标记经过压缩与重启的变化',
+    tabs: ['压缩前', '压缩时（摘要输入）', '重启续聊后'],
+    s0Title: '普通调用收到的完整工具结果（2,894 字符）',
+    s0Sub: 'HEAD（位置 50）与 TAIL（位置 2,575）完整送达普通 Agent。',
+    s1Title: '发给摘要模型的截断输入（仅前 2,000 个 UTF-16 字符）',
+    s1Sub: '从 <skill_content> 开头算满 2,000 字符直接硬切，尾部标记在进摘要模型之前就已经丢了。',
+    s2Title: '重启后恢复会话，发给模型的消息序列',
+    s2Sub: '按 tail_start_id 仅保留摘要 STUB_CHECKPOINT 与最近一轮 TURN_KEEP；旧 tool 消息退出请求。',
+    sqlLabel: 'SQLite 原文',
+    sqlText: 'part.data.state.output 里始终保留着 HEAD（50）与 TAIL（2,575）完整原文。',
+    cap: '图 2\u3000同一条 Skill 工具输出的三次读取结果。条纹代表中间 2,500 个填充字符，宽度不按字数等比绘制。',
+  },
+  en: {
+    aria: 'Following HEAD and TAIL markers of one skill result through compaction and restart',
+    tabs: ['Before compaction', 'During compaction', 'After restart'],
+    s0Title: 'Full tool result sent to the normal agent (2,894 chars)',
+    s0Sub: 'Both HEAD (offset 50) and TAIL (offset 2,575) reach the model intact.',
+    s1Title: 'Truncated input sent to the summarizer (first 2,000 UTF-16 code units)',
+    s1Sub: 'Sliced 2,000 code units from <skill_content> onward—TAIL is dropped before the summarizer even sees it.',
+    s2Title: 'Resumed request sequence after process restart',
+    s2Sub: 'tail_start_id keeps STUB_CHECKPOINT and TURN_KEEP; the old tool call leaves model context.',
+    sqlLabel: 'SQLite raw row',
+    sqlText: 'part.data.state.output still holds both HEAD (50) and TAIL (2,575) untouched on disk.',
+    cap: 'Figure 2. Three views of one skill tool output across compaction and restart. Patterned bars represent filler text (not drawn to scale).',
+  },
+}[en ? 'en' : 'zh'];
+const grp = `oc-cp-${lang}`;
 ---
-<figure class="trace" lang={en ? 'en' : 'zh-CN'} aria-label={title}>
-  <div class="stage">
-    <div class="stage-label">{en ? 'Before compaction' : '压缩前'}</div>
-    <div class="stage-detail">
-      <div class="stage-title">{full}</div>
-      <div class="strip full" aria-label={en ? 'HEAD, filler, TAIL' : '头部标记、填充、尾部标记'}>
-        <span>HEAD</span><i aria-hidden="true"></i><span>TAIL</span>
-      </div>
-    </div>
+<figure class="oc-trace" lang={en ? 'en' : 'zh-CN'} aria-label={T.aria}>
+  <div class="cp-bar" role="radiogroup" aria-label={en ? 'Compaction stage' : '查看阶段'}>
+    {T.tabs.map((label, i) => (
+      <label class="cp-tab">
+        <input type="radio" name={grp} value={String(i)} checked={i === 1} />
+        <span>{label}</span>
+      </label>
+    ))}
   </div>
-  <div class="stage">
-    <div class="stage-label">{en ? 'During compaction' : '压缩时'}</div>
-    <div class="stage-detail">
-      <div class="stage-title">{en ? 'Input to the summarizer' : '摘要模型收到的输入'}</div>
-      <div class="strip cut"><span>HEAD</span><i aria-hidden="true"></i><span>[truncated]</span></div>
-      <div class="detail">{en ? 'First 2,000 UTF-16 code units of the wrapped result' : '取含工具封装的输出前 2,000 个 UTF-16 代码单元'}</div>
-    </div>
+
+  <div class="cp-stage" data-idx="0">
+    <div class="cp-title">{T.s0Title}</div>
+    <div class="strip full"><span>HEAD</span><i aria-hidden="true"></i><span>TAIL</span></div>
+    <p class="cp-sub">{T.s0Sub}</p>
   </div>
-  <div class="stage resumed">
-    <div class="stage-label">{en ? 'After restart' : '重启并续聊'}</div>
-    <div class="stage-detail">
-      <div class="stage-title">{en ? 'Markers in the resumed request' : '恢复后请求中的实验标记'}</div>
-      <div class="history"><span>STUB_CHECKPOINT</span><span>TURN_KEEP</span><span>TURN_RESTART</span></div>
-    </div>
+
+  <div class="cp-stage" data-idx="1">
+    <div class="cp-title">{T.s1Title}</div>
+    <div class="strip cut"><span>HEAD</span><i aria-hidden="true"></i><span class="cut-tag">[truncated]</span></div>
+    <p class="cp-sub">{T.s1Sub}</p>
   </div>
+
+  <div class="cp-stage" data-idx="2">
+    <div class="cp-title">{T.s2Title}</div>
+    <div class="history"><span class="hi">STUB_CHECKPOINT</span><span>TURN_KEEP</span><span>TURN_RESTART</span></div>
+    <p class="cp-sub">{T.s2Sub}</p>
+  </div>
+
   <div class="archive">
-    <b>SQLite</b>
-    <span>{en ? 'The stored skill result still contains HEAD and TAIL.' : '旧的 skill 结果仍含 HEAD 和 TAIL。'}</span>
+    <b>{T.sqlLabel}</b>
+    <span>{T.sqlText}</span>
   </div>
-  <figcaption>{en ? 'Figure 1. The named markers show three reads of the same session. The patterned strips stand for filler. Their widths do not encode character counts.' : '图 1　用同一会话里的标记对照三次读取。条纹代表填充文本，条带宽度不表示字符数。'}</figcaption>
+  <figcaption>{T.cap}</figcaption>
 </figure>
 <style>
-  .trace { font-family: var(--sans); }
-  .stage { display: grid; grid-template-columns: minmax(8.75em, 24%) minmax(0, 1fr); }
-  .stage-label { position: relative; padding: 14px 12px 0 20px; color: var(--mute); font-size: 13px; line-height: 1.5; }
-  .stage-label::before { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; border-left: 1px solid var(--line); }
-  .stage:first-child .stage-label::before { top: 23px; }
-  .resumed .stage-label::before { bottom: calc(100% - 23px); }
-  .stage-label::after { content: ''; position: absolute; top: 20px; left: 1px; width: 7px; height: 7px; border: 1px solid var(--mute); border-radius: 50%; background: var(--bg); }
-  .resumed .stage-label::after { background: var(--plat); border-color: var(--plat); }
-  .stage-detail { min-width: 0; padding: 10px 0 15px; }
-  .stage-title { margin-bottom: 6px; color: var(--fg); font-size: 14px; font-weight: 600; }
-  .strip, .history { display: flex; align-items: stretch; gap: 4px; }
-  .strip { width: 100%; }
-  .strip span, .history span { padding: 3px 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: 12px/1.6 var(--mono); }
-  .strip i { flex: 1; border: 1px solid var(--line); background: repeating-linear-gradient(115deg, transparent 0 5px, var(--line) 5px 6px); }
-  .cut { width: 78%; }
-  .cut span:last-child { border-style: dashed; color: var(--mute); }
-  .detail { margin-top: 4px; color: var(--mute); font-size: 12px; line-height: 1.5; }
-  .history { flex-wrap: wrap; }
-  .history span:first-child { background: var(--plat-soft); }
-  .archive { display: flex; align-items: baseline; gap: 12px; margin-top: 4px; padding: 9px 12px; border-left: 2px solid var(--plat); background: var(--card); font-size: 13px; line-height: 1.6; color: var(--fg-2); }
-  .archive b { color: var(--fg); font: 600 12px var(--mono); }
-  @media(max-width: 590px) {
-    .stage { grid-template-columns: 1fr; margin-left: 4px; padding-left: 15px; border-left: 1px solid var(--line); }
-    .stage-label { padding: 4px 0 0; }
-    .stage-label::before { display: none; }
-    .stage-label::after { left: -20px; top: 10px; }
-    .stage-detail { padding: 2px 0 18px; }
-    .cut { width: 88%; }
+  .oc-trace { font-family: var(--sans); margin: 1.8em 0; }
+  .cp-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 22px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 14px;
   }
+  .cp-tab {
+    position: relative;
+    cursor: pointer;
+    padding: 8px 2px 9px;
+    color: var(--mute);
+    font: 400 13.5px/1.4 var(--sans);
+    transition: color .18s ease;
+  }
+  .cp-tab::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -1px;
+    height: 2px;
+    background: var(--plat);
+    transform: scaleX(0);
+    transform-origin: center;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1);
+  }
+  .cp-tab:hover { color: var(--fg-2); }
+  .cp-tab input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .cp-tab:has(:checked) { color: var(--fg); font-weight: 500; }
+  .cp-tab:has(:checked)::after { transform: scaleX(1); }
+  .cp-tab:has(:focus-visible) { outline: 1.5px solid var(--plat); outline-offset: 2px; border-radius: 3px; }
+
+  .cp-stage { display: none; padding: 2px 0 10px; }
+  .oc-trace:has([value="0"]:checked) [data-idx="0"],
+  .oc-trace:has([value="1"]:checked) [data-idx="1"],
+  .oc-trace:has([value="2"]:checked) [data-idx="2"] { display: block; animation: cp-fade .22s ease; }
+  @keyframes cp-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+  .cp-title { margin-bottom: 8px; color: var(--fg); font-size: 14px; font-weight: 600; }
+  .cp-sub { margin: 8px 0 0 !important; font-size: 13.5px; line-height: 1.65; color: var(--fg-2); }
+
+  .strip, .history { display: flex; align-items: stretch; gap: 5px; }
+  .strip { width: 100%; }
+  .strip span, .history span {
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--card);
+    color: var(--fg);
+    font: 12px/1.6 var(--mono);
+  }
+  .strip i {
+    flex: 1;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: repeating-linear-gradient(115deg, transparent 0 5px, var(--line) 5px 6px);
+  }
+  .cut { width: 76%; }
+  .cut .cut-tag { border-style: dashed; border-color: var(--plat); color: var(--plat-ink); background: var(--plat-soft); }
+  .history { flex-wrap: wrap; }
+  .history .hi { border-color: var(--plat); background: var(--plat-soft); }
+
+  .archive {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-top: 6px;
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-left: 2.5px solid var(--plat);
+    border-radius: 6px;
+    background: var(--card);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--fg-2);
+  }
+  .archive b { color: var(--fg); font: 600 12px var(--mono); white-space: nowrap; }
+  .oc-trace figcaption { margin-top: 8px; }
+  @media print { .cp-bar { display: none; } .cp-stage { display: block !important; } }
 </style>

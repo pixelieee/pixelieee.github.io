@@ -1,58 +1,59 @@
 ---
-title: "Codex CLI：一段对话怎样成为下一次的记忆"
-titleEn: "Codex CLI: How One Conversation Reaches the Next"
-dek: "两个六小时窗口、三种持久状态，以及一次整理成功却仍读到旧摘要的离线实验。"
-summary: "用真实 App Server 复现记忆的提取、撤回和整理冷却，追查一个 done 状态究竟保证了什么。"
-summaryEn: "Reproduce extraction, retraction and consolidation cooldown in the real App Server, and find out what a completed job guarantees."
+title: "Codex CLI：两个六小时窗口、三层落盘，与一个「只查格式」的 done"
+titleEn: "Codex CLI: Two Six-Hour Clocks, Three Layers, and a Format-Only Done"
+dek: "跨会话记忆走挂在 App Server 后的两阶段异步流水线；提取行、磁盘来源文件、总摘要三层可以长期不同步，而写端验收只查结构格式。"
+summary: "用真实 Codex CLI 0.169.0 App Server 拆解两阶段记忆流水线、空结果撤回与 6 小时冷却、V1/V2 目录切换、项目 Skill 热重载，以及 debug 命令漏装记忆扩展的反例。"
+summaryEn: "Trace Codex CLI 0.169.0's two-phase memory pipeline in the real App Server: extraction, empty-result retraction, 6h cooldowns, V1 vs. V2 stores, skill reload, and why the prompt debugger omits memories."
 date: "2026-11-18"
-updated: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent 工程"
 status: "published"
 pinned: "openai/codex @ d32063f"
+tags:
+  - 记忆
+  - Skill
 ---
 import Src from '../../components/Src.astro';
+import Infer from '../../components/Infer.astro';
 import FigCodexMemory from '../../components/FigCodexMemory.astro';
 import FigCodexRetention from '../../components/FigCodexRetention.astro';
 
-在仓库 A 纠正了一条测试命令，后来在仓库 B 开新对话。一条记忆已经被提取、落盘，整理任务甚至显示 `done`，B 仍然能只读到旧摘要。我在 **Codex CLI 0.169.0** 的本地 App Server 上复现了这个状态。
+export const source = { repo: "openai/codex", rev: "d32063f96c2dff1dc96af839b3952abb6acfeda4" };
 
-关键是查清“写入”指哪一层。`stage1_outputs` 是按旧线程记账的材料，`rollout_summaries/` 是本次选中材料的文件副本，`memory_summary.md` 才是新线程首先读取的摘要。三个地方会短暂不一致，也可能长期保留不同内容。项目 Skill 又是另一条路，它能随工作目录立刻改变，与记忆整理的完成时间无关。
+**一句话结论：** Codex CLI 把跨会话记忆做成挂在 App Server 后的两阶段异步流水线——旧会话先熬过 6 小时空闲被提取，再过 6 小时冷却整理进 `memory_summary.md`，而写端验收只查格式，不核对新事实是否真写进了摘要。<Src {...source} p="codex-rs/app-server/src/request_processors/turn_processor.rs" l="747-783" /> <Src {...source} p="codex-rs/memories/write/src/workspace.rs" l="103-130" />
 
-## 谁接收这次对话
+读完这篇，你能搞清四件事：
 
-本文固定在 **Codex CLI 0.169.0**。普通交互命令进入终端界面，TUI 的本地连接分支可以使用 daemon，也可以启动内嵌的 App Server。`codex exec` 也有启动进程内 App Server 客户端的实现。外部程序可以单独启动 `codex app-server`，通过 JSON-RPC 请求 `thread/start`、`turn/start` 或 `skills/list`。App Server 是客户端和线程运行时之间的一层，记忆的写入调度出现在它处理 `turn/start` 的代码中。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/cli/src/main.rs" l="2598-2611" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/tui/src/lib.rs" l="596-637" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/exec/src/lib.rs" l="1097-1106" /> [官方协议](https://learn.chatgpt.com/docs/app-server)
+1. 在仓库 A 纠正了测试命令、整理任务甚至报了 `done`，为什么在仓库 B 开新对话时仍只读到旧摘要？
+2. 为什么提取器返回**空结果**会删掉旧证据，而报错失败反而保留旧证据？
+3. 为什么一条记录被撤回后，数据库里已经变 0 行，磁盘上的 `rollout_summaries/` 却还要等 6 小时才消失？
+4. 为什么 `codex debug prompt-input` 查不到写好的摘要，正式 App Server 对话却能读到？
 
-这个边界影响“Codex 都会记住吗”的答案。官方说明，IDE 扩展使用所连接 Codex 主机的本地记忆。ChatGPT 网页使用自己的记忆，ChatGPT Work 的可用设置取决于账户和工作区。下面的文件路径、默认值和实验都针对这个公开版本的本地运行时。[官方记忆说明](https://learn.chatgpt.com/docs/customization/memories)
+本文固定 **Codex CLI 0.169.0**（提交 `d32063f`），覆盖本地 App Server 运行时（IDE 扩展共用所连主机本地记忆，ChatGPT 网页版则独立）。[官方记忆说明](https://learn.chatgpt.com/docs/customization/memories)
 
-## 三种东西分别放在哪里
+## 一张图看懂：三层存储与两个六小时窗口
 
-| 对象 | 谁写 | 后来怎样被读到 |
-| --- | --- | --- |
-| 会话记录（rollout） | 活动线程留下事件，线程索引记录更新时间、来源、路径等 | 提取器挑中一个旧线程后，打开它的 rollout |
-| 本地记忆 | 提取器写入单线程结果，整理 Agent 根据选中的材料更新摘要 | 新线程组装上下文时先读取 `memory_summary.md`，需要证据时再打开对应材料 |
-| 本地项目 Skill | 人或拥有文件写权限的工具在项目里写 `.agents/skills/<name>/SKILL.md` | 先发现名称、说明和定位信息，选用后才读正文 |
-
-一个直接后果是，`skills/list` 能回答“这个目录里有哪些 Skill”，无法回答“本轮模型读过哪些正文”。同理，一条消息留在会话记录里，也要经过额外的选择和模型调用，才可能成为下一次的记忆。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1.rs" l="257-283" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/prompts.rs" l="35-62" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/catalog_prompt.rs" l="3-21" />
-
-## 写入从有输入的新回合开始
-
-`features.memories` 在这个版本标为 `stable`，默认值是 `false`。开启后，还有两个独立决定。`memories.generate_memories` 控制新建线程是否标记为可供提取，`memories.use_memories` 控制读取已有记忆的提示。两者的配置默认值都是 `true`。想让某个新对话能参考过去，又不成为未来的材料，可以分别关闭生成、保留读取。交互界面的 `/memories` 还提供当前对话的控制。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/features/src/lib.rs" l="1449-1454" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="330-338" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="382-391" /> [官方配置与对话控制](https://learn.chatgpt.com/docs/customization/memories)
-
-函数名里虽然有 `startup`，真正的调用点在 App Server 提交输入**之后**。只有这次带输入、开启了新回合，并且线程已配置主执行环境，才调用后台入口。追加到进行中回合的输入走 `Steered` 分支。入口还会跳过临时会话、关闭功能的会话和非根 Agent，然后异步检查状态库、准备目录并检查额度。只打开一个空线程或结束一轮，均不能据此推断整理已经完成。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/request_processors/turn_processor.rs" l="747-783" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/start.rs" l="24-37" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/start.rs" l="67-99" />
+在 Codex 里，「记住」一词背后其实有三层独立状态——**`stage1_outputs`**（SQLite 单线程证据行）、**`rollout_summaries/`**（同步到磁盘的来源副本）、**`memory_summary.md`**（新线程首读的总摘要），三者可以短暂不一致，甚至长期内容不同。项目 Skill 则完全独立，按当前工作目录即时发现：
 
 <FigCodexMemory />
 
-**第一阶段按旧线程提取。** 查询限定合格的交互来源和 `memory_mode = 'enabled'`，显式排除正在触发扫描的线程，并用最近活动时间限定最短空闲和最长年龄。默认空闲至少 **6 小时**，最近活动距今至多 **10 天**，每次最多领取 **2** 个。来源清单包含 `Cli`、`VSCode`、`atlas` 和 `chatgpt`；不能因为 `codex exec` 也连接 App Server，就把每条批处理记录都算成合格输入。查询没有按当前工作目录或项目 ID 过滤。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="57-62" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/rollout/src/lib.rs" l="86-95" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1.rs" l="127-143" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="228-260" />
+| 对象 | 写在哪里 | 下一次怎么被读到 |
+|---|---|---|
+| **会话记录（rollout）** | 活动线程追加事件，索引记录来源与最后活动时间 | 阶段一挑中空闲旧线程后，反向扫描其 rollout |
+| **本地跨会话记忆** | 阶段一写 SQLite，阶段二写 `rollout_summaries/` 与 `memory_summary.md` | 新线程先读 `memory_summary.md`（裁至 2,500 token），需要证据再开来源文件 |
+| **本地项目 Skill** | `.agents/skills/<name>/SKILL.md` | 按当前 `cwd` 发现清单，模型选用后再读正文 |
 
-提取器读取候选线程的 rollout。V2 的模型输出是 `rollout_summary` 与 `rollout_slug`，模板允许没有保留价值时返回空字符串。执行器把失败、无输出和成功分别处理。因而即使满足六小时、拿到任务，也可能没有一条可以写入后续摘要的事实。另一个实际停点是额度检查：可取得 Codex 额度快照时，默认要求相关窗口至少剩余 25%；取不到快照时，这个检查本身会放行。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/stage_one_system_v2.md" l="45-53" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1.rs" l="211-253" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/guard.rs" l="9-21" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/guard.rs" l="42-80" />
+开关也拆得很细：`features.memories` 默认 `false`；开启后，`generate_memories`（是否把新线程标为未来素材）和 `use_memories`（是否读取已有摘要）默认均为 `true`，可分别开关，交互里也能用 `/memories` 控当前对话。<Src {...source} p="codex-rs/features/src/lib.rs" l="1449-1454" /> <Src {...source} p="codex-rs/config/src/types.rs" l="330-338" /> <Src {...source} p="codex-rs/config/src/types.rs" l="382-391" />
 
-还要看会话有没有被后续操作取消资格。开启 `disable_on_external_context` 后，符合条件的外部工具上下文可以把线程标为 `polluted`；MCP 分支同时检查该服务是否应触发这个标记。如果这个线程参加过上一次成功整理，状态层还会排队重新整理。它发出的是一次撤回请求，已经投进早前模型请求的文字不会随之改写。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/core/src/mcp_tool_call.rs" l="1052-1068" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="632-667" />
+## 阶段一：新回合触发扫描，按优先级取样，空结果即撤回
 
-### 模型实际看到了哪部分历史
+记忆写入的触发点藏在 App Server 的 `turn/start` 之后——必须**带输入、开启新回合**（往进行中回合插话走 `Steered` 不触发），且跳过临时会话与子 Agent。<Src {...source} p="codex-rs/app-server/src/request_processors/turn_processor.rs" l="747-783" /> <Src {...source} p="codex-rs/memories/write/src/start.rs" l="24-99" />
 
-即使一段会话的完整记录还在，提取器的输入也可能已经缺了证据。读取器反向扫描近期记录，单条记录上限为 1 MiB，累计输入的字节预算为 8 MiB，过大的旧记录可被跳过。V2 随后把媒体内容替换成占位符，给工具输出限长，再决定哪些消息进模型。预算不足时，优先顺序由下面的生产代码决定。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/rollout_input.rs" l="28-68" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/rollout_input.rs" l="239-266" />
+后台扫描**显式排除当前正在发言的线程**，按以下条件领取其他旧线程（不按 `cwd` 或项目过滤，因此跨仓库共用）：
+- **第一道 6 小时窗口**：空闲至少 **6 小时**、最近活动在 **10 天**内，每次最多领 **2** 个；仅限交互来源（`Cli`、`VSCode`、`atlas`、`chatgpt`），`codex exec` 批处理不算；若有额度快照，默认还要求剩余额度 ≥ 25%。<Src {...source} p="codex-rs/config/src/types.rs" l="57-62" /> <Src {...source} p="codex-rs/rollout/src/lib.rs" l="86-95" /> <Src {...source} p="codex-rs/memories/write/src/phase1.rs" l="127-143" /> <Src {...source} p="codex-rs/memories/write/src/guard.rs" l="42-80" />
+- **8 MiB 分级取样**：反向扫描旧 rollout（单条上限 1 MiB、总计 8 MiB），媒体换占位符，工具输出限长；预算不够时严格按下面顺序从新往旧挑，再还原时间顺序——所以用户的中途纠正比一屏工具日志更容易幸存，单线程 V2 产物经脱敏后再按 **9,000 字节**截断：<Src {...source} p="codex-rs/memories/write/src/rollout_input.rs" l="28-68" /> <Src {...source} p="codex-rs/memories/write/src/rollout_input.rs" l="239-304" /> <Src {...source} p="codex-rs/memories/write/src/phase1_output.rs" l="29-52" />
 
-```rust
+```rust title="codex-rs/memories/write/src/rollout_input.rs · 269–277（证据分级优先顺序）"
     for tier in [
         Tier::Human,
         Tier::Final,
@@ -64,31 +65,18 @@ import FigCodexRetention from '../../components/FigCodexRetention.astro';
         for (index, (row_tier, text)) in rows.iter().enumerate().rev() {
 ```
 
-同一类里倒着挑最新证据，发送前再恢复源记录的先后顺序。因此，用户中途说“撤回刚才那条命令”，比一屏普通工具日志更有机会留下；这套排序保留了上下文预算，却也意味着日后可能需要重新打开原文件核实细节。提取到的 V2 摘要还会再做一次敏感内容删改，并按 **9,000 字节**截断。这个上限约束单线程产物，和最终面向新线程的总摘要是两个预算。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/rollout_input.rs" l="268-304" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1_output.rs" l="29-52" />
+- **空结果 vs 报错失败，语义完全相反**：带内容成功则写行并唤醒阶段二；**返回空字符串**则记录处理水位并**删除该线程原有的提取行**（确实删了行才通知阶段二撤回）；模型报错则扣重试、退避 1 小时，**旧产物继续留存**。<Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="860-873" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="946-955" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="1003-1029" /> 另外，开启 `disable_on_external_context` 后，特定外部工具/MCP 可把线程标为 `polluted` 并触发重新整理撤回。<Src {...source} p="codex-rs/core/src/mcp_tool_call.rs" l="1052-1068" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="632-667" />
 
-### 一次空结果，为什么会删除旧材料
+## 阶段二：第二道六小时冷却、格式验收与读写宽严反差
 
-同一个线程有三种结局。成功且带内容时，事务更新来源时间、保存摘要、推进全局整理任务。返回空结果时，事务也记录本次成功处理到哪个时间点，但会删除这个线程原有的提取行；之前确实有行被删，才再次通知全局整理。模型或服务报错则进入错误状态，扣减重试额度并安排退避，旧产物继续留存。**空和失败的含义相反**：前者可以撤回旧证据，后者表示这次没有形成新判断。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="860-873" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="946-955" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="1003-1029" />
+阶段二从最近 **30 天**里按使用次数和更新时间挑出最多 **256 条**提取行，同步到 `rollout_summaries/`，用 Git 基线算差异交给临时整理 Agent 更新 `memory_summary.md`。<Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="440-491" /> <Src {...source} p="codex-rs/memories/write/src/phase2.rs" l="64-180" />
 
-如何避免每个新回合反复提交同一份历史？任务记录带有 `last_success_watermark`。已有输出或成功记录已经覆盖来源更新时间时，就跳过本次领取。正在运行且租约有效的任务也会跳过；来源更新后，可重新获得一次提取机会，原有退避和耗尽的额度有专门的处理。默认每件提取任务的租约和失败退避均为一小时。这些时间都独立于旧会话的六小时空闲窗口。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="667-685" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/lib.rs" l="83-89" />
+这里藏着三个最关键的设计真相：
 
-## 第二阶段决定下次能看到什么
+1. **第二道 6 小时冷却**：距上次成功全局整理未满 6 小时，全局任务拿不到租约——即便数据库里刚删掉或新增了提取行，`rollout_summaries/` 和总摘要也要等冷却过完才同步。<Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="24-29" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="1081-1102" />
+2. **写端 `done` 只查结构格式，不查内容是否更新**：V2 收尾验收只跑下面这个函数——首行 `v1`、四个标题齐全、小于 10,000 字节即算成功，**完全不检查新证据有没有写进正文**：<Src {...source} p="codex-rs/memories/write/src/workspace.rs" l="103-130" />
 
-第一阶段的若干输出还要竞争整理容量。查询优先考虑使用次数，再看最近使用或来源更新的时间；从未使用的条目用来源更新时间判断新旧。默认窗口 30 天，最多选择 256 条。这里的 30 天是**候选材料的选择条件**，不能拿来预测某个结论何时从正在阅读的摘要里消失。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="440-491" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="57-62" />
-
-整理过程使用全局任务租约和记忆工作目录锁，同步所选 `rollout_summaries/`，再用 Git 基线算差异。如果没有差异且已有产物通过校验，就结束这次工作；否则把差异写给整理 Agent。它的线程是临时的，自己也关闭记忆生成、读取和递归委派。V2 模板要它保留事实的出处、作用范围与后续纠正，更新 `memory_summary.md`。这一步改变的是磁盘上的文本和以后构造的上下文。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="64-100" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="137-180" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="215-222" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="318-335" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="12-32" />
-
-### 一份来源在数据库和磁盘上各活多久
-
-`selected_for_phase2` 记录**上一次成功整理选中的来源版本**。清理过期历史时，数据库只删除尚未选中且已过保留期的行。轮到下一次整理，它根据最新选择清理已不在集合里的来源文件，再写回保留项。文件开头附上线程 ID、来源更新时间、rollout 路径、工作目录，有 Git 分支时也记录分支。读者可以从摘要追回究竟是哪一次工作，但不能把留在磁盘上的 Markdown 当作数据库的实时视图。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="401-425" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="1259-1274" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/storage.rs" l="23-41" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/storage.rs" l="115-136" />
-
-这里还有**第二个六小时**。前一个从旧线程最后活动算起，决定阶段一能否领取它。这个从上一次成功整理结束算起，决定全局整理任务能否再次拿到租约。即使新输入已经排队，新回合照样可能只更新数据库，不进入阶段二。成功整理时，程序会重新确认仍然持有租约，再重置 Git 基线、写入这轮选中项；若整理 Agent 未能关闭，就留下原租约，避免另一个写者和它同时改目录。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="24-29" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="1081-1102" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="419-435" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="443-485" />
-
-### `done` 对摘要保证了什么
-
-V2 在收尾时检查下面这个函数。首行是格式标记，所以 V2 目录中的文件也以 `v1` 开头。Rust 的 `str::len()` 计 UTF-8 字节。四个标题全部存在且总长小于 10,000 字节，才通过这部分格式校验。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/workspace.rs" l="103-130" />
-
-```rust
+```rust title="codex-rs/memories/write/src/workspace.rs · 118–129"
 pub fn is_valid_v2_summary(summary: &str) -> bool {
     summary.lines().next() == Some("v1")
         && summary.len() < 10_000
@@ -103,93 +91,64 @@ pub fn is_valid_v2_summary(summary: &str) -> bool {
 }
 ```
 
-函数没有比较新来源中的某条事实是否写进了摘要。整理提示会要求模型更新过时事实、保留证据、应用用户更正，程序则通过退出状态和文件校验决定任务是否成功。下面的两组对照只给同一个整理模型回放“已完成”这句话，就能把这两层区别开。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="39-52" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="407-436" />
+3. **写端严、读端宽，且 V1 / V2 目录不同**：干净 `CODEX_HOME` 默认进 `memories_v2/`（已有旧 `memories/` 则继续走 V1；V1 允许在记忆目录内部生成 `skills/`，但不会自动装进项目的 `.agents/skills/`）。读端扩展只要求 `memory_summary.md` 是非空可读文本并裁到 **2,500 token**，根本不复查 `v1` 首行和四个标题；若用户当场要求「记住/忘记」，V2 模板会先写 `extensions/ad_hoc/notes/` 等后续整理。<Src {...source} p="codex-rs/core/src/config/mod.rs" l="3721-3735" /> <Src {...source} p="codex-rs/ext/memories/src/extension.rs" l="45-76" /> <Src {...source} p="codex-rs/ext/memories/src/prompts.rs" l="35-62" /> <Src {...source} p="codex-rs/ext/memories/templates/memories/read_path_v2.md" l="3-20" />
 
-### 新线程读哪一份摘要
+### 实测：整理报 `done`，新线程为什么仍读到旧摘要
 
-诊断时先看 Codex 实际选了哪个目录。启用记忆的干净 `CODEX_HOME`，在没有显式选版本、没有显式关闭双写、且确认旧目录不存在时，会选 V2 的 `memories_v2/`。已有 `memories/` 的配置在默认情况下继续用 V1。V1 会额外生成 `raw_memories.md`，整理模板也允许在**记忆目录内部**维护 `MEMORY.md` 和可重用的 `skills/`。V2 的模板则围绕摘要和来源证据展开。看到旧教程里的 `memories/skills/`，不能据此推断自己的 V2 主机会自动往项目的 `.agents/skills/` 安装 Skill。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/core/src/config/mod.rs" l="3721-3735" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/protocol/src/memory_version.rs" l="16-23" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/start.rs" l="47-56" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation.md" l="122-140" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="39-52" />
+在正式 `codex app-server` 上接本地回环服务：在目录 A 造两条合成历史并把临时库里活动时间拨早 8 小时，切到目录 B 触发扫描。让提取器对第一条返回命令 `check-atlas-47`、对第二条返回空；让整理器**只回复「已完成」、不改任何文件**，对比两种初始状态：
 
-**写端检验格式，读端只要求有可读的非空文本。** 扩展按线程配置检查功能和 `use_memories`，读取所选目录下的 `memory_summary.md`，去掉首尾空白，再裁到 2,500 token 预算。文件缺失、读取失败或裁剪后为空时，不生成这一段提示。构造提示的代码不会重查 `v1` 首行、四个标题或写端的 10,000 字节上限。V2 的指引让模型在来源中的措辞、时间顺序或不确定性会改变答案时，才去打开相应的 rollout 摘要。如果用户明确要求记住、更正或忘记，读端模板还定义了临时增补的路径 `extensions/ad_hoc/notes/`，后续整合时再处理。这解释了为什么“已经写下更正”和“新摘要已经采用更正”可能是两次不同的观察。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/extension.rs" l="45-76" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/prompts.rs" l="35-62" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/lib.rs" l="13-16" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/templates/memories/read_path_v2.md" l="3-20" />
+| 观察点 | 空目录起步 | 已有一份格式合法的旧摘要 |
+|---|---|---|
+| 阶段一与来源文件 | 1 条提取行 + 1 份含 `check-atlas-47` 的文件 | 相同 |
+| 全局整理任务状态 | `error / failed_invalid_artifacts` | **`done`**（选中位 `selected_for_phase2 = 1`） |
+| 新线程 `thread/memory/read` | `null` | **旧标记 `PRIOR_ONLY_63`，没有新命令** |
 
-## 实验：来源已删，下一次新线程会读到什么
-
-我启动正式 `codex app-server`，模型端接到仅监听本机的 Responses 测试服务。在工作目录 A 通过 `thread/start` 和 `turn/start` 生成两段真实格式的合成历史。随后只把临时状态库中它们的最后活动时间拨早八小时，保留真实目录、来源、线程 ID 和 rollout 文件。切到工作目录 B 开新回合，触发默认筛选。两阶段都走发行版的代码；测试服务控制模型的回答，不评估真实模型总结的好坏。
-
-回放规则只有两条：提取器读到第一段时返回命令 `check-atlas-47`，读到第二段时返回空摘要；整理器总是回复完成，**不发写文件工具调用**。我在两份独立的 `CODEX_HOME` 各跑一次，仅改变初始总摘要。观察点同时放在 SQLite、文件目录和新线程的 `thread/memory/read` 上。
-
-| 观察点 | 空目录起步 | 已有一份格式正确的旧摘要 |
-| --- | --- | --- |
-| 阶段一 | 两个任务完成，一条提取行 | 相同 |
-| 来源文件 | 一份，正文含新命令 | 一份，正文含新命令 |
-| 全局任务 | `error / failed_invalid_artifacts` | `done`，该行的选中位为 1 |
-| 新线程读到 | `null` | 旧标记 `PRIOR_ONLY_63`，没有新命令 |
-
-同一段有用事实已经在数据库和两组的来源文件里。第一组缺总摘要，验收失败。第二组沿用旧摘要，也通过了验收。此时检查任务状态和检查用户下次能否直接看到某个事实，会得到不同答案。
-
-我另跑了第三组，把第二段的空 JSON 改成无法解析的文本。结果是同一批领取的两个任务分别为 `done` 和 `error`，失败任务的 `retry_at` 在未来；第一段的来源文件照常写出，全局整理仍能完成。定位一次局部提取故障时，应按线程检查任务行。
-
-**再把已保留的来源变成空结果。** 我在原线程 A 追加一条合成消息，让下一次提取固定返回空，并把它的最后活动时间放在上一轮来源时间之后十分钟，仍满足六小时空闲。B 再开回合时，`stage1_outputs` 从 1 行降到 0，全局任务为 `pending`；刚成功整理过的 `rollout_summaries/` 里仍有 **1 个文件**。只把该临时库里全局任务的成功时间拨早七小时，另开一个正式回合，来源文件才从 1 个降到 0，任务回到 `done`。原有总摘要在这次回放里仍没有变。
+紧接着给原线程 A 追加一条消息让它重提取为空：数据库 `stage1_outputs` 立刻从 1 变 0、全局任务变 `pending`，但磁盘 `rollout_summaries/` 里**仍留着 1 个文件**；直到把临时库里上次整理完成时间拨早 7 小时、再开一轮新回合，磁盘文件才清成 0：
 
 <FigCodexRetention />
 
-这给了定位问题的顺序：怀疑选错对话，先看来源行和来源时间；怀疑旧材料为何还在，看整理的状态与上次完成时间；要知道新线程实际拿到了什么，直接读该线程的摘要。只在测试库中拨钟是为了跨过两个真实等待窗口，整个实验没有对用户的 Codex 主目录做改动。
+## 项目 Skill 热发现，以及 `debug prompt-input` 反例
 
-```shell
+项目 Skill 走的是另一套独立通道：沿 `cwd` 向上到项目根扫描 `.agents/skills`（外加 `~/.agents/skills`、旧 `$CODEX_HOME/skills` 及系统/管理员/插件根），完全不看记忆冷却。<Src {...source} p="codex-rs/ext/skills/src/host_roots.rs" l="101-177" /> <Src {...source} p="codex-rs/ext/skills/src/host_roots.rs" l="235-260" />
+
+- **不重启 App Server 热刷新 Skill**：同一连接下带 `forceReload: true` 连续查空目录 → 写 `Marker alpha` → 改 `Marker beta` → 查相邻目录，App Server 立刻返回最新描述且不泄露正文，相邻目录为空（不串项目）；同时验证了仅有 `v1` + `SUMMARY_7392` 两行（缺 4 个标题）的摘要在 `thread/memory/read` 里开启即读出、关闭返 `null`。<Src {...source} p="codex-rs/app-server/src/request_processors/catalog_processor.rs" l="548-617" /> <Src {...source} p="codex-rs/app-server/tests/suite/v2/memory_read.rs" l="99-125" />
+- **排查陷阱：`codex debug prompt-input` 根本没装记忆扩展！** 给临时 V2 目录写好 `SUMMARY_7392`，无论开关 `features.memories`，`codex debug prompt-input` 都能看到用户输入 `INPUT_6185`，却**始终看不到 `SUMMARY_7392`**——因为这个调试命令绕过了 App Server，自建扩展表时注册了 Skills 却漏注册了 `codex_memories_extension`。<Src {...source} p="codex-rs/cli/src/main.rs" l="2186-2230" /> <Src {...source} p="codex-rs/app-server/src/extensions.rs" l="101-111" />
+
+## 踩坑清单与落地建议
+
+<Infer /> 回到开头「仓库 A 纠正了测试命令、切到仓库 B」的问题，四条实战判断：
+
+1. **团队硬规范写进 `AGENTS.md` 或 `.agents/skills/`，别指望记忆流水线**：几分钟后切到 B，A 根本没过 6 小时空闲门槛；哪怕之后整理完成，也只共享同一 `CODEX_HOME` 的线索，没法像仓库文件那样审阅和回滚。
+2. **排查记忆没生效，按三层逐级查**：查提取看 `stage1_outputs` 与 `last_success_watermark`；查旧文件为何还在看全局任务状态与 6 小时冷却；查新线程实际拿到什么，直接看 `thread/memory/read`（**千万别用 `codex debug prompt-input` 下结论**）。
+3. **`done` 不等于「新事实一定进了总摘要」**：写端只验格式不验内容，整理模型如果偷懒未改文件，只要旧摘要合法一样报 `done`。
+4. **注意 `CODEX_HOME`、`CODEX_SQLITE_HOME` 与 V1/V2 版本**：三者任何一个没对齐，两次启动看到的就不是同一份记忆库。<Src {...source} p="codex-rs/config/src/config_toml.rs" l="373-377" /> <Src {...source} p="codex-rs/state/src/runtime.rs" l="355-377" />
+
+<details>
+<summary>展开看：三套 App Server 离线复现脚本（生命周期 / Skill 刷新 / debug 反例）</summary>
+<div class="d-body">
+
+环境要求：Python 3、Git、`codex-cli 0.169.0`（若请求启用 Zstd 需安装 Python `zstandard`），所有脚本都在临时目录隔离运行，不改动本机默认 `CODEX_HOME`：
+
+- **两阶段提取、空结果撤回、6 小时冷却与畸形输出局部容错**：[下载 codex-memory-lifecycle.py](/experiments/codex-memory-lifecycle.py)
+
+```sh title="三组对照实验"
 python codex-memory-lifecycle.py blank
 python codex-memory-lifecycle.py stale
 python codex-memory-lifecycle.py malformed
 ```
 
-脚本需要 Python 3、Git 和 `codex-cli 0.169.0`。它在系统临时目录保留合成的数据库、来源文件与服务日志供核查；如本机发送 Zstandard 压缩的请求，Python 需可导入 `zstandard`。[下载完整实验脚本](/experiments/codex-memory-lifecycle.py)
+- **不重启 App Server 热刷新 Skill 与宽松读端实测**：[下载 codex-skill-refresh.py](/experiments/codex-skill-refresh.py) → `python codex-skill-refresh.py`
+- **`codex debug prompt-input` 未装记忆扩展反例**：[下载 codex-prompt-input.py](/experiments/codex-prompt-input.py) → `python codex-prompt-input.py`
 
-## 项目 Skill 有另一套发现规则
+</div>
+</details>
 
-项目内的查找沿工作目录到项目根之间的各层检查 `.agents/skills`。所以放在仓库根的 Skill 可以覆盖下级工作目录，放在某个子目录里的 Skill 对其范围之外的目录未必可见。用户级位置还有 `~/.agents/skills`，实现保留旧的 `$CODEX_HOME/skills`，并有单独的系统、管理员和插件来源。记忆按 Codex 主目录和版本找到，项目 Skill 按当前工作目录和来源找到。两个仓库完全可能共用一份记忆，又各有不同的操作手册。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/host_roots.rs" l="101-113" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/host_roots.rs" l="140-177" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/host_roots.rs" l="235-260" />
+### 同系列对照
 
-官方给作者的建议是把“什么时候该用”写进 `description`。初始目录给模型发现和选择的线索，确定使用时再开 `SKILL.md`；脚本或资料也可以放在同一个包里。目录本身受预算影响，安装了文件、文件被客户端列出、模型读到正文、模型执行某个脚本，是四个能分别验收的事件。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/catalog_prompt.rs" l="3-27" /> [官方 Skill 写作与加载说明](https://learn.chatgpt.com/docs/build-skills)
-
-### 同一事实经过哪条路进入下一轮
-
-实验特意隔离了两个根：`CODEX_HOME` 放 Markdown 与 rollout，`CODEX_SQLITE_HOME` 指向同一个临时目录放数据库。默认部署常把它们合在一起，`sqlite_home` 也可以单独配置，V1 和 V2 在状态层使用各自的记忆库。排查两次启动是否真的共享记忆时，要同时核对文件根、数据库根和读取版本。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/config_toml.rs" l="373-377" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime.rs" l="355-377" />
-
-如果目标是让 A 的构建规则对团队生效，项目 Skill 或 `AGENTS.md` 可以随仓库审阅和交付。个人旧对话可能为另一项目提供线索，但是否纳入总摘要由上述流水线决定。V1 整理模板确实有创建流程型 Skill 的指导，它写在记忆工作目录里，并要求有触发条件、过程与验证方法；V2 的整理目标是总摘要。把某个 `SKILL.md` 安装为项目或个人目录中的可发现 Skill，另有目录写入和发现两个实际步骤。这也是为什么保存一份记忆、学出一种做法、把它推广给团队，不能用同一个 `done` 来验收。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation.md" l="686-716" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="39-52" />
-
-## 实验：不重启服务，重写一个 Skill
-
-我在 Windows 的 `codex-cli 0.169.0` 上新建了临时 `CODEX_HOME` 和 Git 仓库，只通过 App Server 的标准输入输出查询。先查空目录，然后依次写入两个不同的描述，最后让同一进程查相邻目录。每次都设置 `forceReload: true`，并检查返回的 Skill 对象中是否包含一个只写在正文里的标记。没有发起模型回合。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/request_processors/catalog_processor.rs" l="548-563" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/request_processors/catalog_processor.rs" l="598-617" />
-
-```text
-['memories', 'stable', 'false']
-['memories', 'stable', 'true']
-[]
-[('Marker alpha', 'repo', False)]
-[('Marker beta', 'repo', False)]
-[]
-server False False
-server True True
-```
-
-前两行分别是默认配置和本次命令显式开启功能的结果。中间两行说明磁盘改动在下一次强制刷新时已被发现，且响应对象没有正文标记。相邻目录的结果为空，只统计名为 `notes-probe` 的 Skill。这组观察覆盖目录刷新和作用域；模型自行选用 Skill、后台提取成功、以及未强制刷新时的时机，需要各自的证据。
-
-我随后在同一个 App Server 的 V2 目录放入一个只有 `v1` 和标记 `SUMMARY_7392` 两行的文件，启动两个临时线程。它缺少写端要求的四个标题。最后两行分别表示读取开关和接口结果里是否有摘要标记。`thread/memory/read` 在关闭时返回 `null`，开启时返回标记。这是对服务器读端的阳性对照。上游另有集成测试，在模拟模型接口收到的正式回合请求中核对所选版本的标记。 <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/tests/suite/v2/memory_read.rs" l="99-125" />
-
-使用 Python 3、Git 和 Codex CLI 0.169.0 运行 `python codex-skill-refresh.py`。脚本会在临时目录创建仓库和摘要，依次检查目录重载、相邻目录和线程读取开关。[下载 App Server 实验脚本](/experiments/codex-skill-refresh.py)
-
-## 反例：调试命令有没有装入记忆扩展
-
-`codex debug prompt-input` 的帮助文案说它会输出模型可见的输入。我给一个临时 V2 主目录写入非空摘要，里面只有唯一标记 `SUMMARY_7392`。分别关、开功能，各运行一次调试命令，检查其 JSON 里是否有此标记，并用用户输入 `INPUT_6185` 作对照。
-
-| 记忆功能 | 输入标记可见 | 摘要标记可见 |
-| --- | --- | --- |
-| 关 | 是 | 否 |
-| 开 | 是 | 否 |
-
-查调用链才能解释这个阴性结果。调试命令绕过了 App Server，自建扩展注册表，注册了 Skills 等扩展，却没有注册 Memories；正式 App Server 明确安装了 `codex_memories_extension`。因此，这个小实验可以复现**调试入口和正式入口的装配差异**，不足以判断某次正常聊天是否拿到了摘要。<Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/cli/src/main.rs" l="2186-2230" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/extensions.rs" l="101-111" />
-
-使用 Python 3 和 Codex CLI 0.169.0 运行 `python codex-prompt-input.py`。三列依次是功能开关、用户输入标记是否出现、摘要标记是否出现。[下载提示词调试实验脚本](/experiments/codex-prompt-input.py)
-
-## 再看那条测试命令
-
-如果 A 的测试命令是团队约定，把它写入仓库中的 `AGENTS.md` 或项目 Skill，团队可以检查改动、回滚版本，并验证适用目录。若它只是一次排障里发现的线索，让记忆保留当时的证据，未来在相近任务里重新核实更合适。回到开头的例子，几分钟后打开 B，A 那条刚结束的对话尚未达到默认空闲窗口；即便后来整理成功，同一主目录也只提供了跨项目发现线索的机会。至于写在 A 的项目 Skill，本次实验里 B 的目录根本没有列出它。
-
-Hermes 在回合收尾时判断是否派发后台复盘。对照 Codex 启动扫描和排除当前线程的时机，可以解释两者为何会在不同时间吸收同一条纠正。 [对照 Hermes 的实现](/notes/hermes-memory-skills/#background-review把三者串起来)
+| Agent | 和 Codex CLI 对照着看什么 |
+|---|---|
+| [Hermes Agent](/notes/hermes-memory-skills/) | Hermes 在回合收尾立刻判断是否派后台复盘，Codex 等旧线程空闲 6 小时 + 全局 6 小时冷却 |
+| [Pi](/notes/pi-memory-skills/) | Pi 故意不做内置跨会话记忆，全靠显式改 `AGENTS.md` / `SKILL.md` |
+| [OpenCode](/notes/opencode-memory-skills/) | OpenCode 用 SQLite 留原始消息但不做跨会话自动提炼；Skill 缓存在进程内存里，与 Codex `forceReload` 不同 |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | DSH 把跨项目长期记忆外包给 MCP 服务，Codex 内置两阶段流水线且跨仓库共用 `CODEX_HOME` |
+| [Claude Code](/notes/claude-code-memory-skills/) | 对比 Claude Code 的即时文件索引 `MEMORY.md`（200 行/25 KB）与 Codex 的异步总摘要 |

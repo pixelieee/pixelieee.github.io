@@ -3,10 +3,13 @@ title: "Hermes Agent: Memory, Skills and Cross-Session Evolution"
 dek: "Three stores, three write paths, and the one constraint that ties them together: don't dirty the prefix cache."
 summary: "How Hermes stores its memory, session history and skills, who writes to them, and when they are read."
 date: "2026-11-16"
-updated: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent engineering"
 status: "published"
 pinned: "hermes-agent @ bf0203a"
+tags:
+  - Memory
+  - Skills
 ---
 import Src from '../../components/Src.astro';
 import Infer from '../../components/Infer.astro';
@@ -15,7 +18,7 @@ import FigReview from '../../components/FigReview.astro';
 import FigCurator from '../../components/FigCurator.astro';
 import Journey from '../../components/Journey.astro';
 
-**The short version:** Hermes sorts what it learns into three stores: two tiny Markdown files injected on every turn, a searchable session history, and a set of skills loaded on demand. The foreground model writes directly, a background review can run when a turn meets its threshold, and the curator maintains the skills entrusted to it. Most of the design choices that look odd at first can be explained by a single constraint: **don't dirty the system prompt's prefix cache.**
+**The short version:** Hermes splits what it learns into three stores—tiny per-turn memory files, a searchable session history database, and on-demand skills—driven by foreground writes, background reviews, and curator archiving, all governed by one overriding constraint: **don't dirty the system prompt's prefix cache.**
 
 By the end you should be able to answer five questions:
 
@@ -423,6 +426,10 @@ The differences have distinct consequences. Compression can bring a memory updat
 
 ## Appendix
 
+<details>
+<summary>Expand: configuration reference & source verification command (commit `bf0203a`)</summary>
+<div class="d-body">
+
 ### Configuration reference
 
 | Setting | Default | Purpose | Source |
@@ -449,6 +456,9 @@ Every line-numbered reference here points at commit `bf0203a794a07aac3ff764972ab
 ```bash title="Extract a range of source at the pinned commit"
 git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
 ```
+
+</div>
+</details>
 
 ### The same questions in five other agents
 

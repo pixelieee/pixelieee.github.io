@@ -1,0 +1,378 @@
+---
+// 图 1：OpenCode 的三条信息通道——规则每轮重读磁盘、Skill 启动时缓存正文、SQLite 留原文但每次请求按边界过滤。
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const T = {
+  zh: {
+    k0: 'OpenCode 的整体结构：项目规则每轮重读磁盘，Skill 进程启动时整份缓存在内存，SQLite 保留原始消息但每次发请求前按清理标记和压缩边界过滤',
+    tAuto: '自动演示',
+    tRule: '每轮重读规则',
+    tSkill: '内存取 Skill',
+    tSql: 'SQLite 过滤组装',
+    c1a: '每轮请求重读磁盘',
+    c1a1: 'AGENTS.md 规则文件',
+    c1a2: '改完保存下轮生效 · read 补子目录',
+    c1b: '启动时整份缓存在内存',
+    c1b1: 'SKILL.md 注册表',
+    c1b2: '含正文 content · 改后须重启',
+    a1: '拼进 system',
+    a2: '每轮现读',
+    a3: 'skill 工具',
+    a4: '查权限返正文',
+    c2: 'SQLite 会话库',
+    c2s: '原始消息与工具输出保留在库里',
+    r1: 'message / part',
+    r1s: '聊天正文 + 完整 tool 输出原文',
+    r2: 'prune 标记',
+    r2s: '打 compacted 时间戳（保护 skill）',
+    r3: 'compaction 摘要',
+    r3s: '2,000 字符截断输入 + tail_start_id',
+    ag1: '过滤',
+    ag2: '组装',
+    c3: '发给模型的请求',
+    s1: '1. system 放入最新规则',
+    s2: '   与按权限过滤的 Skill 清单',
+    s3: '2. 从最近成功摘要与',
+    s4: '   tail_start_id 截断历史',
+    s5: '3. 被 prune 标记的旧输出',
+    s6: '   替换成已清理占位符',
+    notes: {
+      auto: '和 Pi 刚好相反：OpenCode 每轮重读 AGENTS.md，却把 SKILL.md 正文缓存在进程内存里，并用 SQLite 保留原始工具输出。',
+      rule: '每轮重读规则：构造普通请求前重新读取 AGENTS.md，保存即在下轮生效；用 read 打开深层文件时还会顺路补上子目录规则。',
+      skill: '内存取 Skill：启动时并发解析所有 SKILL.md 并把正文存入实例注册表；改了磁盘文件，运行中的服务仍返回旧版正文。',
+      sql: 'SQLite 过滤组装：数据库一直保留工具结果原文；但发给模型时会按 prune 标记隐藏旧输出，压缩时更只把前 2,000 个字符交给摘要模型。',
+    },
+    cap: '图 1\u3000OpenCode 的三条信息通道与请求组装。',
+  },
+  en: {
+    k0: 'Overview of OpenCode: rules reload from disk every turn, skills cache bodies in memory at startup, and SQLite keeps raw records filtered per request',
+    tAuto: 'Auto',
+    tRule: 'Re-read rules',
+    tSkill: 'Cached skill',
+    tSql: 'Filter SQLite',
+    c1a: 'Re-read every turn',
+    c1a1: 'AGENTS.md rules',
+    c1a2: 'live on next turn · read adds subdirs',
+    c1b: 'Cached in process memory',
+    c1b1: 'SKILL.md registry',
+    c1b2: 'stores body · restart to refresh',
+    a1: 'into system',
+    a2: 'fresh read',
+    a3: 'skill tool',
+    a4: 'ask + body',
+    c2: 'SQLite store',
+    c2s: 'raw messages & tool outputs stay intact',
+    r1: 'message / part',
+    r1s: 'chat turns + full raw tool outputs',
+    r2: 'prune timestamp',
+    r2s: 'marks old outputs (protects skill)',
+    r3: 'compaction summary',
+    r3s: '2,000-char cut input + tail_start_id',
+    ag1: 'filter',
+    ag2: 'build',
+    c3: 'Model request',
+    s1: '1. Fresh rules + permission-',
+    s2: '   filtered catalog in system',
+    s3: '2. Slice history at latest',
+    s4: '   summary & tail_start_id',
+    s5: '3. Swap pruned tool outputs',
+    s6: '   for cleared placeholder',
+    notes: {
+      auto: 'The mirror image of Pi: OpenCode re-reads AGENTS.md every turn, caches SKILL.md bodies in memory until restart, and keeps raw parts in SQLite.',
+      rule: 'Re-read rules: ordinary requests re-read matching AGENTS.md files from disk, and the read tool walks upward to attach nested rules mid-session.',
+      skill: 'Cached skill: startup parses every SKILL.md body into an instance registry; editing a skill on disk leaves a running server returning V1.',
+      sql: 'Filter SQLite: raw tool outputs remain in SQLite, while requests swap pruned outputs for placeholders and compaction slices tool inputs at 2,000 chars.',
+    },
+    cap: 'Figure 1. OpenCode’s three input channels and request assembly.',
+  },
+}[en ? 'en' : 'zh'];
+---
+<figure class="fig oc-arch" data-mode="auto" data-visible="1" lang={en ? 'en' : 'zh-CN'}>
+  <div class="arch-bar" role="tablist" aria-label={en ? 'Highlight data flow' : '切换演示路径'}>
+    <button type="button" role="tab" aria-selected="true" class="arch-tab on" data-set="auto">{T.tAuto}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="rule">{T.tRule}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="skill">{T.tSkill}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="sql">{T.tSql}</button>
+  </div>
+
+  <div class="fig-scroll">
+    <svg viewBox="0 0 820 278" role="img" aria-label={T.k0}>
+      <defs>
+        <marker id={`oc-ah-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)" />
+        </marker>
+        <marker id={`oc-ag-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)" />
+        </marker>
+      </defs>
+
+      <!-- Zone 1: Rules re-read every turn -->
+      <g class="zone zone-rule" data-focus="rule">
+        <rect x="12" y="12" width="212" height="114" rx="11" class="box stage-rule" />
+        <rect x="24" y="44" width="188" height="68" rx="7" class="inner" />
+        <text x="24" y="33" class="h">{T.c1a}</text>
+        <text x="34" y="68" class="mo">{T.c1a1}</text>
+        <text x="34" y="90" class="m">{T.c1a2}</text>
+      </g>
+
+      <!-- Zone 2: Cached skill registry -->
+      <g class="zone zone-skill" data-focus="skill">
+        <rect x="12" y="144" width="212" height="120" rx="11" class="box stage-skill" />
+        <rect x="24" y="176" width="188" height="74" rx="7" class="inner" />
+        <text x="24" y="165" class="h">{T.c1b}</text>
+        <text x="34" y="201" class="mo">{T.c1b1}</text>
+        <text x="34" y="224" class="m">{T.c1b2}</text>
+      </g>
+
+      <!-- Zone 3: SQLite store -->
+      <g class="zone zone-sql" data-focus="sql">
+        <rect x="316" y="12" width="244" height="252" rx="12" class="box stage-sql" />
+        <rect x="330" y="68" width="216" height="54" rx="7" class="inner row-part" />
+        <rect x="330" y="132" width="216" height="54" rx="7" class="inner row-prune" />
+        <rect x="330" y="196" width="216" height="54" rx="7" class="inner row-comp" />
+        <text x="330" y="35" class="h">{T.c2}</text>
+        <text x="330" y="54" class="m">{T.c2s}</text>
+        <text x="340" y="90" class="mo">{T.r1}</text>
+        <text x="340" y="110" class="m">{T.r1s}</text>
+        <text x="340" y="154" class="mo">{T.r2}</text>
+        <text x="340" y="174" class="m">{T.r2s}</text>
+        <text x="340" y="218" class="mo">{T.r3}</text>
+        <text x="340" y="238" class="m">{T.r3s}</text>
+      </g>
+
+      <!-- Zone 4: Model Request -->
+      <g class="zone zone-req" data-focus="sql">
+        <rect x="616" y="12" width="192" height="252" rx="12" class="box req stage-req" />
+        <text x="628" y="36" class="h">{T.c3}</text>
+        <text x="628" y="76" class="m">{T.s1}</text>
+        <text x="628" y="94" class="m">{T.s2}</text>
+        <text x="628" y="138" class="m">{T.s3}</text>
+        <text x="628" y="156" class="m">{T.s4}</text>
+        <text x="628" y="200" class="m">{T.s5}</text>
+        <text x="628" y="218" class="m">{T.s6}</text>
+      </g>
+
+      <!-- Connectors: Rules jump straight into request/system path; Skill enters SQLite tool part; SQLite feeds request -->
+      <g class="ln">
+        <path d="M224 72 H316" marker-end={`url(#oc-ah-${lang})`} class="ln-rule" />
+        <path d="M224 206 H316" marker-end={`url(#oc-ah-${lang})`} class="ln-skill" />
+        <path d="M560 138 H616" marker-end={`url(#oc-ag-${lang})`} class="gd ln-sql" />
+      </g>
+
+      <g class="signals" aria-hidden="true">
+        <path d="M224 72 H313" pathLength="1" class="sig sig-rule" />
+        <path d="M224 206 H313" pathLength="1" class="sig sig-skill" />
+        <path d="M560 138 H612" pathLength="1" class="sig sig-sql" />
+        <circle cx="224" cy="72" r="3.2" class="dot dot-rule" />
+        <circle cx="224" cy="206" r="3.2" class="dot dot-skill" />
+        <circle cx="560" cy="138" r="3.4" class="dot dot-sql" />
+      </g>
+
+      <g class="t" text-anchor="middle">
+        <text x="270" y="61" class="s lbl-rule">{T.a1}</text>
+        <text x="270" y="89" class="s lbl-rule">{T.a2}</text>
+        <text x="270" y="195" class="s lbl-skill">{T.a3}</text>
+        <text x="270" y="223" class="s lbl-skill">{T.a4}</text>
+        <text x="588" y="126" class="g lbl-sql">{T.ag1}</text>
+        <text x="588" y="156" class="g lbl-sql">{T.ag2}</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="arch-live" aria-live="polite">
+    <p data-note="auto">{T.notes.auto}</p>
+    <p data-note="rule">{T.notes.rule}</p>
+    <p data-note="skill">{T.notes.skill}</p>
+    <p data-note="sql">{T.notes.sql}</p>
+  </div>
+  <figcaption>{T.cap}</figcaption>
+</figure>
+
+<script is:inline>
+  if (!window.__ocArchBound) {
+    window.__ocArchBound = true;
+    const init = () => {
+      document.querySelectorAll('.oc-arch').forEach((fig) => {
+        if (fig.dataset.inited) return;
+        fig.dataset.inited = '1';
+        let locked = 'auto';
+        const setActive = (stage) => {
+          fig.dataset.mode = stage;
+          fig.querySelectorAll('.arch-tab').forEach((b) => {
+            const on = b.dataset.set === stage;
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+        };
+        fig.querySelectorAll('.arch-tab').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            locked = btn.dataset.set;
+            setActive(locked);
+          });
+        });
+        fig.querySelectorAll('[data-focus]').forEach((zone) => {
+          const target = zone.getAttribute('data-focus');
+          zone.addEventListener('pointerenter', () => setActive(target));
+          zone.addEventListener('pointerleave', () => setActive(locked));
+          zone.addEventListener('click', () => {
+            locked = locked === target ? 'auto' : target;
+            setActive(locked);
+          });
+        });
+        if ('IntersectionObserver' in window) {
+          const io = new IntersectionObserver((entries) => {
+            entries.forEach((e) => { fig.dataset.visible = e.isIntersecting ? '1' : '0'; });
+          }, { threshold: 0.2 });
+          io.observe(fig);
+        }
+      });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  }
+</script>
+
+<style>
+  .oc-arch { margin: 1.8em 0; }
+  .arch-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 22px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .arch-tab {
+    position: relative;
+    cursor: pointer;
+    padding: 8px 2px 9px;
+    border: 0;
+    background: transparent;
+    color: var(--mute);
+    font: 400 13.5px/1.4 var(--sans);
+    transition: color .18s ease;
+  }
+  .arch-tab::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--plat);
+    transform: scaleX(0);
+    transform-origin: center;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1);
+  }
+  .arch-tab:hover { color: var(--fg-2); }
+  .arch-tab.on { color: var(--fg); font-weight: 500; }
+  .arch-tab.on::after { transform: scaleX(1); }
+  .arch-tab:focus-visible { outline: 1.5px solid var(--plat); outline-offset: 2px; border-radius: 3px; }
+
+  .oc-arch svg { width: 100%; height: auto; display: block; }
+  .oc-arch .zone { cursor: pointer; transition: opacity .22s ease; }
+  .oc-arch .box { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .22s, filter .22s; }
+  .oc-arch .box.req { stroke: var(--plat); stroke-width: 1.3; }
+  .oc-arch .inner { fill: var(--code); stroke: var(--line); stroke-width: 1; transition: stroke .22s, fill .22s; }
+  .oc-arch .zone:hover .box { stroke: var(--plat); }
+  .oc-arch text { fill: var(--fg); font-size: 13.5px; font-family: var(--sans); pointer-events: none; }
+  .oc-arch .h { font-weight: 600; font-size: 14.5px; }
+  .oc-arch .mo { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+  .oc-arch .m { fill: var(--mute); font-size: 11.5px; }
+  .oc-arch .s { fill: var(--mute); font-size: 11px; transition: opacity .22s; }
+  .oc-arch .g { fill: var(--plat-ink); font-size: 11.5px; font-family: var(--mono); transition: opacity .22s; }
+  .oc-arch .ln path { fill: none; stroke: var(--mute); stroke-width: 1.2; transition: opacity .22s; }
+  .oc-arch .ln .gd { stroke: var(--plat); stroke-width: 1.5; }
+
+  .arch-live {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-left: 2.5px solid var(--plat);
+    border-radius: 6px;
+    background: var(--card);
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--fg-2);
+  }
+  .arch-live p { margin: 0 !important; display: none; }
+  .oc-arch[data-mode="auto"]  .arch-live [data-note="auto"],
+  .oc-arch[data-mode="rule"]  .arch-live [data-note="rule"],
+  .oc-arch[data-mode="skill"] .arch-live [data-note="skill"],
+  .oc-arch[data-mode="sql"]   .arch-live [data-note="sql"] { display: block; }
+  .oc-arch figcaption { margin-top: 8px; }
+
+  .oc-arch .sig { fill: none; stroke: var(--plat); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 0.34 1; stroke-dashoffset: 0.36; opacity: 0; }
+  .oc-arch .dot { fill: var(--plat); opacity: 0; }
+
+  .oc-arch[data-mode="auto"][data-visible="1"] .stage-rule  { animation: oc-c1 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .sig-rule    { animation: oc-s1 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .dot-rule    { animation: oc-d1 7.5s ease-in-out infinite; }
+
+  .oc-arch[data-mode="auto"][data-visible="1"] .stage-skill { animation: oc-c2 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .sig-skill   { animation: oc-s2 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .dot-skill   { animation: oc-d2 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .row-part    { animation: oc-r1 7.5s ease-in-out infinite; }
+
+  .oc-arch[data-mode="auto"][data-visible="1"] .stage-sql   { animation: oc-c3 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .sig-sql     { animation: oc-s3 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .dot-sql     { animation: oc-d3 7.5s ease-in-out infinite; }
+  .oc-arch[data-mode="auto"][data-visible="1"] .stage-req   { animation: oc-c4 7.5s ease-in-out infinite; }
+
+  .oc-arch[data-mode="rule"] .zone-skill,
+  .oc-arch[data-mode="rule"] .zone-req,
+  .oc-arch[data-mode="rule"] .ln-skill,
+  .oc-arch[data-mode="rule"] .ln-sql,
+  .oc-arch[data-mode="rule"] .lbl-skill,
+  .oc-arch[data-mode="rule"] .lbl-sql { opacity: 0.34; }
+  .oc-arch[data-mode="rule"] .stage-rule { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .oc-arch[data-mode="rule"] .sig-rule { animation: oc-stream 1.4s linear infinite; }
+  .oc-arch[data-mode="rule"] .dot-rule { animation: oc-dot-l 1.4s linear infinite; }
+
+  .oc-arch[data-mode="skill"] .zone-rule,
+  .oc-arch[data-mode="skill"] .zone-req,
+  .oc-arch[data-mode="skill"] .ln-rule,
+  .oc-arch[data-mode="skill"] .ln-sql,
+  .oc-arch[data-mode="skill"] .lbl-rule,
+  .oc-arch[data-mode="skill"] .lbl-sql { opacity: 0.34; }
+  .oc-arch[data-mode="skill"] .stage-skill { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .oc-arch[data-mode="skill"] .row-part { stroke: var(--plat); fill: var(--plat-soft); }
+  .oc-arch[data-mode="skill"] .sig-skill { animation: oc-stream 1.4s linear infinite; }
+  .oc-arch[data-mode="skill"] .dot-skill { animation: oc-dot-l 1.4s linear infinite; }
+
+  .oc-arch[data-mode="sql"] .zone-rule,
+  .oc-arch[data-mode="sql"] .zone-skill,
+  .oc-arch[data-mode="sql"] .ln-rule,
+  .oc-arch[data-mode="sql"] .ln-skill,
+  .oc-arch[data-mode="sql"] .lbl-rule,
+  .oc-arch[data-mode="sql"] .lbl-skill { opacity: 0.34; }
+  .oc-arch[data-mode="sql"] .stage-sql,
+  .oc-arch[data-mode="sql"] .stage-req { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .oc-arch[data-mode="sql"] .row-prune,
+  .oc-arch[data-mode="sql"] .row-comp { stroke: var(--plat); fill: var(--plat-soft); }
+  .oc-arch[data-mode="sql"] .sig-sql { animation: oc-stream 1.2s linear infinite; }
+  .oc-arch[data-mode="sql"] .dot-sql { animation: oc-dot-r 1.2s linear infinite; }
+
+  @keyframes oc-stream { 0%{stroke-dashoffset:.36;opacity:0} 15%{opacity:1} 85%{opacity:1} 100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes oc-dot-l  { 0%{opacity:0;transform:translateX(0)} 12%{opacity:1;transform:translateX(0)} 88%{opacity:1;transform:translateX(88px)} 100%{opacity:0;transform:translateX(88px)} }
+  @keyframes oc-dot-r  { 0%{opacity:0;transform:translateX(0)} 12%{opacity:1;transform:translateX(0)} 88%{opacity:1;transform:translateX(52px)} 100%{opacity:0;transform:translateX(52px)} }
+
+  @keyframes oc-c1 { 0%,2%,29%,100%{stroke:var(--line);filter:none} 6%,19%{stroke:var(--plat);filter:drop-shadow(0 4px 12px var(--plat-soft))} }
+  @keyframes oc-s1 { 0%,7%{stroke-dashoffset:.36;opacity:0} 10%{opacity:1} 21%{stroke-dashoffset:-.74;opacity:1} 24%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes oc-d1 { 0%,7%{opacity:0;transform:translateX(0)} 10%{opacity:1;transform:translateX(0)} 21%{opacity:1;transform:translateX(88px)} 23%,100%{opacity:0;transform:translateX(88px)} }
+
+  @keyframes oc-c2 { 0%,34%,61%,100%{stroke:var(--line);filter:none} 38%,51%{stroke:var(--plat);filter:drop-shadow(0 4px 12px var(--plat-soft))} }
+  @keyframes oc-s2 { 0%,39%{stroke-dashoffset:.36;opacity:0} 42%{opacity:1} 53%{stroke-dashoffset:-.74;opacity:1} 56%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes oc-d2 { 0%,39%{opacity:0;transform:translateX(0)} 42%{opacity:1;transform:translateX(0)} 53%{opacity:1;transform:translateX(88px)} 55%,100%{opacity:0;transform:translateX(88px)} }
+  @keyframes oc-r1 { 0%,48%,65%,100%{stroke:var(--line);fill:var(--code)} 52%,60%{stroke:var(--plat);fill:var(--plat-soft)} }
+
+  @keyframes oc-c3 { 0%,64%,83%,100%{stroke:var(--line)} 68%,77%{stroke:var(--plat)} }
+  @keyframes oc-s3 { 0%,68%{stroke-dashoffset:.36;opacity:0} 71%{opacity:1} 82%{stroke-dashoffset:-.74;opacity:1} 85%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes oc-d3 { 0%,68%{opacity:0;transform:translateX(0)} 71%{opacity:1;transform:translateX(0)} 82%{opacity:1;transform:translateX(52px)} 84%,100%{opacity:0;transform:translateX(52px)} }
+  @keyframes oc-c4 { 0%,76%,96%,100%{stroke:var(--plat);filter:none} 80%,92%{stroke:var(--plat);filter:drop-shadow(0 6px 16px var(--plat-soft))} }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oc-arch svg * { animation: none !important; }
+    .oc-arch .signals { display: none; }
+  }
+</style>

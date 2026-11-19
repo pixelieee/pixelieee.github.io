@@ -1,0 +1,318 @@
+---
+// 图 1：DeepSeek Harness 的 Cordis 插件数据流——指令双预算链、Skill 与事件日志/surface 视图各自独立，外接记忆由 MCP 服务持有。
+const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
+const T = {
+  zh: {
+    k0: 'DeepSeek Harness 的存储与上下文组装：指令双预算链和 Skill 通过插件写入只追加事件日志，每次请求从 surface 视图派生消息；外接记忆由独立 MCP 服务持有',
+    tAuto: '自动演示',
+    tInst: '指令双预算链',
+    tSkill: 'Skill 与清单',
+    tSurf: '日志 → surface',
+    c1a: '规则与 Skill 插件',
+    c1a1: 'agent-instructions',
+    c1a2: '用户链 + 项目链各 64 KB 预算',
+    c1a3: 'ctx.skills + tool-skill',
+    c1a4: '层优先 > 同层 rank · 正文现读',
+    c1b: '外接 MCP 记忆（默认关闭）',
+    c1b1: 'Reference Memory / Engram',
+    c1b2: '数据与作用域归外部服务持有',
+    a1: '写入事件',
+    a2: '核对 surface',
+    a3: '工具读写',
+    a4: '独立图谱文件',
+    c2: 'Session 事件日志',
+    c2s: '只追加 JSONL（Zstd）/ SQLite',
+    r1: '原始事件 log',
+    r1s: '所有消息、摘要与历史清单均保留',
+    r2: 'surfaceOp: replace',
+    r2s: '按当前位置遮蔽旧区间，不删原日志',
+    r3: 'tool-session-query',
+    r3s: '可搜已遮蔽事件 · 跨会话严核 cwd',
+    ag1: '派生',
+    ag2: '视图',
+    c3: 'surface（模型视图）',
+    s1: '1. 仅含未被遮蔽的可见节点',
+    s2: '2. 压缩后旧清单若被遮蔽，',
+    s3: '   文件未动也会自动重发',
+    s4: '3. 历史可回放，视图与原',
+    s5: '   日志严格分离',
+    notes: {
+      auto: 'DSH 用 Cordis 插件拼出整套记忆与 Skill 能力：完整历史留在只追加日志里，模型看到的只是派生出的 surface 视图，长期记忆交由外部 MCP 服务。',
+      inst: '指令双预算链：用户链和项目链各享独立 65,536 字节上限；同链超限时先丢宽泛的根规则，再截断子目录规则，两链互不挤占。',
+      skill: 'Skill 与清单：tool-skill 检查上次清单事件是否还在 surface.nodes 中；只改正文不重发清单，但清单一旦被压缩遮蔽就会自动重发。',
+      surf: '日志 → surface：压缩追加一条带 surfaceOp: replace 的检查点消息遮蔽旧区间；原始事件仍在日志里，session-query 仍可检索。',
+    },
+    cap: '图 1\u3000DeepSeek Harness 的事件日志、surface 视图与外接记忆分工。',
+  },
+  en: {
+    k0: 'Overview of DeepSeek Harness: instruction chains and skills write into an append-only event log whose derived surface feeds the model, while external MCP servers own long-term memory',
+    tAuto: 'Auto',
+    tInst: 'Instruction chains',
+    tSkill: 'Skill catalog',
+    tSurf: 'Log → surface',
+    c1a: 'Context & Skill plugins',
+    c1a1: 'agent-instructions',
+    c1a2: 'user + project: 64 KB each',
+    c1a3: 'ctx.skills + tool-skill',
+    c1a4: 'layer > rank · fresh body reads',
+    c1b: 'External MCP memory (off)',
+    c1b1: 'Reference Memory / Engram',
+    c1b2: 'server owns storage & scope',
+    a1: 'append event',
+    a2: 'check surface',
+    a3: 'MCP tools',
+    a4: 'separate file',
+    c2: 'Session Event Log',
+    c2s: 'append-only JSONL (Zstd) / SQLite',
+    r1: 'Raw event log',
+    r1s: 'keeps every turn, summary & catalog',
+    r2: 'surfaceOp: replace',
+    r2s: 'shadows span by surface position',
+    r3: 'tool-session-query',
+    r3s: 'searches shadowed · exact cwd check',
+    ag1: 'derive',
+    ag2: 'view',
+    c3: 'Model surface',
+    s1: '1. Only unshadowed visible nodes',
+    s2: '2. If compaction shadows the',
+    s3: '   catalog, it republishes fresh',
+    s4: '3. Replayable log strictly',
+    s5: '   separated from model view',
+    notes: {
+      auto: 'DSH composes plugins on Cordis: full history lives in an append-only event log, models see only the derived surface, and external MCP servers own long-term memory.',
+      inst: 'Instruction chains: user and project chains each get 65,536 bytes; within a chain the broader root drops before the nested file truncates.',
+      skill: 'Skill catalog: tool-skill checks whether the last catalog event is still in surface.nodes—body edits stay quiet, but compaction shadowing triggers republication.',
+      surf: 'Log → surface: compaction appends a checkpoint with surfaceOp: replace to shadow old spans without erasing raw events from the log.',
+    },
+    cap: 'Figure 1. Session event log, derived model surface, and external MCP memory in DeepSeek Harness.',
+  },
+}[en ? 'en' : 'zh'];
+---
+<figure class="fig dsh-arch" data-mode="auto" data-visible="1" lang={en ? 'en' : 'zh-CN'}>
+  <div class="arch-bar" role="tablist" aria-label={en ? 'Highlight data flow' : '切换演示路径'}>
+    <button type="button" role="tab" aria-selected="true" class="arch-tab on" data-set="auto">{T.tAuto}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="inst">{T.tInst}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="skill">{T.tSkill}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="surf">{T.tSurf}</button>
+  </div>
+
+  <div class="fig-scroll">
+    <svg viewBox="0 0 820 294" role="img" aria-label={T.k0}>
+      <defs>
+        <marker id={`dsh-ah-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)" />
+        </marker>
+        <marker id={`dsh-ag-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)" />
+        </marker>
+      </defs>
+
+      <g class="zone zone-top" data-focus="inst">
+        <rect x="12" y="12" width="212" height="154" rx="11" class="box stage-inst" />
+        <rect x="24" y="44" width="188" height="52" rx="7" class="inner row-inst" />
+        <rect x="24" y="104" width="188" height="50" rx="7" class="inner row-skill" />
+        <text x="24" y="33" class="h">{T.c1a}</text>
+        <text x="34" y="64" class="mo">{T.c1a1}</text>
+        <text x="34" y="83" class="m">{T.c1a2}</text>
+        <text x="34" y="124" class="mo">{T.c1a3}</text>
+        <text x="34" y="143" class="m">{T.c1a4}</text>
+      </g>
+
+      <g class="zone zone-mcp" data-focus="skill">
+        <rect x="12" y="182" width="212" height="98" rx="11" class="box stage-mcp" />
+        <rect x="24" y="216" width="188" height="52" rx="7" class="inner" />
+        <text x="24" y="203" class="h">{T.c1b}</text>
+        <text x="34" y="236" class="mo">{T.c1b1}</text>
+        <text x="34" y="255" class="m">{T.c1b2}</text>
+      </g>
+
+      <g class="zone zone-log" data-focus="surf">
+        <rect x="316" y="12" width="244" height="268" rx="12" class="box stage-log" />
+        <rect x="330" y="68" width="216" height="58" rx="7" class="inner row-log" />
+        <rect x="330" y="136" width="216" height="58" rx="7" class="inner row-op" />
+        <rect x="330" y="204" width="216" height="60" rx="7" class="inner" />
+        <text x="330" y="35" class="h">{T.c2}</text>
+        <text x="330" y="54" class="m">{T.c2s}</text>
+        <text x="340" y="91" class="mo">{T.r1}</text>
+        <text x="340" y="111" class="m">{T.r1s}</text>
+        <text x="340" y="159" class="mo">{T.r2}</text>
+        <text x="340" y="179" class="m">{T.r2s}</text>
+        <text x="340" y="227" class="mo">{T.r3}</text>
+        <text x="340" y="247" class="m">{T.r3s}</text>
+      </g>
+
+      <g class="zone zone-surf" data-focus="surf">
+        <rect x="616" y="12" width="192" height="268" rx="12" class="box req stage-surf" />
+        <text x="628" y="36" class="h">{T.c3}</text>
+        <text x="628" y="78" class="m">{T.s1}</text>
+        <text x="628" y="126" class="m">{T.s2}</text>
+        <text x="628" y="146" class="m">{T.s3}</text>
+        <text x="628" y="196" class="m">{T.s4}</text>
+        <text x="628" y="216" class="m">{T.s5}</text>
+      </g>
+
+      <g class="ln">
+        <path d="M224 88 H316" marker-end={`url(#dsh-ah-${lang})`} class="ln-top" />
+        <path d="M224 240 H316" marker-end={`url(#dsh-ah-${lang})`} class="ln-mcp" />
+        <path d="M560 146 H616" marker-end={`url(#dsh-ag-${lang})`} class="gd ln-surf" />
+      </g>
+
+      <g class="signals" aria-hidden="true">
+        <path d="M224 88 H313" pathLength="1" class="sig sig-top" />
+        <path d="M224 240 H313" pathLength="1" class="sig sig-mcp" />
+        <path d="M560 146 H612" pathLength="1" class="sig sig-surf" />
+        <circle cx="224" cy="88" r="3.2" class="dot dot-top" />
+        <circle cx="224" cy="240" r="3.2" class="dot dot-mcp" />
+        <circle cx="560" cy="146" r="3.4" class="dot dot-surf" />
+      </g>
+
+      <g class="t" text-anchor="middle">
+        <text x="270" y="77" class="s lbl-top">{T.a1}</text>
+        <text x="270" y="105" class="s lbl-top">{T.a2}</text>
+        <text x="270" y="229" class="s lbl-mcp">{T.a3}</text>
+        <text x="270" y="257" class="s lbl-mcp">{T.a4}</text>
+        <text x="588" y="134" class="g lbl-surf">{T.ag1}</text>
+        <text x="588" y="164" class="g lbl-surf">{T.ag2}</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="arch-live" aria-live="polite">
+    <p data-note="auto">{T.notes.auto}</p>
+    <p data-note="inst">{T.notes.inst}</p>
+    <p data-note="skill">{T.notes.skill}</p>
+    <p data-note="surf">{T.notes.surf}</p>
+  </div>
+  <figcaption>{T.cap}</figcaption>
+</figure>
+
+<script is:inline>
+  if (!window.__dshArchBound) {
+    window.__dshArchBound = true;
+    const init = () => {
+      document.querySelectorAll('.dsh-arch').forEach((fig) => {
+        if (fig.dataset.inited) return;
+        fig.dataset.inited = '1';
+        let locked = 'auto';
+        const setActive = (stage) => {
+          fig.dataset.mode = stage;
+          fig.querySelectorAll('.arch-tab').forEach((b) => {
+            const on = b.dataset.set === stage;
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+        };
+        fig.querySelectorAll('.arch-tab').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            locked = btn.dataset.set;
+            setActive(locked);
+          });
+        });
+        fig.querySelectorAll('[data-focus]').forEach((zone) => {
+          const target = zone.getAttribute('data-focus');
+          zone.addEventListener('pointerenter', () => setActive(target));
+          zone.addEventListener('pointerleave', () => setActive(locked));
+          zone.addEventListener('click', () => {
+            locked = locked === target ? 'auto' : target;
+            setActive(locked);
+          });
+        });
+        if ('IntersectionObserver' in window) {
+          const io = new IntersectionObserver((entries) => {
+            entries.forEach((e) => { fig.dataset.visible = e.isIntersecting ? '1' : '0'; });
+          }, { threshold: 0.2 });
+          io.observe(fig);
+        }
+      });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  }
+</script>
+
+<style>
+  .dsh-arch { margin: 1.8em 0; }
+  .arch-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 0 22px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .arch-tab { position: relative; cursor: pointer; padding: 8px 2px 9px; border: 0; background: transparent; color: var(--mute); font: 400 13.5px/1.4 var(--sans); transition: color .18s ease; }
+  .arch-tab::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--plat); transform: scaleX(0); transform-origin: center; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+  .arch-tab:hover { color: var(--fg-2); }
+  .arch-tab.on { color: var(--fg); font-weight: 500; }
+  .arch-tab.on::after { transform: scaleX(1); }
+  .arch-tab:focus-visible { outline: 1.5px solid var(--plat); outline-offset: 2px; border-radius: 3px; }
+
+  .dsh-arch svg { width: 100%; height: auto; display: block; }
+  .dsh-arch .zone { cursor: pointer; transition: opacity .22s ease; }
+  .dsh-arch .box { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .22s, filter .22s; }
+  .dsh-arch .box.req { stroke: var(--plat); stroke-width: 1.3; }
+  .dsh-arch .inner { fill: var(--code); stroke: var(--line); stroke-width: 1; transition: stroke .22s, fill .22s; }
+  .dsh-arch .zone:hover .box { stroke: var(--plat); }
+  .dsh-arch text { fill: var(--fg); font-size: 13.5px; font-family: var(--sans); pointer-events: none; }
+  .dsh-arch .h { font-weight: 600; font-size: 14.5px; }
+  .dsh-arch .mo { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+  .dsh-arch .m { fill: var(--mute); font-size: 11.5px; }
+  .dsh-arch .s { fill: var(--mute); font-size: 11px; transition: opacity .22s; }
+  .dsh-arch .g { fill: var(--plat-ink); font-size: 11.5px; font-family: var(--mono); transition: opacity .22s; }
+  .dsh-arch .ln path { fill: none; stroke: var(--mute); stroke-width: 1.2; transition: opacity .22s; }
+  .dsh-arch .ln .gd { stroke: var(--plat); stroke-width: 1.5; }
+
+  .arch-live { margin-top: 8px; padding: 8px 12px; border: 1px solid var(--line); border-left: 2.5px solid var(--plat); border-radius: 6px; background: var(--card); font-size: 13.5px; line-height: 1.65; color: var(--fg-2); }
+  .arch-live p { margin: 0 !important; display: none; }
+  .dsh-arch[data-mode="auto"]  .arch-live [data-note="auto"],
+  .dsh-arch[data-mode="inst"]  .arch-live [data-note="inst"],
+  .dsh-arch[data-mode="skill"] .arch-live [data-note="skill"],
+  .dsh-arch[data-mode="surf"]  .arch-live [data-note="surf"] { display: block; }
+  .dsh-arch figcaption { margin-top: 8px; }
+
+  .dsh-arch .sig { fill: none; stroke: var(--plat); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 0.34 1; stroke-dashoffset: 0.36; opacity: 0; }
+  .dsh-arch .dot { fill: var(--plat); opacity: 0; }
+
+  .dsh-arch[data-mode="auto"][data-visible="1"] .stage-inst { animation: dsh-c1 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .sig-top    { animation: dsh-s1 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .dot-top    { animation: dsh-d1 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .stage-mcp  { animation: dsh-c2 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .sig-mcp    { animation: dsh-s2 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .dot-mcp    { animation: dsh-d2 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .stage-log  { animation: dsh-c3 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .sig-surf   { animation: dsh-s3 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .dot-surf   { animation: dsh-d3 7.5s ease-in-out infinite; }
+  .dsh-arch[data-mode="auto"][data-visible="1"] .stage-surf { animation: dsh-c4 7.5s ease-in-out infinite; }
+
+  .dsh-arch[data-mode="inst"] .zone-mcp, .dsh-arch[data-mode="inst"] .zone-surf, .dsh-arch[data-mode="inst"] .ln-mcp, .dsh-arch[data-mode="inst"] .ln-surf, .dsh-arch[data-mode="inst"] .lbl-mcp, .dsh-arch[data-mode="inst"] .lbl-surf { opacity: 0.34; }
+  .dsh-arch[data-mode="inst"] .stage-inst { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .dsh-arch[data-mode="inst"] .row-inst { stroke: var(--plat); fill: var(--plat-soft); }
+  .dsh-arch[data-mode="inst"] .sig-top { animation: dsh-stream 1.4s linear infinite; }
+  .dsh-arch[data-mode="inst"] .dot-top { animation: dsh-dot-l 1.4s linear infinite; }
+
+  .dsh-arch[data-mode="skill"] .zone-mcp, .dsh-arch[data-mode="skill"] .ln-mcp, .dsh-arch[data-mode="skill"] .lbl-mcp { opacity: 0.34; }
+  .dsh-arch[data-mode="skill"] .row-skill { stroke: var(--plat); fill: var(--plat-soft); }
+  .dsh-arch[data-mode="skill"] .stage-surf { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .dsh-arch[data-mode="skill"] .sig-top { animation: dsh-stream 1.4s linear infinite; }
+  .dsh-arch[data-mode="skill"] .dot-top { animation: dsh-dot-l 1.4s linear infinite; }
+
+  .dsh-arch[data-mode="surf"] .zone-top, .dsh-arch[data-mode="surf"] .zone-mcp, .dsh-arch[data-mode="surf"] .ln-top, .dsh-arch[data-mode="surf"] .ln-mcp, .dsh-arch[data-mode="surf"] .lbl-top, .dsh-arch[data-mode="surf"] .lbl-mcp { opacity: 0.34; }
+  .dsh-arch[data-mode="surf"] .stage-log, .dsh-arch[data-mode="surf"] .stage-surf { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .dsh-arch[data-mode="surf"] .row-op { stroke: var(--plat); fill: var(--plat-soft); }
+  .dsh-arch[data-mode="surf"] .sig-surf { animation: dsh-stream 1.2s linear infinite; }
+  .dsh-arch[data-mode="surf"] .dot-surf { animation: dsh-dot-r 1.2s linear infinite; }
+
+  @keyframes dsh-stream { 0%{stroke-dashoffset:.36;opacity:0} 15%{opacity:1} 85%{opacity:1} 100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes dsh-dot-l  { 0%{opacity:0;transform:translateX(0)} 12%{opacity:1;transform:translateX(0)} 88%{opacity:1;transform:translateX(88px)} 100%{opacity:0;transform:translateX(88px)} }
+  @keyframes dsh-dot-r  { 0%{opacity:0;transform:translateX(0)} 12%{opacity:1;transform:translateX(0)} 88%{opacity:1;transform:translateX(52px)} 100%{opacity:0;transform:translateX(52px)} }
+
+  @keyframes dsh-c1 { 0%,2%,29%,100%{stroke:var(--line);filter:none} 6%,19%{stroke:var(--plat);filter:drop-shadow(0 4px 12px var(--plat-soft))} }
+  @keyframes dsh-s1 { 0%,7%{stroke-dashoffset:.36;opacity:0} 10%{opacity:1} 21%{stroke-dashoffset:-.74;opacity:1} 24%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes dsh-d1 { 0%,7%{opacity:0;transform:translateX(0)} 10%{opacity:1;transform:translateX(0)} 21%{opacity:1;transform:translateX(88px)} 23%,100%{opacity:0;transform:translateX(88px)} }
+  @keyframes dsh-c2 { 0%,34%,61%,100%{stroke:var(--line);filter:none} 38%,51%{stroke:var(--plat);filter:drop-shadow(0 4px 12px var(--plat-soft))} }
+  @keyframes dsh-s2 { 0%,39%{stroke-dashoffset:.36;opacity:0} 42%{opacity:1} 53%{stroke-dashoffset:-.74;opacity:1} 56%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes dsh-d2 { 0%,39%{opacity:0;transform:translateX(0)} 42%{opacity:1;transform:translateX(0)} 53%{opacity:1;transform:translateX(88px)} 55%,100%{opacity:0;transform:translateX(88px)} }
+  @keyframes dsh-c3 { 0%,64%,83%,100%{stroke:var(--line)} 68%,77%{stroke:var(--plat)} }
+  @keyframes dsh-s3 { 0%,68%{stroke-dashoffset:.36;opacity:0} 71%{opacity:1} 82%{stroke-dashoffset:-.74;opacity:1} 85%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes dsh-d3 { 0%,68%{opacity:0;transform:translateX(0)} 71%{opacity:1;transform:translateX(0)} 82%{opacity:1;transform:translateX(52px)} 84%,100%{opacity:0;transform:translateX(52px)} }
+  @keyframes dsh-c4 { 0%,76%,96%,100%{stroke:var(--plat);filter:none} 80%,92%{stroke:var(--plat);filter:drop-shadow(0 6px 16px var(--plat-soft))} }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dsh-arch svg * { animation: none !important; }
+    .dsh-arch .signals { display: none; }
+  }
+</style>

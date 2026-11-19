@@ -1,32 +1,62 @@
 ---
 title: "Claude Code: How an Instruction Reaches the Next Request"
-dek: "A successful Edit leaves two versions of an index in play. Follow the requests to see when memory reloads and which worktree loses a skill."
-summary: "Write, Edit, Read and a linked-worktree control expose memory reloads, post-write warnings and skill discovery in Claude Code 2.1.327."
+dek: "A successful Edit leaves two versions of an index in play. Follow the real payloads to see when memory reloads, where post-write errors come from, and which worktree drops a skill."
+summary: "Write, Edit, Read and a linked-worktree control expose memory reloads, post-write warnings, skill deduplication, and permission lifetimes in Claude Code 2.1.327."
 date: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent engineering"
 status: "published"
 pinned: "Claude Code 2.1.327"
+tags:
+  - Memory
+  - Skills
 ---
 
-import FigClaudeMemory from '../../components/FigClaudeMemory.astro';
+import FigClaudeArch from '../../components/FigClaudeArch.astro';
 import FigClaudeTrace from '../../components/FigClaudeTrace.astro';
+import FigClaudeMemory from '../../components/FigClaudeMemory.astro';
 import FigClaudeScope from '../../components/FigClaudeScope.astro';
 
-An on-call engineer changes the release handoff code. Claude Code writes the topic file and edits its index. Both tools report success. I capture the next outgoing request: its startup instructions still carry the **old index**. I close the process and start another one in the same repository: the **new index** appears, but the handoff code is missing. Only when the CLI reads the topic file does the code enter the request as a tool result.
+**The short version:** Claude Code splits durable knowledge into three tracks—team-reviewed project rules, repo-shared local auto memory, and on-demand skills—loading bounded prefixes at startup without rewriting the active turn's snapshot, while a single empty directory is enough to cut off a linked worktree's skill fallback.
 
-That write raises three questions. How can the current conversation know the new value before its startup instructions change? Why can a linked Git worktree inherit the memory yet lose a skill that worked in the main checkout? What should a caller do when a single write reports both success and “Error”? I traced the on-disk results and individual message blocks with the installed Claude Code 2.1.327 and a loopback endpoint that scripts tool calls. No API key or model prediction is involved. The trace measures client behavior. What a model decides to remember requires a different experiment. I checked the official sources on November 18, 2026. [Pinned release changelog](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L3)
+By the end you will be able to answer four questions:
 
-## Follow one fact through two process starts
+1. Right after `Write` and `Edit` succeed on auto memory, why does the next outgoing request still carry the **old index** in its startup attachment?
+2. When `MEMORY.md` reaches 202 lines, how can the disk write succeed, `tool_result` report no error, and the next request still include an "Error" warning?
+3. Why does a Git linked worktree inherit the repo's auto-memory index automatically yet suddenly lose main-checkout skills the moment an **empty directory** exists?
+4. Why can an invoked skill's instructions stay visible in later turns after its `allowed-tools` pre-approval has already expired?
 
-I initialized a Git repository under an isolated configuration and let the CLI create its normal project-memory directory. The index started with one line containing `INDEX_BEFORE`. My endpoint requested three real CLI actions: read the old index, write a `release-owner.md` containing `DETAIL_QUARTZ`, then replace the index marker with `INDEX_AFTER`. Each process used `--no-session-persistence`. The ordinary prompt was the same each time and contained none of these markers.
+This note traces the installed **Claude Code 2.1.327** against a local loopback endpoint (scripted tool calls executed by the real CLI—no API key or model predictions), with official docs verified on November 18, 2026. [Pinned release changelog](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L3)
+
+## The big picture: three tracks and the first request
+
+Deciding where a piece of knowledge belongs in Claude Code starts with **who owns it**—team conventions live in Git, local corrections go to auto memory, and multi-step procedures live in skills:
+
+<FigClaudeArch lang="en" />
+
+| What should survive | Where it lives & who maintains it | When it enters context next time |
+|---|---|---|
+| Repo-wide conventions (e.g., on-call sign-off) | Root `CLAUDE.md` / `CLAUDE.local.md`, reviewed in Git | Concatenated from ancestors down to `cwd` at startup as a user message after the system prompt |
+| Rules scoped to part of the tree (`module/`) | `.claude/rules/` (with `paths`) or nested `CLAUDE.md` | Absent on request 1; injected only after a real file access matches |
+| Local corrections and preferences | `~/.claude/projects/<project>/memory/MEMORY.md` + topic files | First **200 lines or 25 KB** of index at startup; topic bodies wait for `Read` |
+| Reusable steps, checklists, templates | `.claude/skills/<name>/SKILL.md` + attachments | Name & description in a 1% catalog budget; body loads on invocation or `/name` |
+| Last command run and its logs | Conversation transcript | Available when resuming that session; omitted from fresh sessions |
+
+Two loading rules frequently surprise teams:
+- **Scoped rules wait for file access**: with `.claude/rules/module.md` (`paths: ["module/**/*.py"]`) and `module/CLAUDE.md` present, both markers were absent from request 1. After a real CLI `Read` of `module/a.py`, the file, nested instructions, and path rule all arrived together in the next request. Use the `InstructionsLoaded` hook (`session_start`, `nested_traversal`, `path_glob_match`) to diagnose which path fired. [Instruction loading order](https://code.claude.com/docs/en/memory#how-claude-md-files-load) · [Path-specific rules](https://code.claude.com/docs/en/memory#path-specific-rules) · [InstructionsLoaded hook](https://code.claude.com/docs/en/hooks#instructionsloaded)
+- **`CLAUDE.md` suppresses `AGENTS.md` fallback**: by default (direct `AGENTS.md` support arrived in v2.1.277), any project-side `CLAUDE.md` or `CLAUDE.local.md` in or above `cwd` prevents fallback to `AGENTS.md`. With both files at root, only `CLAUDE.md` reached request 1; teams maintaining both must configure joint loading or import via `@AGENTS.md`. [AGENTS.md selection rules](https://code.claude.com/docs/en/memory#agents-md)
+
+Avoid duplicating commands that already live in a `Makefile`—record non-obvious conventions in rules, keep procedures in skills. [Project memory](https://code.claude.com/docs/en/memory) · [Where skills live](https://code.claude.com/docs/en/skills#where-skills-live)
+
+## One edit, three requests: why startup snapshots stay put
+
+In an isolated config directory, I initialized a Git repo whose `MEMORY.md` started with `INDEX_BEFORE`. The loopback endpoint had the real CLI read the index, write `release-owner.md` containing `DETAIL_QUARTZ`, and `Edit` the index to `INDEX_AFTER`; then I launched a fresh process (`--no-session-persistence`) in the same repo and issued a `Read`.
 
 <FigClaudeTrace lang="en" />
 
-Both index markers are searchable in request four. A whole-payload search would suggest the CLI had already reloaded the index. Looking at message positions gives a different answer. The startup attachment in a `user` text block still contains the old index. The assistant’s own `Edit` call supplies both `old_string` and `new_string`. The file on disk has changed, and the current task can recover what happened from tool history. In the fresh process that history is gone. Its first request picks up the new index from disk. This measures **the next request within the same turn** after an edit. It does not establish a refresh policy for every subsequent user turn.
+Searching the raw text of request 4 finds both `INDEX_BEFORE` and `INDEX_AFTER`, which easily misleads you into thinking the index reloaded. Splitting by message slot shows the truth: the startup `user` attachment **still holds the old index**, while the assistant's own `Edit` call carries `new_string`. Within the turn, tool history bridges the gap without mutating the startup prefix. Restarting discards tool history and loads `INDEX_AFTER` from disk—yet `DETAIL_QUARTZ` remains absent until `Read` returns it as a `tool_result`:
 
-Here are the relevant blocks from the fresh process’s second request. I have elided the directory, line-number prefixes and surrounding text. Roles and block types are as transmitted. Flattening the request to one string would hide the causal link.
-
-```json title="After reading the topic · adjacent message blocks, abridged"
+```json title="Fresh process · request 2 · adjacent message blocks (abridged)"
 [
   {
     "role": "assistant",
@@ -45,95 +75,65 @@ Here are the relevant blocks from the fresh process’s second request. I have e
 ]
 ```
 
-The `tool_use_id` ties the result to this particular read. The YAML supplied to `Write` named only the note, its description and its type. Inspecting the file on disk showed an added `modified` timestamp. That tells us when it was written. It cannot establish whether the on-call assignment is still current. [How auto memory is read and written](https://code.claude.com/docs/en/memory#how-it-works)
+Inspecting `release-owner.md` on disk also revealed an added `modified` timestamp beyond the YAML fields passed to `Write`—useful for knowing when a note was written, though not whether it is still accurate today. [How auto memory is read and written](https://code.claude.com/docs/en/memory#how-it-works)
 
-## Who owns the information?
+## Oversized writes and background paths: success plus an Error
 
-| What should survive | Where it goes and who writes it | When it appears again |
-|---|---|---|
-| A team convention, such as getting sign-off from the on-call engineer | The team reviews a root `CLAUDE.md` alongside code | Loaded when starting in the repository. Organizations and users can supply instructions at their own scopes |
-| Instructions for code under `module/` | The team writes Markdown with a `paths` selector under `.claude/rules/`, or puts a `CLAUDE.md` inside the directory | When starting above the directory, the matching file access brings these into context |
-| A correction that will matter again | Claude can write a topic note in the local project’s auto-memory directory and maintain its `MEMORY.md` index. The user can inspect and edit both | A bounded prefix of the index goes into a new conversation. A separate read retrieves the topic |
-| Steps, checks and a template for release notes | The team or user maintains `.claude/skills/release-card/SKILL.md` and any attachments. Claude can draft changes for review | Usually the name and description appear first. Selecting the skill or typing `/release-card` loads its body |
-| The command that ran last time and its output | Conversation history | Resuming that session brings its history back. A fresh session does not receive the entire transcript along with the project instructions |
+Auto memory is on by default for local terminal sessions under `~/.claude/projects/<project>/memory/`. **Worktrees of the same repository on one machine share auto memory**, and memory files survive session-history expiration; inspect, edit, or toggle via `/memory`. [Write scope and storage](https://code.claude.com/docs/en/memory#auto-memory)
 
-If the `Makefile` already specifies the release command, a second permanent copy can go stale. I would record the sign-off convention, which the code cannot tell me, and put the release-note template in a skill. A one-off failed build belongs in the current session. A later implementation change can then pick up the sign-off requirement without loading the entire publishing procedure. [Project memory](https://code.claude.com/docs/en/memory) · [Where skills load](https://code.claude.com/docs/en/skills#where-skills-live) · [Context and sessions](https://code.claude.com/docs/en/how-claude-code-works)
+### The 202-line test: three checks, three outcomes
 
-## Which rules reach the first request?
+After reading `MEMORY.md`, the real CLI wrote 202 lines ending in `EDGE_200`, `EDGE_201`, and `EDGE_202` (small enough to trip the 200-line limit before 25 KB):
 
-Suppose the session starts at the repository root. Claude Code concatenates the `CLAUDE.md` files it finds from ancestor directories down to the working directory. At a given level, `CLAUDE.local.md` comes later. Both passages enter context. The documentation describes project instructions as a user message delivered after the system prompt. If one says “always run the full suite” and the other says “run only the relevant tests,” their order cannot guarantee an engineering policy. CI should enforce checks the team cannot skip. [Instruction loading order](https://code.claude.com/docs/en/memory#how-claude-md-files-load)
-
-Reading `module/a.py` from the root can cause two additional loads. The nested `module/CLAUDE.md` applies when the CLI accesses files in that directory. A rule in `.claude/rules/module.md` can narrow its scope to Python files with `paths: ["module/**/*.py"]`. Both markers were absent from the first request in my experiment. After a real CLI `Read` of `module/a.py`, the file, the nested instructions and the path rule all appeared in the next request. For diagnosis in a real repository, the `InstructionsLoaded` hook can distinguish `session_start`, `nested_traversal` and `path_glob_match`. [Path-specific rules](https://code.claude.com/docs/en/memory#path-specific-rules) · [InstructionsLoaded hook](https://code.claude.com/docs/en/hooks#instructionsloaded)
-
-There is also a selection rule for `AGENTS.md`. With this version’s defaults, a project-side `CLAUDE.md` or `CLAUDE.local.md` in or above the working directory prevents the fallback to direct `AGENTS.md` loading. With both root files present, only the `CLAUDE.md` marker reached my first request. A team maintaining both can explicitly configure their joint use or import the shared instructions with `@AGENTS.md` from `CLAUDE.md`. Direct `AGENTS.md` support starts with v2.1.277 and depends on the execution environment. [AGENTS.md selection rules](https://code.claude.com/docs/en/memory#agents-md)
-
-## Auto memory has to be discoverable after a write
-
-Auto memory is enabled by default for local terminal sessions. Claude judges whether a correction, preference, project decision or external reference is worth keeping. A session can end without writing anything. The standard directory is `~/.claude/projects/<project>/memory/`. **By default, worktrees from the same repository on one machine share auto memory.** Switching to another machine does not transfer it. The user can inspect, edit or disable it through `/memory`. Expiration of session history leaves the memory files intact. [Write scope and storage](https://code.claude.com/docs/en/memory#auto-memory)
-
-### Which part of an oversized write reports the error?
-
-I asked the real `Read` tool to read the index, then the real `Write` tool to replace it with 202 lines. The file was small enough to hit the line limit first. I checked three places for the outcome of the same call.
-
-| Where I looked | What 2.1.327 actually did |
+| Where I checked | Actual 2.1.327 outcome |
 |---|---|
-| `MEMORY.md` on disk | All 202 lines persisted, including the final marker |
-| `user.tool_result` returned to the assistant | Reported a successful update; no `is_error` field was set |
-| Separate `system` message in the following request | Identified `PostToolUse:Write` as its source, warned that the read budget had been exceeded and requested a shorter index with details moved to topic files |
+| `MEMORY.md` on disk | All 202 lines persisted, including `EDGE_202` |
+| `user.tool_result` to assistant | Reported update success; **no** `is_error` flag |
+| Separate `system` message in next request | Tagged `PostToolUse:Write`, warned that the read limit was exceeded and asked to move details into topic files |
 
-The tool finished a file write. The subsequent check concerned **how much a future process can load**. Checking only the tool’s success bit loses the maintenance request. Repeating the same write on seeing the word “Error” only puts the same oversized file back. The useful action is to preserve the index entry and move the detailed instructions to a topic file. The documented startup budget is the first 200 lines or 25 KB, whichever comes first. Startup `CLAUDE.md` files have a separate whole-file cap. [Index write and load limits](https://code.claude.com/docs/en/memory#how-it-works)
+All three hold at once: `Write` finished saving the file, while `PostToolUse` enforces **how much the next startup can load** (first 200 lines or 25 KB, whichever hits first, separate from `CLAUDE.md` caps). Checking only `is_error` misses the cleanup prompt; retrying the same write on seeing "Error" just rewrites the oversized index. [Index write and load limits](https://code.claude.com/docs/en/memory#how-it-works)
+
+Restarting exposes a subtler search trap:
 
 <FigClaudeMemory lang="en" />
 
-A more subtle counterexample emerges after restarting. A whole-request search for `EDGE_201` succeeds because the warning quotes the first omitted line. In the payload, `EDGE_200` is in the index body, `EDGE_201` occurs only in the warning, and `EDGE_202` is absent. If a release check depends on an entry being present, inspect the **body of the attachment**. Counting matches can silently certify the wrong thing.
+Because the startup truncation warning quotes the first omitted line, a full-payload grep for `EDGE_201` still hits—even though `EDGE_200` is the last line in the actual index body, `EDGE_201` appears **only inside the warning quote**, and `EDGE_202` is completely gone.
 
-### In-session writes, extraction and dreams
+### Foreground writes, background extraction, and dreams
 
-A correction can reach a topic file before the conversation ends. Release notes give two useful boundaries for a separate memory-extraction path. Version 2.1.77 fixed a race between extraction writes and the main transcript that could drop recent messages on resume. In v2.1.273, a fix extended `permissions.blockReadsOutsideWorkingDirectories` to extraction when repository settings supplied the memory directory. Extraction has its own read and write timing. A change to `MEMORY.md` alone cannot identify which invocation wrote it. [Transcript race fix](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L8904) · [Memory extraction and directory permissions](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L4404)
+Beyond direct foreground tool calls, Claude Code also runs a separate extraction path: public release notes document a v2.1.77 fix for a race between extraction writes and the main transcript, and a v2.1.273 fix enforcing `permissions.blockReadsOutsideWorkingDirectories` on repo-configured memory paths during extraction—meaning a change on disk alone cannot identify which path wrote it. [Transcript race fix](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L8904) · [Extraction & directory permissions](https://github.com/anthropics/claude-code/blob/9fa26078be418ec4b217334812e2a04cc63336ae/CHANGELOG.md#L4404)
 
-Local auto memory can be disabled with `autoMemoryEnabled: false` or `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. In a background session, or one started by another Claude Code session, `/memory` can turn it off but cannot re-enable it. The official Help Center also lists `/dream` in its CLI reference table. The public command reference gives no fixed schedule for local consolidation. Check what the interactive session actually offers with `/help`. The writer in this experiment is identifiable from its tool events. I did not trigger or verify background extraction or consolidation. [Auto-memory settings](https://code.claude.com/docs/en/memory#enable-or-disable-auto-memory) · [CLI Help Center](https://support.claude.com/en/articles/14554000-claude-code-power-user-tips) · [Command reference](https://code.claude.com/docs/en/commands)
+Disable auto memory locally via `autoMemoryEnabled: false` or `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (in background or nested sessions, `/memory` can turn it off but not back on). While the Help Center lists `/dream`, the public command reference promises no fixed local schedule—check `/help` in your active CLI. Separately, Anthropic's **Managed Agents Dreams API** defines an explicit async two-store protocol (1–100 sessions distilled into a new reviewable store), though managed-service guarantees cannot be extrapolated to local CLI cadence or overwrite policies. [Auto-memory settings](https://code.claude.com/docs/en/memory#enable-or-disable-auto-memory) · [CLI Help Center](https://support.claude.com/en/articles/14554000-claude-code-power-user-tips) · [Dreams API](https://platform.claude.com/docs/en/managed-agents/dreams)
 
-Anthropic documents a specific protocol for the **Managed Agents Dreams API**. An asynchronous job takes an existing memory store and one to one hundred sessions. It writes a separate output store that the application can review before adopting. The input remains available. Anthropic’s CL-Bench database experiment illustrates what can go wrong. One model recorded untested guesses, while others used grader feedback to correct and accumulate rules. A completed job shows that some material was processed. Whether it improved our release procedure is a question for the next set of release notes. These are results from the managed service. They do not establish a scheduling interval, a trigger threshold or an overwrite policy for the local terminal. [Dreams API](https://platform.claude.com/docs/en/managed-agents/dreams) · [Anthropic’s memory research](https://www.anthropic.com/research/components-of-agent-memory)
+## Why one empty directory cuts off linked-worktree skills
 
-## How can an empty directory cut off skill inheritance?
-
-I created a linked worktree for a release. The main checkout contained an uncommitted `release-card` skill written **after** the worktree was created. I launched a fresh process in the linked checkout each time, holding the prompt and CLI configuration fixed. Only the linked checkout’s own root directory changed.
+With an uncommitted `release-card` skill added to the main checkout *after* `git worktree add`, I launched three fresh processes in the linked worktree using the exact same prompt and CLI config—changing only `.claude/skills/` in the worktree root:
 
 <FigClaudeScope lang="en" />
 
-As a control, I opened an independent Git repository with the same CLI configuration. Its first request contained neither `INDEX_AFTER` nor either test skill’s description. This separates the shared index across worktrees from the fact that the processes used the same configuration directory.
+An unrelated Git repo run under the exact same CLI config contained neither `INDEX_AFTER` nor either skill description, ruling out config-directory leakage.
 
-For auto memory, both worktrees resolve to the same machine-local project directory. For project skills, since v2.1.277 the CLI first checks whether the worktree root has a skill directory. It falls back to the main checkout only when the directory is absent. **An empty directory is enough to switch the fallback off.** No skill-name collision is required. Adding a branch’s first local skill can remove the release procedure that used to be discoverable from the main checkout, while the shared release contact remains visible. Identify whether the missing item was a fact in the index or a procedure in the catalog before investigating its storage. [What worktrees share](https://code.claude.com/docs/en/worktrees#what-worktrees-share-with-the-main-checkout) · [Project skill discovery](https://code.claude.com/docs/en/skills#discovery-from-parent-and-nested-directories)
+The split is sharp: auto memory resolves to the same repo-scoped machine directory across worktrees, whereas project skills (since v2.1.277) fall back to the main checkout **only when `.claude/skills/` is absent—an empty directory switches fallback off immediately**. Adding a branch's first local skill can silently hide main-checkout procedures while shared memory entries remain visible. [What worktrees share](https://code.claude.com/docs/en/worktrees#what-worktrees-share-with-the-main-checkout) · [Project skill discovery](https://code.claude.com/docs/en/skills#discovery-from-parent-and-nested-directories)
 
-## A skill’s description, body and permissions have different lifetimes
+## Skill descriptions, bodies, and permissions expire separately
 
-A skill description tells the model when to open it. “Draft release notes, comparing compatibility changes and migration steps” communicates more than “release tool.” The body supplies the procedure. References and scripts can stay on disk until needed. Anthropic’s engineering article describes these three levels of disclosure. Simon Willison tried the official Slack GIF skill. Its validator could inspect the finished dimensions directly, giving the model a check it could actually run. The two accounts explain the design. The current product behavior below comes from the documentation and the CLI trace. [Anthropic engineering article](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) · [Willison’s GIF experiment](https://simonwillison.net/2025/Oct/16/claude-skills/)
+Skills follow three-level progressive disclosure: catalog descriptions first, full body on invocation, supporting scripts on demand. With many skills, the catalog budget is **1% of the context window**—names remain visible, but descriptions drop starting from less-used entries. [Anthropic engineering article](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) · [Catalog budget](https://code.claude.com/docs/en/skills#skill-descriptions-are-cut-short)
 
-| Skill configuration | At the start of an ordinary conversation | Who can invoke it directly |
+| Skill config | Startup catalog | Who can invoke directly |
 |---|---|---|
-| Default | Ordinarily advertises the description, loads the body on demand | User and model |
-| `disable-model-invocation: true` | Withholds even the description from the model | The user can explicitly type `/name` |
-| `user-invocable: false` | Can advertise the description | The model can choose it. The user cannot invoke it through `/name` |
+| Default | Advertises description; body on demand | User and model |
+| `disable-model-invocation: true` | **Withholds even the description** | User only via `/name` |
+| `user-invocable: false` | Advertises description | Model only; user cannot run `/name` |
 
-With many skills, discovery also depends on the catalog budget. The current documentation assigns it 1% of the model’s context window. Names remain visible, but descriptions can be omitted, starting with less frequently used entries. An explicit invocation that loads the right procedure tells us little about whether the model can discover it from an ordinary request. [Invocation controls](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill) · [Catalog budget](https://code.claude.com/docs/en/skills#skill-descriptions-are-cut-short)
+Three independent lifetimes govern what happens once invoked: [Invocation controls](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill) · [Skill content lifecycle](https://code.claude.com/docs/en/skills#skill-content-lifecycle) · [Tool pre-approval](https://code.claude.com/docs/en/skills#pre-approve-tools-for-a-skill)
 
-Invocation adds the rendered body to the conversation as a message. Later turns can still see it. Edits on disk can refresh the catalog during the session, but an older message retains its original text. Invoking again produces a short reminder if the rendered result matches, or appends the new body if it changed. Tool pre-approval from `allowed-tools` expires when the next user message starts a new turn. **A procedure can therefore remain in the conversation after its tool approval has expired.** [Editing during a session](https://code.claude.com/docs/en/skills#live-change-detection) · [Skill content lifecycle](https://code.claude.com/docs/en/skills#skill-content-lifecycle) · [Tool pre-approval](https://code.claude.com/docs/en/skills#pre-approve-tools-for-a-skill)
+1. **Duplicate invocations deduplicate; manual-only skills block tool calls**: invoking `Skill({"skill":"release-card"})` twice produced two "launching" tool results, yet the body appeared only **once**—followed on the second call by a short "already loaded and unchanged" note. Calling `Skill({"skill":"release-manual"})` returned `is_error: true` with no body, while typing `/release-manual` injected it immediately—knowing a skill's name does not grant the model permission to run it.
+2. **`allowed-tools` expires on the next user message**: the injected procedure remains in conversation history, but its tool pre-approval ends when the next user turn starts—**the text stays longer than the permission**.
+3. **Compaction and subagents change who sees what**: after `/compact`, root `CLAUDE.md` reloads from disk and nested rules return to on-demand, while invoked skills reattach most-recent-first up to **5,000 tokens each and 25,000 total**—critical checks at the tail of a long skill can vanish mid-session. Ordinary subagents do not inherit main auto memory (forks do); dedicated subagents can opt into `memory: project` (`.claude/agent-memory/<name>/`) or `local`, and preloaded skills inject their full body at startup. [Instructions after compaction](https://code.claude.com/docs/en/memory#instructions-seem-lost-after-/compact) · [Subagent persistent memory](https://code.claude.com/docs/en/sub-agents#enable-persistent-memory) · [Preloading skills](https://code.claude.com/docs/en/sub-agents#preload-skills-into-subagents)
 
-### The same name through two entry points
+## What skill-creator measures, and four pitfalls to watch
 
-Within one conversation the endpoint issued `Skill({"skill":"release-card"})` twice. Both tool results reported that the skill was launching, but the body occurred only once in the request following the second call. The new text after that call said the skill had already been loaded and its instructions were unchanged. Changing the tool argument to the manual-only `release-manual` produced a result with `is_error: true` and no skill body. Supplying the same name as a user command, `/release-manual`, put the body in the first request.
-
-Two tempting diagnoses fail here. A successful `Skill` result does not count how many copies of the body were injected. Knowing the name of a manual-only skill does not let the model invoke it. The endpoint prescribed these tool actions. The experiment does not measure autonomous selection from an ordinary task.
-
-## What survives compaction and delegation?
-
-A long release can cross a context compaction. The root `CLAUDE.md` is re-read from disk. Nested instructions load again when accessed. Invoked skills follow another rule. After the summary, Claude Code tries to reattach the most recent invocation of each skill, keeping the first 5,000 tokens per skill and 25,000 overall, with recent invocations first. A critical check at the end of a long skill can be available on first use and absent after compaction. These budgets are documented as of the date above. The loopback experiment did not trigger compaction. [Project instructions after compaction](https://code.claude.com/docs/en/memory#instructions-seem-lost-after-/compact) · [Skill reattachment budget](https://code.claude.com/docs/en/skills#skill-content-lifecycle)
-
-Delegation changes who reads the information. An ordinary subagent does not automatically load the main conversation’s auto memory. A fork can inherit the parent’s conversation and system prompt. A dedicated reviewer with `memory: project` can keep its own notes in `.claude/agent-memory/<name>/` in the repository. With `local` the corresponding directory is `.claude/agent-memory-local/<name>/`, for machine-local records. Explicitly preloading a skill into a subagent also supplies its full body at startup. A trace of a normal main conversation is a poor guide to that case. [Subagent persistent memory](https://code.claude.com/docs/en/sub-agents#enable-persistent-memory) · [Preloading skills](https://code.claude.com/docs/en/sub-agents#preload-skills-into-subagents)
-
-## What does skill-creator’s trigger score actually measure?
-
-Suppose `release-card` passes every trigger question and still omits breaking changes from the release notes. The public Anthropic evaluator explains how both results can be true. It generates a unique name and writes **the description under test plus a placeholder body** to a temporary command file, then sends the evaluation question directly to `claude -p`. These four lines establish the identity it will look for. [Pinned implementation, lines 51–75](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L51-L75)
+A skill can score 100% on trigger evals and still miss breaking changes in real release notes. Anthropic's public `skill-creator` evaluator explains why: it writes **the description under test plus a placeholder body** to a temporary command file and checks whether `claude -p` calls `Skill` or `Read` with that generated name. [Pinned source · L51–75](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L51-L75) · [Trigger detection](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L132-L168)
 
 ```python title="run_eval.py · L51–54"
 unique_id = uuid.uuid4().hex[:8]
@@ -142,17 +142,42 @@ project_commands_dir = Path(project_root) / ".claude" / "commands"
 command_file = project_commands_dir / f"{clean_name}.md"
 ```
 
-The evaluator inspects the tool stream. A `Skill` or `Read` input containing the generated name can count as a trigger. This can answer whether “draft notes for this release” hits and whether the adjacent “explain why this release was rolled back” triggers by mistake. It can do so without running the team’s actual release procedure. It cannot tell whether the resulting release notes cover breaking changes. For that, supply a known change set and assert against the output. Compare a new skill with a no-skill baseline, or a revision with the previous version. Saving experience in files and demonstrating better task performance require different evidence. [Trigger detection](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/scripts/run_eval.py#L132-L168) · [Output evaluation and baselines](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/SKILL.md#L145-L201)
+That measures **discoverability and false-positive rate**, not whether the real procedure produces better outputs—which requires separate output assertions against a no-skill or prior-version baseline. [Output evaluation and baselines](https://github.com/anthropics/skills/blob/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/skill-creator/SKILL.md#L145-L201)
 
-The clearest comparison with Hermes starts with **who made the write**. In this experiment the tool events identify a foreground Claude Code `Edit`. In Hermes, a change proposed during background review can be traced further to the temporary agent and to the decision to apply it immediately or stage it for approval. Establishing the writer gives the next-session read a much clearer interpretation. [Compare background review and approval in Hermes](/notes/hermes-memory-skills/#background-review-what-ties-the-three-together)
+### Four practical takeaways
 
-## Reproduce the trace
+1. **Inspect payload slots, never whole-request greps**: mid-turn `Edit` arguments put old and new index markers in the same request, and 200-line truncation warnings quote line 201 even when it was dropped from the body.
+2. **Enforce team policies in `CLAUDE.md` + CI, not auto memory**: auto memory is machine-local and capped at 200 lines / 25 KB, and prompt ordering in `CLAUDE.md` is no substitute for CI gates.
+3. **Front-load critical checks in long skills**: post-compaction reattachment caps each skill at its first 5,000 tokens.
+4. **Treat `.claude/skills/` in linked worktrees as all-or-nothing**: even an empty directory disables fallback to the main checkout.
 
-The script requires Python’s standard library, Git and Claude Code. It isolates the configuration and repositories and sends requests to loopback. The endpoint specifies the tool calls; the real client performs them. The script prints its temporary directory. The `requests/` subdirectory retains the actual payloads and `config/projects/` retains the memory files. [Download the full experiment](/experiments/claude-memory-trace.py)
+<details>
+<summary>Expand: offline reproduction script & three key payload pairs</summary>
+<div class="d-body">
 
-```bash title="Run the trace and retain its raw requests"
+Requires only Python's standard library, Git, and Claude Code CLI. It isolates config and repos, sends requests to loopback, and lets the real CLI execute every file and skill action. [Download full experiment script](/experiments/claude-memory-trace.py)
+
+```bash title="Run the trace and inspect raw payloads"
 claude --version
 python claude-memory-trace.py
 ```
 
-Three pairs reproduce the main findings: `writer-4.json` and `restart-1.json` distinguish conversation history from a new load. `linked-1.json` and `linked-empty-1.json` isolate the empty-directory switch. `oversize-3.json` and `truncation-1.json` show the post-write check and the next process’s truncation. I used a privately held historical snapshot to decide which branches to investigate. Claims about the current release can be checked against the experiment, the pinned public source, or the product documentation cited above.
+Compare three payload pairs in the printed temporary directory (`requests/` and `config/projects/`):
+- `writer-4.json` vs `restart-1.json`: separates in-turn tool history from fresh-process disk reload;
+- `oversize-3.json` vs `truncation-1.json`: separates `PostToolUse:Write` warning from startup `EDGE_200 / EDGE_201 / EDGE_202` truncation;
+- `linked-1.json` vs `linked-empty-1.json`: isolates the empty-directory fallback cutoff.
+
+A privately held historical snapshot informed which branches to verify; every claim about the current release is independently reproducible from the script, pinned public source, and official docs cited above.
+
+</div>
+</details>
+
+### Across the series
+
+| Agent | What to compare with Claude Code |
+|---|---|
+| [Hermes Agent](/notes/hermes-memory-skills/) | Compare writers: foreground `Edit` in Claude Code vs. Hermes background-review staging for deletions |
+| [Codex CLI](/notes/codex-memory-skills/) | Compare Claude Code's immediate `MEMORY.md` file index vs. Codex's two 6-hour async memory clocks |
+| [Pi](/notes/pi-memory-skills/) | Pi skips auto memory and post-compaction skill reattachment—everything relies on explicit file edits and branch summaries |
+| [OpenCode](/notes/opencode-memory-skills/) | OpenCode caches its skill catalog per process, whereas Claude Code supports live change detection and repeat-call deduplication |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | DSH offloads long-term memory to MCP and lets a sub-agent search full history instead of maintaining a local `MEMORY.md` index |

@@ -1,56 +1,57 @@
 ---
-title: "Codex CLI: How One Conversation Reaches the Next"
-dek: "Two six-hour clocks, three kinds of persisted state, and a successful consolidation that still serves yesterday’s summary."
-summary: "Reproduce extraction, retraction and consolidation cooldown in the real App Server, and find out what a completed job guarantees."
+title: "Codex CLI: Two Six-Hour Clocks, Three Layers, and a Format-Only Done"
+dek: "Cross-session memory runs as a two-phase async pipeline behind App Server; extraction rows, source files and memory_summary.md can disagree indefinitely, and writer validation checks format only."
+summary: "Trace Codex CLI 0.169.0's two-phase memory pipeline in the real App Server: extraction, empty-result retraction, 6h cooldowns, V1 vs. V2 stores, skill reload, and why the prompt debugger omits memories."
 date: "2026-11-18"
-updated: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent engineering"
 status: "published"
 pinned: "openai/codex @ d32063f"
+tags:
+  - Memory
+  - Skills
 ---
 import Src from '../../components/Src.astro';
+import Infer from '../../components/Infer.astro';
 import FigCodexMemory from '../../components/FigCodexMemory.astro';
 import FigCodexRetention from '../../components/FigCodexRetention.astro';
 
-Suppose you corrected a test command in project A, then opened a conversation in B. I reproduced a case in **Codex CLI 0.169.0** where extraction had saved the command, the source file contained it, and the consolidation job reported `done`. B still received only the old summary.
+export const source = { repo: "openai/codex", rev: "d32063f96c2dff1dc96af839b3952abb6acfeda4" };
 
-The word “saved” can refer to three things. `stage1_outputs` holds evidence indexed by source thread. `rollout_summaries/` holds files materialized from the selected evidence. `memory_summary.md` is what a new thread reads first. The three can disagree briefly or carry different content indefinitely. Project skills take a separate path. Their visibility can change immediately with the working directory, independently of memory consolidation.
+**The one-sentence version:** Codex CLI runs cross-session memory as a two-phase async pipeline behind App Server—waiting 6 hours of thread inactivity to extract and a second 6-hour cooldown to consolidate `memory_summary.md`, while writer validation checks only format rather than factual inclusion. <Src {...source} p="codex-rs/app-server/src/request_processors/turn_processor.rs" l="747-783" /> <Src {...source} p="codex-rs/memories/write/src/workspace.rs" l="103-130" />
 
-## Where a conversation enters the runtime
+By the end, four things should be clear:
 
-This note follows **Codex CLI 0.169.0**. The interactive command starts the terminal UI. Its local connection path can use a daemon or start an embedded App Server. The implementation of `codex exec` also starts an in-process App Server client. An external client can run `codex app-server` separately and send JSON-RPC requests such as `thread/start`, `turn/start` and `skills/list`. The App Server sits between the client and the thread runtime. Its `turn/start` handler contains the call that schedules background memory work. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/cli/src/main.rs" l="2598-2611" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/tui/src/lib.rs" l="596-637" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/exec/src/lib.rs" l="1097-1106" /> [App Server protocol](https://learn.chatgpt.com/docs/app-server)
+1. Why can a consolidation job report `done` after extracting a correction in repo A while a new thread in repo B still sees only the old summary?
+2. Why does an **empty** extraction delete prior evidence while an error leaves prior evidence standing?
+3. After an empty extraction drops SQLite rows to zero, why does the disk file under `rollout_summaries/` survive for another 6 hours?
+4. Why does `codex debug prompt-input` never show a valid summary that real App Server threads read cleanly?
 
-That boundary matters when comparing products. OpenAI documents that the IDE extension uses the local memory store of the Codex host it connects to. ChatGPT on the web has its own memory, and the settings available to ChatGPT Work depend on the account and workspace. The paths, defaults and experiments below apply to this release of the public local runtime. [Official memory guide](https://learn.chatgpt.com/docs/customization/memories)
+This note pins **Codex CLI 0.169.0** (`d32063f`) on the local App Server runtime (IDE extensions share their host's local store; ChatGPT web uses a separate store). [Official memory guide](https://learn.chatgpt.com/docs/customization/memories)
 
-## Three kinds of stored information
+## One map: three persisted layers & two six-hour clocks
 
-| Object | Who writes it | How it is read later |
-| --- | --- | --- |
-| Conversation record (rollout) | The active thread produces events. Its index records information such as source, path and last activity. | An extractor selects a past thread and opens its rollout. |
-| Local memory | The extractor records per-thread results. A consolidation agent updates the summary from selected material. | A new thread starts with `memory_summary.md` and can consult the underlying evidence. |
-| Local project skill | A person or a tool with write access creates `.agents/skills/<name>/SKILL.md`. | Discovery exposes a name, description and locator. The instructions can then be opened when the skill is selected. |
-
-Consequently, `skills/list` answers “which skills can this directory see?” Determining which instructions a model actually read takes separate evidence. A message in a rollout likewise needs to survive selection and additional model calls before it can shape a later conversation. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1.rs" l="257-283" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/prompts.rs" l="35-62" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/catalog_prompt.rs" l="3-21" />
-
-## Writing starts with a new turn that has input
-
-This release marks `features.memories` as `stable` and defaults it to `false`. Once enabled, two more settings govern different decisions. `memories.generate_memories` determines whether newly created threads are marked as inputs for future generation. `memories.use_memories` controls the read instructions for existing memories. Both settings default to `true`. A new conversation can therefore consult earlier memories while being excluded from future extraction. The interactive `/memories` command also offers per-chat controls. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/features/src/lib.rs" l="1449-1454" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="330-338" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="382-391" /> [Configuration and chat controls](https://learn.chatgpt.com/docs/customization/memories)
-
-The function has `startup` in its name, but the App Server calls it **after submitting input**. The request must have input, start a new turn and have a primary execution environment configured. Input steering an existing turn takes a different branch. The entry point skips ephemeral sessions, disabled features and non-root agents. The asynchronous worker then checks the state database, prepares its directory and checks quota. Merely opening an empty thread or reaching the end of a turn gives no evidence that consolidation has run. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/request_processors/turn_processor.rs" l="747-783" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/start.rs" l="24-37" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/start.rs" l="67-99" />
+In Codex, "saved" spans three separate stores—**`stage1_outputs`** (per-thread SQLite rows), **`rollout_summaries/`** (materialized source files), and **`memory_summary.md`** (what new threads read first). They can disagree briefly or indefinitely, while project skills follow `cwd` on an independent track:
 
 <FigCodexMemory lang="en" />
 
-**Stage one extracts from past threads.** The query filters on eligible interactive sources and `memory_mode = 'enabled'`, excludes the triggering thread, and applies an age window to the last activity timestamp. The defaults require **6 hours** of inactivity, look back at most **10 days**, and claim up to **2** candidates per pass. The allowed sources are `Cli`, `VSCode`, `atlas` and `chatgpt`. The fact that `codex exec` also uses App Server does not make every batch run eligible. The query supplies neither a working-directory filter nor a project ID. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="57-62" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/rollout/src/lib.rs" l="86-95" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1.rs" l="127-143" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="228-260" />
+| Object | Where it lives | How it reaches a future turn |
+|---|---|---|
+| **Rollout** | Active thread appends events; index tracks source & last activity | Phase 1 claims idle past threads and scans their rollouts backwards |
+| **Local memory** | Phase 1 writes SQLite; Phase 2 syncs `rollout_summaries/` & `memory_summary.md` | New thread reads `memory_summary.md` (capped at 2,500 tokens), opening source files lazily |
+| **Project skills** | `.agents/skills/<name>/SKILL.md` | Discovered per `cwd` into a catalog; body opened on selection |
 
-The extractor opens the candidate's rollout. V2 asks the model for `rollout_summary` and `rollout_slug`, and permits empty strings when nothing merits keeping. The code distinguishes failure, no output and success. An old enough thread can therefore earn a lease without contributing a single fact to the next summary. Quota can stop the pass earlier. With a usable Codex quota snapshot, relevant windows must have at least 25 percent remaining by default. If a snapshot is unavailable, this particular check permits the pass. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/stage_one_system_v2.md" l="45-53" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1.rs" l="211-253" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/guard.rs" l="9-21" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/guard.rs" l="42-80" />
+Controls split cleanly: `features.memories` defaults to `false`; once enabled, `generate_memories` and `use_memories` both default to `true` and can be toggled independently alongside per-chat `/memories`. <Src {...source} p="codex-rs/features/src/lib.rs" l="1449-1454" /> <Src {...source} p="codex-rs/config/src/types.rs" l="330-338" /> <Src {...source} p="codex-rs/config/src/types.rs" l="382-391" />
 
-Eligibility can change after a conversation has already contributed. With `disable_on_external_context` enabled, qualifying external tool context can mark a thread `polluted`. The MCP path also checks whether the particular server should trigger that mark. If the source participated in the last successful consolidation, the state layer queues consolidation again. That schedules a retraction. It cannot revise text already sent in an earlier model request. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/core/src/mcp_tool_call.rs" l="1052-1068" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="632-667" />
+## Phase 1: triggered on new turns, tiered sampling, empty means retract
 
-### Which parts of a conversation reach the extractor?
+Memory scheduling fires inside App Server's `turn/start` handler—requiring **input that starts a new turn** (steering an in-flight turn skips it) and ignoring ephemeral sessions and non-root agents. <Src {...source} p="codex-rs/app-server/src/request_processors/turn_processor.rs" l="747-783" /> <Src {...source} p="codex-rs/memories/write/src/start.rs" l="24-99" />
 
-The full transcript may still exist even when its evidence no longer fits the extractor's input. The reader scans recent records backwards, with a 1 MiB limit per record and an 8 MiB budget for the recent input. Oversized or older records can drop out. V2 replaces media with placeholders, caps tool output and then selects messages for the model. This excerpt fixes the order in which evidence competes for the remaining budget. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/rollout_input.rs" l="28-68" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/rollout_input.rs" l="239-266" />
+The scanner **explicitly excludes the triggering thread** and queries past threads across all directories (no `cwd` or project filter):
+- **First 6-hour clock**: idle at least **6 hours**, active within **10 days**, claiming up to **2** threads per pass from interactive sources only (`Cli`, `VSCode`, `atlas`, `chatgpt`—not `codex exec`); when a Codex quota snapshot exists, it also requires ≥ 25% remaining headroom. <Src {...source} p="codex-rs/config/src/types.rs" l="57-62" /> <Src {...source} p="codex-rs/rollout/src/lib.rs" l="86-95" /> <Src {...source} p="codex-rs/memories/write/src/phase1.rs" l="127-143" /> <Src {...source} p="codex-rs/memories/write/src/guard.rs" l="42-80" />
+- **8 MiB tiered input**: scans backwards (1 MiB per record, 8 MiB total), replaces media, caps tool outputs, and fills remaining budget in strict tier order before restoring chronology—so user corrections outrank routine tool logs. Each V2 output is redacted and capped at **9,000 bytes**: <Src {...source} p="codex-rs/memories/write/src/rollout_input.rs" l="28-68" /> <Src {...source} p="codex-rs/memories/write/src/rollout_input.rs" l="239-304" /> <Src {...source} p="codex-rs/memories/write/src/phase1_output.rs" l="29-52" />
 
-```rust
+```rust title="codex-rs/memories/write/src/rollout_input.rs · 269–277 (evidence priority)"
     for tier in [
         Tier::Human,
         Tier::Final,
@@ -62,31 +63,18 @@ The full transcript may still exist even when its evidence no longer fits the ex
         for (index, (row_tier, text)) in rows.iter().enumerate().rev() {
 ```
 
-Within each tier it picks recent evidence first, then renders its selection in source order. A user's correction halfway through a conversation therefore has a better chance than a page of routine tool output. The trade-off is that a future agent may need the original file to verify a detail. The V2 result goes through secret redaction and a separate **9,000-byte** limit on each extracted summary. That limit applies to a single thread's contribution, independently of the final summary's budget. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/rollout_input.rs" l="268-304" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase1_output.rs" l="29-52" />
+- **Empty vs. failure do opposite things**: content updates the row and advances consolidation; an **empty string** advances the watermark and **deletes any prior row for that thread** (triggering consolidation only if a row was actually deleted); an error consumes a retry with 1-hour backoff and **leaves prior rows intact**. <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="860-873" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="946-955" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="1003-1029" /> With `disable_on_external_context`, qualifying external tools/MCP can also mark a thread `polluted` to schedule retraction. <Src {...source} p="codex-rs/core/src/mcp_tool_call.rs" l="1052-1068" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="632-667" />
 
-### Why an empty extraction can delete an earlier result
+## Phase 2: second 6-hour cooldown, format-only validation, and permissive reads
 
-A thread has three possible outcomes. On success with content, a transaction records the source timestamp and summary and advances the global consolidation job. An empty result also records a successful pass through that source timestamp, but deletes any existing extraction for the thread. It advances consolidation only if it actually deleted a row. A model or service error records the failure, consumes a retry and schedules backoff, leaving prior output alone. **Empty can retract evidence. Failure leaves the previous judgment standing.** <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="860-873" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="946-955" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="1003-1029" />
+Phase 2 ranks up to **256** stage-1 rows from the past **30 days** by usage count and recency, materializes `rollout_summaries/`, computes a Git diff, and hands the diff to an ephemeral consolidation agent to update `memory_summary.md`. <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="440-491" /> <Src {...source} p="codex-rs/memories/write/src/phase2.rs" l="64-180" />
 
-What stops every new turn from submitting the same transcript again? The job stores a `last_success_watermark`. An existing output or successful job covering the source timestamp prevents another claim. A worker already holding a valid lease also excludes competitors. When the source advances, it can become eligible again, with explicit handling for previous backoff and exhausted retries. A stage-one lease and its failure backoff both default to one hour, independently of the six-hour idle window for a source thread. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="667-685" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/lib.rs" l="83-89" />
+Three decisive details:
 
-## What survives consolidation
+1. **Second 6-hour clock**: global consolidation cannot claim a new lease until 6 hours after the last successful consolidation—so newly added or deleted SQLite rows wait before `rollout_summaries/` or `memory_summary.md` reflect them. <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="24-29" /> <Src {...source} p="codex-rs/state/src/runtime/memories.rs" l="1081-1102" />
+2. **`done` checks structure, never factual inclusion**: V2 completion validates only `v1` on line 1, four headings, and `< 10,000` UTF-8 bytes: <Src {...source} p="codex-rs/memories/write/src/workspace.rs" l="103-130" />
 
-Stage-one outputs compete for space. The query ranks by usage count and then by last use or source update. A never-used entry falls back to its source timestamp. Defaults allow up to 256 entries within a 30-day recency window. Thirty days is a **selection condition for source material**. It does not predict the day a claim will disappear from a summary someone is already reading. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="440-491" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/types.rs" l="57-62" />
-
-Consolidation uses a global job lease and a lock on the memory workspace. It synchronizes the selected `rollout_summaries/` and computes changes against a Git baseline. If the workspace has no changes and its existing outputs validate, the job can finish there. Otherwise, the agent receives a diff. Its own thread is ephemeral, with memory generation, memory reading and recursive delegation disabled. The V2 instructions tell it to retain provenance, scope and later corrections while updating `memory_summary.md`. The durable change is to text on disk that future requests can use as context. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="64-100" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="137-180" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="215-222" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="318-335" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="12-32" />
-
-### How long does a source survive in the database and on disk?
-
-`selected_for_phase2` identifies the **version of a source selected by the last successful consolidation**. Database pruning only removes old rows outside that selection. The next consolidation prunes files absent from its newly selected set and rewrites the retained ones. Each source file includes a thread ID, source timestamp, rollout path, working directory and, when known, Git branch. These fields let a reader trace where an assertion came from. The presence of a Markdown file alone does not establish that its source row still exists. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="401-425" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="1259-1274" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/storage.rs" l="23-41" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/storage.rs" l="115-136" />
-
-This is where a **second six-hour clock** matters. The first runs from the old thread's last activity and controls extraction. This one runs from the most recent successful global consolidation and controls the next job claim. New input can already be pending while a new turn updates only the database. At consolidation completion the writer confirms it still owns its lease before resetting the Git baseline and recording the selected inputs. If the consolidation agent cannot shut down, the existing lease stays in place to keep another writer out of its directory. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="24-29" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime/memories.rs" l="1081-1102" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="419-435" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="443-485" />
-
-### What does a successful consolidation guarantee?
-
-V2 checks the function below on completion. The first line is a file-format marker, so even a V2 summary begins with `v1`. Rust's `str::len()` counts UTF-8 bytes. This validation requires the four headings and a file smaller than 10,000 bytes. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/workspace.rs" l="103-130" />
-
-```rust
+```rust title="codex-rs/memories/write/src/workspace.rs · 118–129"
 pub fn is_valid_v2_summary(summary: &str) -> bool {
     summary.lines().next() == Some("v1")
         && summary.len() < 10_000
@@ -101,93 +89,64 @@ pub fn is_valid_v2_summary(summary: &str) -> bool {
 }
 ```
 
-The function never checks whether a particular fact in the new source made it into the summary. The consolidation prompt asks the model to ground changes in evidence, remove obsolete claims and apply corrections. The runtime uses the agent's terminal state and the artifact checks to decide whether the job succeeded. Giving the consolidation agent the same prerecorded “finished” reply in two cases makes that division visible. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="39-52" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/phase2.rs" l="407-436" />
+3. **Strict writer, permissive reader, and V1 vs. V2 stores**: a clean `CODEX_HOME` selects `memories_v2/` (existing `memories/` stays on V1, whose template may write `skills/` inside its memory workspace—not into project `.agents/skills/`). On read, the extension accepts any non-empty readable `memory_summary.md` capped at **2,500 tokens** without rechecking headings; explicit user "remember/forget" requests append to `extensions/ad_hoc/notes/` for later consolidation. <Src {...source} p="codex-rs/core/src/config/mod.rs" l="3721-3735" /> <Src {...source} p="codex-rs/ext/memories/src/extension.rs" l="45-76" /> <Src {...source} p="codex-rs/ext/memories/src/prompts.rs" l="35-62" /> <Src {...source} p="codex-rs/ext/memories/templates/memories/read_path_v2.md" l="3-20" />
 
-### Which summary does a new thread read?
+### Experiment: consolidation says `done`, yet the new thread reads the old summary
 
-Check the selected store before diagnosing a missing file. A fresh `CODEX_HOME` with memories enabled chooses V2's `memories_v2/` if there is no explicit version, dual writing has not been explicitly disabled, and Codex confirms the old directory does not exist. A profile with an existing `memories/` directory continues on V1 by default. V1 also materializes `raw_memories.md`, and its consolidation instructions allow a `MEMORY.md` and reusable `skills/` **inside its memory workspace**. V2's template centers on the summary and source evidence. A tutorial showing `memories/skills/` on V1 tells you little about whether a V2 host has installed anything into a project's `.agents/skills/`. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/core/src/config/mod.rs" l="3721-3735" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/protocol/src/memory_version.rs" l="16-23" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/src/start.rs" l="47-56" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation.md" l="122-140" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="39-52" />
+Driving the release `codex app-server` against a loopback Responses fixture: create two synthetic histories in dir A, shift their timestamps back 8 hours in the disposable DB, and open a turn in dir B. Have phase 1 return `check-atlas-47` for thread 1 and empty for thread 2, while phase 2 replies "finished" **without editing any file**:
 
-**The writer validates the format. The reader accepts readable, nonempty text.** The extension checks the feature and `use_memories`, reads `memory_summary.md` from the selected directory, trims whitespace, then applies a 2,500-token budget. A missing or unreadable file, or text that is empty after truncation, produces no memory prompt fragment. Prompt construction does not recheck the `v1` first line, the four headings or the writer’s 10,000-byte limit. V2 instructs the model to open a particular rollout summary when its wording, chronology or uncertainty could affect the answer. For an explicit request to remember, correct or forget, it directs the model to append a small note under `extensions/ad_hoc/notes/` for later consolidation. Recording a correction and seeing it incorporated into the summary can therefore be separate observations. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/extension.rs" l="45-76" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/prompts.rs" l="35-62" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/src/lib.rs" l="13-16" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/memories/templates/memories/read_path_v2.md" l="3-20" />
+| Observation | Empty store at start | Seeded with a valid old summary |
+|---|---|---|
+| Phase 1 & source files | 1 extraction row + 1 file with `check-atlas-47` | Same |
+| Global consolidation job | `error / failed_invalid_artifacts` | **`done`** (`selected_for_phase2 = 1`) |
+| New thread `thread/memory/read` | `null` | **Old `PRIOR_ONLY_63`, no new command** |
 
-## Experiment: remove a source and watch the next thread
-
-I ran the release `codex app-server` against a Responses fixture bound to loopback. In working directory A, `thread/start` and `turn/start` created two synthetic conversations using the real rollout format. I moved only their last-activity timestamps back eight hours in the temporary state database, leaving their directories, source types, thread IDs and transcripts intact. A new turn in directory B triggered the default scanner. Both stages ran release code. The fixture supplied model responses so that the test could measure state transitions independently of summarization quality.
-
-The extractor's fixture returns the command `check-atlas-47` for the first conversation and an empty summary for the second. The consolidation fixture always replies “finished” and **never requests a file write**. I used two separate Codex homes and varied only the initial global summary. I inspected SQLite, the files on disk, and `thread/memory/read` on a new thread.
-
-| Observation | Empty store at the start | Store starts with a valid old summary |
-| --- | --- | --- |
-| Stage one | Two completed jobs, one extraction row | Same |
-| Source files | One, containing the new command | One, containing the new command |
-| Global job | `error / failed_invalid_artifacts` | `done`, row marked selected |
-| New thread reads | `null` | Old marker `PRIOR_ONLY_63`, no new command |
-
-The fact was present in the database and in the source file in both cases. The first run failed validation because it lacked a global summary. The second kept a stale summary and passed. Looking up job status and asking whether the next thread can immediately see a specific fact can yield different answers.
-
-In a third run I changed the second extractor reply from valid empty JSON to invalid text. The two jobs in the same batch ended as `done` and `error`, with a future `retry_at` for the failed job. The first thread still produced a source file and global consolidation completed. Diagnosing a partial extraction failure therefore requires looking at individual thread jobs.
-
-**I then made the previously retained source extract to nothing.** I added a synthetic turn to the original thread in A, telling the fixture to return an empty result on re-extraction. I placed its last activity ten minutes after its previous source timestamp while keeping it more than six hours old. A turn in B reduced `stage1_outputs` from one row to zero and left the global job `pending`. The previously successful rollout directory **still held one file**. I moved only the global job's completion timestamp back seven hours in the fixture database. The next ordinary turn then reduced the source-file count to zero and the global job returned to `done`. The old global summary was unchanged throughout this replay.
+Appending a turn to thread A so re-extraction returns empty drops `stage1_outputs` from 1 to 0 and marks the global job `pending`, while **`rollout_summaries/` still keeps 1 file** until the global completion timestamp passes the 6-hour cooldown:
 
 <FigCodexRetention lang="en" />
 
-This suggests a practical order for investigating recall. Look at the source row and its timestamp to diagnose extraction. For a stale source file, check global job state and the last successful consolidation. To learn which summary a new thread received, read it through that thread. Adjusting the two clocks was a shortcut confined to disposable databases.
+## Live project skills—and the `debug prompt-input` counterexample
 
-```shell
+Project skills walk `.agents/skills` from `cwd` to repo root (plus `~/.agents/skills`, legacy `$CODEX_HOME/skills`, system/admin/plugin roots), completely independent of memory cooldowns. <Src {...source} p="codex-rs/ext/skills/src/host_roots.rs" l="101-177" /> <Src {...source} p="codex-rs/ext/skills/src/host_roots.rs" l="235-260" />
+
+- **Live reload without restarting App Server**: over one stdio connection with `forceReload: true`, writing `Marker alpha` then `Marker beta` updates the catalog immediately without leaking body text, while a sibling directory sees nothing; a 2-line `v1` + `SUMMARY_7392` file (missing all 4 headings) is still returned by `thread/memory/read` when `use_memories` is on. <Src {...source} p="codex-rs/app-server/src/request_processors/catalog_processor.rs" l="548-617" /> <Src {...source} p="codex-rs/app-server/tests/suite/v2/memory_read.rs" l="99-125" />
+- **Debugging trap: `codex debug prompt-input` omits the memory extension**: with `SUMMARY_7392` in place, the debugger prints user input `INPUT_6185` whether memories are off or on, yet **never includes `SUMMARY_7392`**—because it bypasses App Server and builds a custom extension registry that installs Skills without `codex_memories_extension`. <Src {...source} p="codex-rs/cli/src/main.rs" l="2186-2230" /> <Src {...source} p="codex-rs/app-server/src/extensions.rs" l="101-111" />
+
+## Practical gotchas
+
+<Infer lang="en" /> Four takeaways when working with Codex memory and skills:
+
+1. **Put team invariants in `AGENTS.md` or `.agents/skills/`, not background memory**: opening repo B minutes after repo A is far inside the 6-hour idle window, and checked-in files can be reviewed and scoped cleanly.
+2. **Debug recall in three layers**: inspect `stage1_outputs` for extraction, global job state + 6h cooldown for stale source files, and `thread/memory/read` for what a thread receives (**never trust `codex debug prompt-input` for memory**).
+3. **`done` guarantees format, not content**: a lazy consolidator that leaves a valid stale summary untouched still passes `is_valid_v2_summary`.
+4. **Verify `CODEX_HOME`, `CODEX_SQLITE_HOME` and V1/V2 together**: any mismatch points two launches at different stores. <Src {...source} p="codex-rs/config/src/config_toml.rs" l="373-377" /> <Src {...source} p="codex-rs/state/src/runtime.rs" l="355-377" />
+
+<details>
+<summary>Expand: three offline App Server reproduction scripts</summary>
+<div class="d-body">
+
+Requires Python 3, Git, and `codex-cli 0.169.0` (plus Python `zstandard` if requests are Zstd-compressed). All runs use disposable temp directories:
+
+- **Extraction, empty retraction, 6h cooldown & malformed-reply isolation**: [Download codex-memory-lifecycle.py](/experiments/codex-memory-lifecycle.py)
+
+```sh title="Run all three scenarios"
 python codex-memory-lifecycle.py blank
 python codex-memory-lifecycle.py stale
 python codex-memory-lifecycle.py malformed
 ```
 
-The script requires Python 3, Git and `codex-cli 0.169.0`. It leaves its synthetic databases, source files and server log in a temporary directory for inspection. If your installation compresses requests with Zstandard, make the Python `zstandard` module available. [Download the complete experiment](/experiments/codex-memory-lifecycle.py)
+- **Live `forceReload` skill refresh & permissive read check**: [Download codex-skill-refresh.py](/experiments/codex-skill-refresh.py) → `python codex-skill-refresh.py`
+- **`codex debug prompt-input` missing memory extension**: [Download codex-prompt-input.py](/experiments/codex-prompt-input.py) → `python codex-prompt-input.py`
 
-## How project skills are discovered
+</div>
+</details>
 
-Repository discovery checks `.agents/skills` at each level between the working directory and the project root. A skill at the root can cover nested working directories. A skill under one subdirectory may be invisible to its siblings. User locations include `~/.agents/skills` and the older `$CODEX_HOME/skills`. System, admin and plugin roots have their own sources. The memory root follows Codex home and version, while a project skill follows the working directory and discovery source. Two repositories can share one memory store and still have different runbooks. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/host_roots.rs" l="101-113" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/host_roots.rs" l="140-177" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/host_roots.rs" l="235-260" />
+### Companion notes
 
-OpenAI advises skill authors to put the trigger in the `description`. The initial catalog gives the model a way to discover and choose a skill. It opens `SKILL.md` on selection and can then load scripts or references from the package. The catalog itself has a budget. Installing a file, seeing its listing, reading its instructions and executing a script are four distinct events you can test. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/ext/skills/src/catalog_prompt.rs" l="3-27" /> [Official skill authoring and loading guide](https://learn.chatgpt.com/docs/build-skills)
-
-### How does the same fact reach someone else's turn?
-
-The fixture isolates two roots explicitly. `CODEX_HOME` holds Markdown and rollouts, while `CODEX_SQLITE_HOME` points the databases at the same disposable directory. Defaults commonly colocate them, but `sqlite_home` is independently configurable, and V1 and V2 open separate memory databases. To determine whether two launches share a store, inspect the file root, database root and selected read version. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/config/src/config_toml.rs" l="373-377" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/state/src/runtime.rs" l="355-377" />
-
-A project skill or `AGENTS.md` can travel through code review with project A's build rules. An old personal conversation can offer evidence in another project, but the pipeline decides whether the global summary includes it. V1 does have instructions for turning a reusable procedure into a skill inside its memory workspace, with triggers, a procedure and a verification method. V2 asks the consolidator for the global summary. Installing a discoverable project or user skill still requires a change to a skill directory and a subsequent discovery. Saving a memory, deriving a procedure, and distributing it to the team have different completion criteria. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation.md" l="686-716" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/memories/write/templates/memories/consolidation_v2.md" l="39-52" />
-
-## Experiment: edit a skill without restarting the server
-
-I ran `codex-cli 0.169.0` on Windows with a temporary `CODEX_HOME` and a new Git repository. Over one App Server stdio connection I queried the empty directory, wrote two successive descriptions, then queried a sibling working directory. Every request set `forceReload: true`. I checked each returned skill object for a marker present only in the file body. The experiment did not submit a model turn. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/request_processors/catalog_processor.rs" l="548-563" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/request_processors/catalog_processor.rs" l="598-617" />
-
-```text
-['memories', 'stable', 'false']
-['memories', 'stable', 'true']
-[]
-[('Marker alpha', 'repo', False)]
-[('Marker beta', 'repo', False)]
-[]
-server False False
-server True True
-```
-
-The first two rows are the default feature listing and the listing with a one-command override. Each disk edit became visible on the next forced refresh, and neither returned object contained the body marker. The sibling query returned no skill named `notes-probe`. This measures discovery under explicit refresh. It leaves model selection, successful background generation and the timing of an unforced refresh as separate questions.
-
-I then seeded the same App Server’s V2 directory with only two lines, `v1` and `SUMMARY_7392`, and started two ephemeral threads. The file lacked all four headings required at the end of consolidation. The final rows report the read setting and whether the API returned the marker. `thread/memory/read` returned `null` with reading off and the marked summary with reading on. This is a positive control for the server's read path. A separate upstream integration test checks the selected marker in a normal turn request received by a mock model endpoint. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/tests/suite/v2/memory_read.rs" l="99-125" />
-
-With Python 3, Git and Codex CLI 0.169.0, run `python codex-skill-refresh.py`. It creates a temporary repository and summary, then checks catalog refresh, a sibling directory and the thread read setting. [Download the App Server experiment](/experiments/codex-skill-refresh.py)
-
-## Counterexample: does the prompt debugger install the memory extension?
-
-The help text for `codex debug prompt-input` says it renders model-visible input. I wrote a nonempty summary containing a unique marker, `SUMMARY_7392`, into a temporary V2 store. I ran the debugger with memories off and on, searched its JSON output for the marker, and used the user input `INPUT_6185` as a positive control.
-
-| Memory feature | Input marker present | Summary marker present |
-| --- | --- | --- |
-| Off | Yes | No |
-| On | Yes | No |
-
-The call chain explains this negative result. The debug command bypasses App Server and builds its own extension registry. It installs the skills extension and omits memories. The normal App Server explicitly installs `codex_memories_extension`. This test reproduces **a difference in which extensions the two entry points install**. The debugger output cannot settle whether a normal chat received its summary. <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/cli/src/main.rs" l="2186-2230" /> <Src repo="openai/codex" rev="d32063f96c2dff1dc96af839b3952abb6acfeda4" p="codex-rs/app-server/src/extensions.rs" l="101-111" />
-
-With Python 3 and Codex CLI 0.169.0, run `python codex-prompt-input.py`. The columns report the feature flag, presence of the user-input marker and presence of the summary marker. [Download the prompt debugger experiment](/experiments/codex-prompt-input.py)
-
-## Back to that test command
-
-For a team-owned test command, a checked-in `AGENTS.md` or project skill gives the team a change to review, a revision to revert and a directory scope to verify. For a clue from one investigation, retaining its evidence allows a future agent to check that it still applies. In our example, opening B a few minutes later is too early for the just-finished conversation in A to pass the default idle window. Even after consolidation, sharing a Codex home only creates an opportunity for cross-project recall. As for the project skill in A, the experiment showed that B never listed it.
-
-Hermes evaluates background review at turn end. Comparing that decision with Codex’s scan of eligible older threads explains why the same correction can be incorporated at different times. [Compare the Hermes implementation](/notes/hermes-memory-skills/#background-review-what-ties-the-three-together)
+| Agent | What to compare with Codex CLI |
+|---|---|
+| [Hermes Agent](/notes/hermes-memory-skills/) | Hermes evaluates background review right at turn end, vs. Codex's 6h thread idle + 6h global cooldown |
+| [Pi](/notes/pi-memory-skills/) | Pi skips built-in cross-session memory altogether in favor of explicit `AGENTS.md` / `SKILL.md` edits |
+| [OpenCode](/notes/opencode-memory-skills/) | SQLite persistence without cross-session consolidation; process-cached skill bodies vs. Codex `forceReload` |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | External MCP servers own cross-project memory vs. Codex's built-in two-phase pipeline |
+| [Claude Code](/notes/claude-code-memory-skills/) | Immediate `MEMORY.md` file index (200 lines / 25 KB) vs. Codex's async global summary |

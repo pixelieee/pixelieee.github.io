@@ -1,54 +1,205 @@
 ---
-interface Props { lang?: 'zh' | 'en' }
-const en = Astro.props.lang === 'en';
-const copy = en ? {
-  title: 'One edit, three requests', startup: 'Startup instructions', history: 'Tool history',
-  rows: [
-    ['After Edit', 'Writer · request 4', 'INDEX_BEFORE', 'Edit contains INDEX_AFTER', 'The file on disk has already changed.'],
-    ['Fresh process', 'Same repo · request 1', 'INDEX_AFTER', 'No tool calls', 'The topic detail is absent.'],
-    ['After Read', 'Same repo · request 2', 'INDEX_AFTER', 'Read returns DETAIL_QUARTZ', 'The body arrives in a tool result.'],
+// 图 2：一次写入，三份请求——启动附件、工具历史与磁盘文件的错位追踪（交互式）
+interface Props { lang?: 'zh' | 'en'; }
+const { lang = 'zh' } = Astro.props;
+const uid = `cc-trace-${lang}`;
+
+const copy = lang === 'en' ? {
+  tabs: [
+    { id: 's1', label: 'After Edit · req 4' },
+    { id: 's2', label: 'Fresh process · req 1' },
+    { id: 's3', label: 'After Read · req 2' },
   ],
-  caption: 'Each row is a separate outgoing request from CLI 2.1.327. The two columns identify where the markers occurred in its payload.'
+  cols: ['Startup attachment (user.text)', 'Tool history (messages)', 'Memory files on disk'],
+  states: {
+    s1: {
+      startup: 'INDEX_BEFORE',
+      startupSub: 'Unchanged snapshot from session start',
+      history: 'Edit: INDEX_BEFORE → INDEX_AFTER',
+      historySub: 'Current turn recovers the edit from tool history',
+      disk: 'MEMORY.md = INDEX_AFTER · release-owner.md = DETAIL_QUARTZ',
+      diskSub: 'Disk already updated (plus modified timestamp)',
+      note: 'Both INDEX_BEFORE and INDEX_AFTER appear in request 4, but in different slots: startup still holds the old index while the assistant’s own Edit call carries the new string.',
+    },
+    s2: {
+      startup: 'INDEX_AFTER',
+      startupSub: 'Reloaded fresh from MEMORY.md on disk',
+      history: '(no tool calls yet)',
+      historySub: 'Previous process history is gone',
+      disk: 'release-owner.md stays unread on disk',
+      diskSub: 'DETAIL_QUARTZ is completely absent from this payload',
+      note: 'Restarting drops the Edit history and picks up the new index from disk—yet the actual handoff code DETAIL_QUARTZ is still missing because topic files never preload.',
+    },
+    s3: {
+      startup: 'INDEX_AFTER',
+      startupSub: 'Same startup index attachment',
+      history: 'Read → tool_result: DETAIL_QUARTZ',
+      historySub: 'Matched by tool_use_id in adjacent message blocks',
+      disk: 'MEMORY.md + release-owner.md',
+      diskSub: 'Topic body enters context only via explicit Read',
+      note: 'Only after the CLI executes a real Read on release-owner.md does DETAIL_QUARTZ enter the outgoing request as a user.tool_result block.',
+    },
+  },
+  cap: 'Figure 2. Three outgoing requests from Claude Code 2.1.327 across one Edit and one restart, separated by payload slot.',
 } : {
-  title: '一次改写，三份请求', startup: '启动时加载的说明', history: '工具调用与结果',
-  rows: [
-    ['Edit 完成', '写入进程 · 第 4 次请求', 'INDEX_BEFORE', 'Edit 参数含 INDEX_AFTER', '此时磁盘上的索引已经改了。'],
-    ['重启', '同仓新进程 · 第 1 次请求', 'INDEX_AFTER', '尚无工具调用', '请求里还找不到主题正文。'],
-    ['Read 完成', '同仓新进程 · 第 2 次请求', 'INDEX_AFTER', 'Read 返回 DETAIL_QUARTZ', '正文随工具结果进入。'],
+  tabs: [
+    { id: 's1', label: 'Edit 后 · 第 4 次请求' },
+    { id: 's2', label: '重启后 · 第 1 次请求' },
+    { id: 's3', label: 'Read 后 · 第 2 次请求' },
   ],
-  caption: '每行是一份 2.1.327 客户端实际发出的请求。右侧两列分别标出标记在报文里的位置。'
+  cols: ['启动附件（user.text）', '工具调用与结果（messages）', '磁盘记忆目录'],
+  states: {
+    s1: {
+      startup: 'INDEX_BEFORE',
+      startupSub: '仍保留会话启动时的旧索引',
+      history: 'Edit：INDEX_BEFORE → INDEX_AFTER',
+      historySub: '当前回合只能靠工具历史知道改了什么',
+      disk: 'MEMORY.md 含 INDEX_AFTER · 主题文件含 DETAIL_QUARTZ',
+      diskSub: '磁盘已落盘（并自动补上 modified 时间）',
+      note: '第 4 次请求里能同时搜到新旧索引，但位置完全不同：启动附件仍是旧的，新标记只出现在助手自己的 Edit 入参里。',
+    },
+    s2: {
+      startup: 'INDEX_AFTER',
+      startupSub: '新进程启动时从磁盘重新读入',
+      history: '（尚无工具调用）',
+      historySub: '上一个进程的工具历史已经不在了',
+      disk: 'release-owner.md 仍躺在磁盘上',
+      diskSub: '整份请求里完全没有 DETAIL_QUARTZ',
+      note: '同仓另起进程后，启动附件终于换成了新索引，但真正有用的交接口令仍缺席——主题文件不会随启动一起灌进上下文。',
+    },
+    s3: {
+      startup: 'INDEX_AFTER',
+      startupSub: '启动附件不变',
+      history: 'Read → tool_result：DETAIL_QUARTZ',
+      historySub: '通过 tool_use_id 与紧邻的 tool_use 配对',
+      disk: 'MEMORY.md + release-owner.md',
+      diskSub: '直到真实 Read 读盘，正文才进入请求',
+      note: '等 CLI 真正执行一次 Read 读取 release-owner.md，口令 DETAIL_QUARTZ 才随 tool_result 进入下一次发给模型的报文。',
+    },
+  },
+  cap: '图 2　一次 Edit 加一次重启，Claude Code 2.1.327 实际发出的三份请求里，标记分别落在哪一栏。',
 };
 ---
-<figure class="request-trace" lang={en ? 'en' : 'zh-CN'}>
-  <div class="trace-title">{copy.title}</div>
-  <div class="trace-columns" aria-hidden="true"><span></span><span>{copy.startup}</span><span>{copy.history}</span></div>
-  <ol class="ticks">
-    {copy.rows.map(([name, ordinal, marker, event, result]) => (
-      <li>
-        <div class="phase"><strong>{name}</strong><small>{ordinal}</small></div>
-        <div class="cell index"><span class="mobile">{copy.startup}</span><b>{marker}</b></div>
-        <div class="cell event"><span class="mobile">{copy.history}</span><strong>{event}</strong><small>{result}</small></div>
-      </li>
+
+<figure class="fig cc-trace" id={uid} data-stage="s1" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="cc-tabs" role="tablist">
+    {copy.tabs.map((tab, i) => (
+      <button
+        type="button"
+        role="tab"
+        class="cc-tab"
+        data-stage-btn={tab.id}
+        aria-selected={i === 0 ? 'true' : 'false'}
+      >{tab.label}</button>
     ))}
-  </ol>
-  <figcaption>{copy.caption}</figcaption>
+  </div>
+
+  <div class="trace-grid">
+    {(['s1', 's2', 's3'] as const).map((key) => {
+      const s = copy.states[key];
+      return (
+        <div class={`trace-panel panel-${key}`}>
+          <div class="t-card">
+            <span class="t-k">{copy.cols[0]}</span>
+            <code class={`t-val ${key === 's1' ? 'stale' : 'fresh'}`}>{s.startup}</code>
+            <p class="t-sub">{s.startupSub}</p>
+          </div>
+          <div class="t-card">
+            <span class="t-k">{copy.cols[1]}</span>
+            <code class={`t-val ${key === 's2' ? 'empty' : 'fresh'}`}>{s.history}</code>
+            <p class="t-sub">{s.historySub}</p>
+          </div>
+          <div class="t-card">
+            <span class="t-k">{copy.cols[2]}</span>
+            <code class="t-val disk">{s.disk}</code>
+            <p class="t-sub">{s.diskSub}</p>
+          </div>
+          <p class="t-note">{s.note}</p>
+        </div>
+      );
+    })}
+  </div>
+  <figcaption>{copy.cap}</figcaption>
 </figure>
+
+<script define:vars={{ uid }}>
+  (() => {
+    const root = document.getElementById(uid);
+    if (!root) return;
+    const btns = [...root.querySelectorAll('[data-stage-btn]')];
+    const order = btns.map((b) => b.dataset.stageBtn);
+    let idx = 0, locked = false, timer = null;
+
+    const show = (id) => {
+      root.dataset.stage = id;
+      btns.forEach((b) => b.setAttribute('aria-selected', b.dataset.stageBtn === id ? 'true' : 'false'));
+    };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const start = () => {
+      if (locked || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      stop();
+      timer = setInterval(() => { idx = (idx + 1) % order.length; show(order[idx]); }, 4500);
+    };
+
+    btns.forEach((b, i) => {
+      b.addEventListener('click', () => { locked = true; stop(); idx = i; show(b.dataset.stageBtn); });
+      b.addEventListener('mouseenter', () => { stop(); idx = i; show(b.dataset.stageBtn); });
+    });
+    root.addEventListener('mouseleave', () => { if (!locked) start(); });
+
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver((e) => { if (e[0]?.isIntersecting) start(); else stop(); }, { threshold: 0.25 });
+      io.observe(root);
+    } else start();
+  })();
+</script>
+
 <style>
-  .request-trace .trace-title { font: 550 1.25rem/1.45 var(--serif); color: var(--fg); margin-bottom: .9rem; }
-  .trace-columns, .ticks > li { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1fr) minmax(0, 1.5fr); gap: 1rem; }
-  .trace-columns { border-bottom: 1px solid var(--line); padding: 0 0 .5rem; font: 500 .75rem/1.4 var(--sans); color: var(--mute); }
-  .request-trace .ticks { list-style: none; margin: 0; padding: 0; }
-  .ticks > li { align-items: start; margin: 0; padding: .8rem 0; border-bottom: 1px solid var(--line); }
-  .phase strong, .event strong { font: 550 .88rem/1.5 var(--sans); }
-  .ticks small { display: block; font: 400 .75rem/1.6 var(--sans); color: var(--mute); }
-  .index b { font: 500 .8rem/1.5 var(--mono); background: var(--plat-soft); padding: .15em .35em; color: var(--fg); }
-  .mobile { display: none; }
-  @media(max-width: 560px) {
-    .trace-columns { display: none; }
-    .ticks { border-top: 1px solid var(--line); }
-    .ticks > li { grid-template-columns: minmax(0,1fr) minmax(0,1.35fr); gap: .5rem .75rem; }
-    .phase { grid-column: 1 / -1; display: flex; gap: .55rem; align-items: baseline; }
-    .mobile { display: block; font: 400 .68rem/1.5 var(--sans); margin-bottom: .15rem; color: var(--mute); }
-    .event strong { overflow-wrap: anywhere; }
+  .cc-trace { margin: 1.6em 0 2em; }
+  .cc-trace .cc-tabs {
+    display: flex; flex-wrap: wrap; gap: 0 22px;
+    border-bottom: 1px solid var(--line); margin-bottom: 14px;
+  }
+  .cc-trace .cc-tab {
+    position: relative; background: none; border: 0; padding: 8px 2px 10px;
+    font: 500 13.5px/1.3 var(--sans); color: var(--mute); cursor: pointer;
+    transition: color .2s ease;
+  }
+  .cc-trace .cc-tab:hover { color: var(--fg); }
+  .cc-trace .cc-tab[aria-selected="true"] { color: var(--fg); font-weight: 600; }
+  .cc-trace .cc-tab::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: var(--plat); transform: scaleX(0); transform-origin: left center;
+    transition: transform .24s cubic-bezier(.22,1,.36,1);
+  }
+  .cc-trace .cc-tab[aria-selected="true"]::after { transform: scaleX(1); }
+
+  .trace-panel { display: none; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .cc-trace[data-stage="s1"] .panel-s1,
+  .cc-trace[data-stage="s2"] .panel-s2,
+  .cc-trace[data-stage="s3"] .panel-s3 { display: grid; }
+
+  .t-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 13px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .t-k { font: 600 11.5px/1.3 var(--sans); color: var(--mute); }
+  .t-val {
+    font: 500 12px/1.5 var(--mono); padding: 4px 7px; border-radius: 6px;
+    background: var(--code); color: var(--fg); word-break: break-word;
+  }
+  .t-val.fresh { background: var(--plat-soft); border: 1px solid color-mix(in srgb, var(--plat) 45%, transparent); }
+  .t-val.stale { background: var(--code); color: var(--fg-2); border: 1px dashed var(--mute); }
+  .t-val.empty { color: var(--mute); }
+  .t-sub { margin: 0 !important; font: 12px/1.55 var(--sans); color: var(--mute); }
+  .t-note {
+    grid-column: 1 / -1; margin: 2px 0 0 !important; padding: 9px 12px;
+    border-left: 2px solid var(--plat); background: var(--plat-soft);
+    font: 13.5px/1.65 var(--sans); color: var(--fg-2);
+  }
+  .cc-trace figcaption { margin-top: 8px; }
+
+  @media (max-width: 680px) {
+    .trace-panel { grid-template-columns: 1fr; }
   }
 </style>

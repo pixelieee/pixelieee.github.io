@@ -2,8 +2,8 @@
 interface Props { lang?: 'zh' | 'en' }
 const en = Astro.props.lang === 'en';
 const labels = en
-  ? { source: 'Index on disk', target: 'First request', body: 'Index body', quote: 'Warning excerpt only', absent: 'Absent', caption: 'Where three adjacent markers from a 202-line MEMORY.md appeared in Claude Code 2.1.327.' }
-  : { source: '磁盘上的索引', target: '首次请求', body: '索引正文', quote: '仅见于告警摘引', absent: '未出现', caption: '同一份 202 行的 MEMORY.md 中，相邻三行的标记在 Claude Code 2.1.327 首次请求里的去向。' };
+  ? { source: 'Index on disk', target: 'First request', body: 'Index body', quote: 'Warning excerpt only', absent: 'Absent', caption: 'Figure 3. Where three adjacent markers from a 202-line MEMORY.md appeared in Claude Code 2.1.327.' }
+  : { source: '磁盘上的索引', target: '首次请求', body: '索引正文', quote: '仅见于告警摘引', absent: '未出现', caption: '图 3　同一份 202 行 MEMORY.md 里，相邻三行标记在 Claude Code 2.1.327 首次请求中的去向。' };
 const rows = [
   { line: 200, state: 'body', label: labels.body },
   { line: 201, state: 'excerpt', label: labels.quote },

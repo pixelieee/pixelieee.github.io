@@ -1,0 +1,333 @@
+---
+// 图 1：Claude Code 四条知识通道的读写路径与 Worktree 边界（交互式动效图）
+interface Props { lang?: 'zh' | 'en'; }
+const { lang = 'zh' } = Astro.props;
+const uid = `cc-arch-${lang}`;
+
+const copy = lang === 'en' ? {
+  aria: 'Claude Code four knowledge channels: project rules, auto memory, skills, and linked worktree divergence',
+  tabs: [
+    { id: 'rules', label: 'Project rules' },
+    { id: 'memory', label: 'Auto memory' },
+    { id: 'skills', label: 'Skills' },
+    { id: 'worktree', label: 'Linked worktree' },
+  ],
+  leftTitle: 'On disk · 3 storage roots',
+  nRules: 'Project rules',
+  nRulesSub: 'CLAUDE.md · .claude/rules/ · subdirs',
+  nMem: 'Auto memory (per repo)',
+  nMemSub: 'MEMORY.md (≤200L / 25KB) + topics',
+  nSkill: 'Project & user skills',
+  nSkillSub: '.claude/skills/<name>/SKILL.md',
+  midTitle: 'Next outgoing request',
+  mStartup: 'Startup user attachment',
+  mStartupSub: 'Root CLAUDE.md + MEMORY.md prefix',
+  mCatalog: 'Skill catalog (1% budget)',
+  mCatalogSub: 'Names & descriptions only',
+  mTurn: 'Turn messages & tool_result',
+  mTurnSub: 'Nested rules · topic Read · Skill body',
+  mPost: 'PostToolUse system note',
+  mPostSub: 'Flags >200L index without failing Write',
+  edgeRules: 'startup + on Read',
+  edgeMem: 'prefix at start · topic on Read',
+  edgeSkill: '1% catalog · body on invoke',
+  edgeWt: 'empty dir cuts fallback',
+  notes: {
+    rules: 'Root CLAUDE.md loads at startup (suppressing AGENTS.md fallback); nested CLAUDE.md and paths rules arrive only after Read touches a matching file.',
+    memory: 'MEMORY.md is capped at 200 lines or 25 KB on load; topic files stay on disk until Read. Oversized Write succeeds on disk while PostToolUse warns separately.',
+    skills: 'Only names and descriptions start in the 1% catalog budget. Invoking a skill injects its body (deduped on repeat); allowed-tools expires on the next user message.',
+    worktree: 'Linked worktrees share the machine-local auto-memory folder, but creating even an empty .claude/skills/ inside the worktree cuts fallback to the main checkout.',
+  },
+  cap: 'Figure 1. Three on-disk roots, four delivery paths, and why a linked worktree keeps auto memory while dropping main-checkout skills.',
+} : {
+  aria: 'Claude Code 四条知识通道：项目规则、自动记忆、Skill 与 linked worktree 分叉',
+  tabs: [
+    { id: 'rules', label: '项目规则' },
+    { id: 'memory', label: '自动记忆' },
+    { id: 'skills', label: 'Skill 流程' },
+    { id: 'worktree', label: 'Worktree 分叉' },
+  ],
+  leftTitle: '磁盘上的三类落点',
+  nRules: '项目规则',
+  nRulesSub: 'CLAUDE.md · .claude/rules/ · 子目录',
+  nMem: '自动记忆（按仓库归属）',
+  nMemSub: 'MEMORY.md（≤200行/25KB）+ 主题文件',
+  nSkill: '项目与用户 Skill',
+  nSkillSub: '.claude/skills/<name>/SKILL.md',
+  midTitle: '下一次发出的请求',
+  mStartup: '启动用户附件',
+  mStartupSub: '根 CLAUDE.md + MEMORY.md 前缀',
+  mCatalog: 'Skill 清单（1% 上下文预算）',
+  mCatalogSub: '平时只列名字与简介',
+  mTurn: '本轮消息与工具结果',
+  mTurnSub: '子目录规则 · 主题 Read · Skill 正文',
+  mPost: 'PostToolUse 系统告警',
+  mPostSub: '索引超限另发提示，Write 仍算成功',
+  edgeRules: '启动拼接 + 读文件触发',
+  edgeMem: '启动带索引 · 正文按需 Read',
+  edgeSkill: '1% 清单 · 调用注正文',
+  edgeWt: '空目录即切断回退',
+  notes: {
+    rules: '根 CLAUDE.md 启动时拼入（存在时默认不回退 AGENTS.md）；子目录 CLAUDE.md 与 paths 规则在真实 Read 命中对应文件后才进入下一份请求。',
+    memory: '启动只带入 MEMORY.md 前 200 行或 25 KB，主题文件留在磁盘等 Read；Write 写超限磁盘照落、tool_result 照报成功，改由独立 system 消息告警。',
+    skills: '起步只放 1% 预算的清单；调用后注入正文并按次去重，但 allowed-tools 预授权只管这一轮——下次用户发消息即失效。',
+    worktree: '同仓 linked worktree 共享同一本机自动记忆目录；但只要本 worktree 根部存在 .claude/skills/（哪怕是空的），就不再回退到主 checkout。',
+  },
+  cap: '图 1　Claude Code 的三类落点、四条送达路径，以及 linked worktree 上记忆共享与 Skill 断档的分叉。',
+};
+---
+
+<figure class="fig cc-arch" id={uid} data-active="rules" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="cc-tabs" role="tablist">
+    {copy.tabs.map((tab, i) => (
+      <button
+        type="button"
+        role="tab"
+        class="cc-tab"
+        data-tab={tab.id}
+        aria-selected={i === 0 ? 'true' : 'false'}
+      >{tab.label}</button>
+    ))}
+  </div>
+
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 318" role="img" aria-label={copy.aria}>
+      <defs>
+        <marker id={`${uid}-am`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M0 1L10 5L0 9z" fill="var(--mute)" />
+        </marker>
+        <marker id={`${uid}-ag`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M0 1L10 5L0 9z" fill="var(--plat)" />
+        </marker>
+      </defs>
+
+      <text x="16" y="22" class="kicker">{copy.leftTitle}</text>
+      <text x="412" y="22" class="kicker">{copy.midTitle}</text>
+
+      <!-- Left column: 3 disk roots -->
+      <g class="node" data-group="rules">
+        <rect x="14" y="34" width="268" height="72" rx="10" />
+        <text x="28" y="62" class="h">{copy.nRules}</text>
+        <text x="28" y="84" class="m">{copy.nRulesSub}</text>
+      </g>
+
+      <g class="node" data-group="memory worktree">
+        <rect x="14" y="124" width="268" height="72" rx="10" />
+        <text x="28" y="152" class="h">{copy.nMem}</text>
+        <text x="28" y="174" class="m">{copy.nMemSub}</text>
+      </g>
+
+      <g class="node" data-group="skills worktree">
+        <rect x="14" y="214" width="268" height="72" rx="10" />
+        <text x="28" y="242" class="h">{copy.nSkill}</text>
+        <text x="28" y="264" class="m">{copy.nSkillSub}</text>
+      </g>
+
+      <!-- Right column: outgoing request container -->
+      <rect x="410" y="34" width="336" height="252" rx="12" class="shell" />
+
+      <g class="slot" data-group="rules memory worktree">
+        <rect x="424" y="48" width="308" height="48" rx="8" />
+        <text x="438" y="69" class="sh">{copy.mStartup}</text>
+        <text x="438" y="86" class="m">{copy.mStartupSub}</text>
+      </g>
+
+      <g class="slot" data-group="skills worktree">
+        <rect x="424" y="106" width="308" height="48" rx="8" />
+        <text x="438" y="127" class="sh">{copy.mCatalog}</text>
+        <text x="438" y="144" class="m">{copy.mCatalogSub}</text>
+      </g>
+
+      <g class="slot" data-group="rules memory skills">
+        <rect x="424" y="164" width="308" height="48" rx="8" />
+        <text x="438" y="185" class="sh">{copy.mTurn}</text>
+        <text x="438" y="202" class="m">{copy.mTurnSub}</text>
+      </g>
+
+      <g class="slot" data-group="memory">
+        <rect x="424" y="222" width="308" height="48" rx="8" />
+        <text x="438" y="243" class="sh">{copy.mPost}</text>
+        <text x="438" y="260" class="m">{copy.mPostSub}</text>
+      </g>
+
+      <!-- Edges -->
+      <g class="edge" data-group="rules">
+        <path id={`${uid}-p-r1`} d="M282 64 H424" class="wire" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 64 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <path id={`${uid}-p-r2`} d="M282 82 H346 V182 H424" class="wire dashed" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 82 H346 V182 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <text x="352" y="56" class="el" text-anchor="middle">{copy.edgeRules}</text>
+      </g>
+
+      <g class="edge" data-group="memory">
+        <path id={`${uid}-p-m1`} d="M282 146 H332 V78 H424" class="wire" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 146 H332 V78 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <path id={`${uid}-p-m2`} d="M282 162 H360 V192 H424" class="wire dashed" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 162 H360 V192 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <path id={`${uid}-p-m3`} d="M282 178 H332 V246 H424" class="wire dashed" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 178 H332 V246 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <text x="352" y="138" class="el" text-anchor="middle">{copy.edgeMem}</text>
+      </g>
+
+      <g class="edge" data-group="skills">
+        <path id={`${uid}-p-s1`} d="M282 238 H372 V130 H424" class="wire" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 238 H372 V130 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <path id={`${uid}-p-s2`} d="M282 258 H386 V196 H424" class="wire dashed" marker-end={`url(#${uid}-am)`} />
+        <path d="M282 258 H386 V196 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <text x="352" y="299" class="el" text-anchor="middle">{copy.edgeSkill}</text>
+      </g>
+
+      <g class="edge" data-group="worktree">
+        <path d="M282 152 H332 V72 H424" class="flow" marker-end={`url(#${uid}-ag)`} />
+        <path d="M282 250 H358 V136 H392" class="cut-line" />
+        <line x1="387" y1="128" x2="399" y2="144" class="cut-x" />
+        <line x1="399" y1="128" x2="387" y2="144" class="cut-x" />
+        <text x="352" y="299" class="el" text-anchor="middle">{copy.edgeWt}</text>
+      </g>
+    </svg>
+  </div>
+
+  <p class="cc-note" data-note>{copy.notes.rules}</p>
+  <figcaption>{copy.cap}</figcaption>
+</figure>
+
+<script define:vars={{ uid, notes: copy.notes }}>
+  (() => {
+    const root = document.getElementById(uid);
+    if (!root) return;
+    const tabs = [...root.querySelectorAll('.cc-tab')];
+    const noteEl = root.querySelector('[data-note]');
+    const order = tabs.map((t) => t.dataset.tab);
+    let idx = 0;
+    let locked = false;
+    let timer = null;
+
+    const apply = (id) => {
+      root.dataset.active = id;
+      tabs.forEach((t) => t.setAttribute('aria-selected', t.dataset.tab === id ? 'true' : 'false'));
+      if (noteEl && notes[id]) noteEl.textContent = notes[id];
+    };
+
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const start = () => {
+      if (locked || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      stop();
+      timer = setInterval(() => {
+        idx = (idx + 1) % order.length;
+        apply(order[idx]);
+      }, 4200);
+    };
+
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => { locked = true; stop(); idx = i; apply(tab.dataset.tab); });
+      tab.addEventListener('mouseenter', () => { stop(); idx = i; apply(tab.dataset.tab); });
+    });
+
+    root.querySelectorAll('.node, .slot').forEach((el) => {
+      const first = (el.dataset.group || '').split(' ')[0];
+      if (!first) return;
+      el.style.cursor = 'pointer';
+      el.addEventListener('mouseenter', () => { stop(); apply(first); });
+      el.addEventListener('click', () => { locked = true; stop(); apply(first); });
+    });
+
+    root.addEventListener('mouseleave', () => { if (!locked) start(); });
+
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver((entries) => {
+        if (entries[0]?.isIntersecting) start();
+        else stop();
+      }, { threshold: 0.25 });
+      io.observe(root);
+    } else {
+      start();
+    }
+  })();
+</script>
+
+<style>
+  .cc-arch { margin: 1.6em 0 2em; }
+  .cc-tabs {
+    display: flex; flex-wrap: wrap; gap: 0 22px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 14px;
+  }
+  .cc-tab {
+    position: relative; background: none; border: 0; padding: 8px 2px 10px;
+    font: 500 13.5px/1.3 var(--sans); color: var(--mute); cursor: pointer;
+    transition: color .2s ease;
+  }
+  .cc-tab:hover { color: var(--fg); }
+  .cc-tab[aria-selected="true"] { color: var(--fg); font-weight: 600; }
+  .cc-tab::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: var(--plat); transform: scaleX(0); transform-origin: left center;
+    transition: transform .24s cubic-bezier(.22,1,.36,1);
+  }
+  .cc-tab[aria-selected="true"]::after { transform: scaleX(1); }
+
+  .cc-arch svg { width: 100%; height: auto; display: block; }
+  .cc-arch text { fill: var(--fg); font-family: var(--sans); }
+  .cc-arch .kicker { font-size: 11.5px; font-weight: 600; fill: var(--mute); letter-spacing: .04em; }
+  .cc-arch .h { font-size: 14px; font-weight: 600; }
+  .cc-arch .sh { font-size: 13px; font-weight: 600; }
+  .cc-arch .m { font-size: 11.5px; fill: var(--mute); }
+  .cc-arch .el { font-size: 11px; fill: var(--plat-ink); font-weight: 500; opacity: 0; transition: opacity .25s ease; }
+
+  .cc-arch .shell { fill: var(--bg); stroke: var(--line); stroke-width: 1; }
+  .cc-arch .node rect { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .25s ease, fill .25s ease, opacity .25s ease; }
+  .cc-arch .slot rect { fill: var(--code); stroke: var(--line); stroke-width: 1; transition: stroke .25s ease, fill .25s ease, opacity .25s ease; }
+  .cc-arch .node, .cc-arch .slot { opacity: .42; transition: opacity .25s ease; }
+
+  .cc-arch .wire { fill: none; stroke: var(--line); stroke-width: 1.2; opacity: .55; }
+  .cc-arch .wire.dashed { stroke-dasharray: 4 3; }
+  .cc-arch .flow {
+    fill: none; stroke: var(--plat); stroke-width: 1.9;
+    stroke-dasharray: 6 5; opacity: 0; transition: opacity .25s ease;
+  }
+  .cc-arch .cut-line { fill: none; stroke: var(--mute); stroke-width: 1.6; stroke-dasharray: 4 3; opacity: 0; transition: opacity .25s ease; }
+  .cc-arch .cut-x { stroke: var(--plat-ink); stroke-width: 2; stroke-linecap: round; opacity: 0; transition: opacity .25s ease; }
+
+  @keyframes ccFlow { from { stroke-dashoffset: 22; } to { stroke-dashoffset: 0; } }
+
+  .cc-arch[data-active="rules"] [data-group~="rules"],
+  .cc-arch[data-active="memory"] [data-group~="memory"],
+  .cc-arch[data-active="skills"] [data-group~="skills"],
+  .cc-arch[data-active="worktree"] [data-group~="worktree"] { opacity: 1; }
+
+  .cc-arch[data-active="rules"] .node[data-group~="rules"] rect,
+  .cc-arch[data-active="memory"] .node[data-group~="memory"] rect,
+  .cc-arch[data-active="skills"] .node[data-group~="skills"] rect,
+  .cc-arch[data-active="worktree"] .node[data-group~="worktree"] rect,
+  .cc-arch[data-active="rules"] .slot[data-group~="rules"] rect,
+  .cc-arch[data-active="memory"] .slot[data-group~="memory"] rect,
+  .cc-arch[data-active="skills"] .slot[data-group~="skills"] rect,
+  .cc-arch[data-active="worktree"] .slot[data-group~="worktree"] rect {
+    stroke: var(--plat); stroke-width: 1.4;
+  }
+
+  .cc-arch[data-active="rules"] .edge[data-group="rules"] .flow,
+  .cc-arch[data-active="memory"] .edge[data-group="memory"] .flow,
+  .cc-arch[data-active="skills"] .edge[data-group="skills"] .flow,
+  .cc-arch[data-active="worktree"] .edge[data-group="worktree"] .flow {
+    opacity: 1; animation: ccFlow 1.2s linear infinite;
+  }
+
+  .cc-arch[data-active="rules"] .edge[data-group="rules"] .el,
+  .cc-arch[data-active="memory"] .edge[data-group="memory"] .el,
+  .cc-arch[data-active="skills"] .edge[data-group="skills"] .el,
+  .cc-arch[data-active="worktree"] .edge[data-group="worktree"] .el,
+  .cc-arch[data-active="worktree"] .edge[data-group="worktree"] .cut-line,
+  .cc-arch[data-active="worktree"] .edge[data-group="worktree"] .cut-x { opacity: 1; }
+
+  .cc-note {
+    margin: 10px 0 6px !important; padding: 9px 12px;
+    border-left: 2px solid var(--plat); background: var(--plat-soft);
+    font: 13.5px/1.65 var(--sans); color: var(--fg-2);
+  }
+  .cc-arch figcaption { margin-top: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cc-arch .flow { animation: none !important; stroke-dasharray: none; }
+  }
+</style>

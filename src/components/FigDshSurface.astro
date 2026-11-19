@@ -1,33 +1,86 @@
 ---
+// 图 2：交互演示 surfaceOp: replace 按当前视图位置遮蔽旧区间，原事件 9 和 6 仍保留在底层日志中。
 const { lang = 'zh' } = Astro.props;
 const en = lang === 'en';
-const before = [1,9,6,7];
-const after = [1,12,7];
-const columns = ['24%', '44%', '64%', '84%'];
-const description = en
-  ? 'Example. The surface is 1, 9, 6, 7. Replacing the span from 9 to 6 produces 1, 12, 7. Events 9 and 6 remain in the raw log.'
-  : '示例。当前消息序列为 1、9、6、7，用事件 12 替换从 9 到 6 的片段，结果是 1、12、7。原日志仍有 9 和 6。';
+const T = {
+  zh: {
+    desc: '示例：当前 surface 为 1、9、6、7；追加带 surfaceOp: replace(9..6) 的检查点事件 12 后，surface 变为 1、12、7，原日志仍保留 9 和 6。',
+    tabBefore: '替换前',
+    tabAfter: '替换后（事件 12 遮蔽 9..6）',
+    beforeLbl: '当前 surface',
+    afterLbl: '替换后 surface',
+    rawLbl: '原始事件日志',
+    rawTxt: '1 · … · 6 · 7 · 9 · 12（全部保留，按需可回放与检索）',
+    cap: '图 2\u3000数字是事件序号。经历过一次替换后，序号更大的事件（9）可能排在更早事件（6）前面；压缩按 surface 上的位置切片，原日志一行不删。',
+  },
+  en: {
+    desc: 'Example: the surface holds 1, 9, 6, 7. Replacing the span from 9 to 6 with checkpoint event 12 produces 1, 12, 7 while 9 and 6 remain in the raw log.',
+    tabBefore: 'Before replacement',
+    tabAfter: 'After (event 12 shadows 9..6)',
+    beforeLbl: 'Current surface',
+    afterLbl: 'New surface',
+    rawLbl: 'Raw event log',
+    rawTxt: '1 · … · 6 · 7 · 9 · 12 (all events preserved for replay & query)',
+    cap: 'Figure 2. Numbers are event sequence IDs. An earlier replacement can place event 9 ahead of event 6; compaction slices by surface position while leaving the raw log intact.',
+  },
+}[en ? 'en' : 'zh'];
+const grp = `dsh-sf-${lang}`;
 ---
-<figure class="surface">
-  <svg width="100%" height="124" role="img" aria-label={description}>
-    <text x="0" y="37" class="name">{en ? 'Before' : '替换前'}</text>
-    <text x="0" y="99" class="name">{en ? 'After' : '替换后'}</text>
-    <line x1="24%" x2="84%" y1="32" y2="32" />
-    <line x1="24%" x2="84%" y1="94" y2="94" />
-    {before.map((seq, i) => <g class:list={['node', { selected: seq === 9 || seq === 6 }]}>
-      <circle cx={columns[i]} cy="32" r="18"/><text x={columns[i]} y="37">{seq}</text>
-    </g>)}
-    {after.map((seq, i) => <g class:list={['node', { selected: seq === 12 }]}>
-      <circle cx={['24%', '54%', '84%'][i]} cy="94" r="18"/><text x={['24%', '54%', '84%'][i]} y="99">{seq}</text>
-    </g>)}
-  </svg>
-  <figcaption>{en ? 'Figure 1. The numbers are event sequence IDs. A previous replacement can place a newer event before an older one. Here events 9 and 6 are adjacent on the surface.' : '图 1　数字是事件序号。经历过一次替换后，新事件可以排在旧事件前面。此例中，9 和 6 在当前消息序列里相邻。'}</figcaption>
+<figure class="surface" lang={en ? 'en' : 'zh-CN'}>
+  <div class="sf-bar" role="radiogroup" aria-label={en ? 'Surface state' : '切换视图状态'}>
+    <label class="sf-tab"><input type="radio" name={grp} value="before" /><span>{T.tabBefore}</span></label>
+    <label class="sf-tab"><input type="radio" name={grp} value="after" checked /><span>{T.tabAfter}</span></label>
+  </div>
+
+  <div class="fig-scroll">
+    <svg viewBox="0 0 640 132" role="img" aria-label={T.desc}>
+      <g class="row row-before">
+        <text x="4" y="39" class="name">{T.beforeLbl}</text>
+        <line x1="150" x2="570" y1="34" y2="34" />
+        <rect x="258" y="10" width="204" height="48" rx="10" class="span-box" />
+        <g class="node"><circle cx="160" cy="34" r="17" /><text x="160" y="39">1</text></g>
+        <g class="node shadowed"><circle cx="290" cy="34" r="17" /><text x="290" y="39">9</text></g>
+        <g class="node shadowed"><circle cx="430" cy="34" r="17" /><text x="430" y="39">6</text></g>
+        <g class="node"><circle cx="560" cy="34" r="17" /><text x="560" y="39">7</text></g>
+      </g>
+
+      <g class="row row-after">
+        <text x="4" y="103" class="name">{T.afterLbl}</text>
+        <line x1="150" x2="570" y1="98" y2="98" />
+        <g class="node"><circle cx="160" cy="98" r="17" /><text x="160" y="103">1</text></g>
+        <g class="node replaced"><circle cx="360" cy="98" r="18" /><text x="360" y="103">12</text></g>
+        <g class="node"><circle cx="560" cy="98" r="17" /><text x="560" y="103">7</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="raw-bar"><b>{T.rawLbl}</b><span>{T.rawTxt}</span></div>
+  <figcaption>{T.cap}</figcaption>
 </figure>
 <style>
-  .surface svg { display: block; }
+  .surface { margin: 1.8em 0; }
+  .sf-bar { display: flex; flex-wrap: wrap; gap: 0 22px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+  .sf-tab { position: relative; cursor: pointer; padding: 8px 2px 9px; color: var(--mute); font: 400 13.5px/1.4 var(--sans); transition: color .18s ease; }
+  .sf-tab::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--plat); transform: scaleX(0); transform-origin: center; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+  .sf-tab:hover { color: var(--fg-2); }
+  .sf-tab input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .sf-tab:has(:checked) { color: var(--fg); font-weight: 500; }
+  .sf-tab:has(:checked)::after { transform: scaleX(1); }
+
+  .surface svg { width: 100%; height: auto; display: block; }
+  .row { transition: opacity .24s ease; }
   line { stroke: var(--line); stroke-width: 2; }
   .name { fill: var(--mute); font: 13px var(--sans); }
-  circle { fill: var(--bg); stroke: var(--line); stroke-width: 1.6; }
-  .selected circle { fill: var(--card); stroke: var(--plat-ink); }
+  .span-box { fill: var(--plat-soft); stroke: var(--plat); stroke-width: 1.2; stroke-dasharray: 4 3; }
+  circle { fill: var(--bg); stroke: var(--line); stroke-width: 1.6; transition: stroke .2s, fill .2s; }
+  .shadowed circle { fill: var(--card); stroke: var(--plat); }
+  .replaced circle { fill: var(--plat-soft); stroke: var(--plat); stroke-width: 2; }
   .node text { text-anchor: middle; fill: var(--fg); font: 13px var(--mono); }
+
+  .surface:has([value="before"]:checked) .row-after { opacity: 0.32; }
+  .surface:has([value="after"]:checked)  .row-before { opacity: 0.42; }
+
+  .raw-bar { display: flex; align-items: baseline; gap: 12px; margin-top: 6px; padding: 8px 12px; border: 1px solid var(--line); border-left: 2.5px solid var(--plat); border-radius: 6px; background: var(--card); font-size: 13px; color: var(--fg-2); }
+  .raw-bar b { color: var(--fg); font: 600 12px var(--mono); white-space: nowrap; }
+  .surface figcaption { margin-top: 8px; }
 </style>

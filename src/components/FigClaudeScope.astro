@@ -1,53 +1,131 @@
 ---
-interface Props { lang?: 'zh' | 'en' }
-const en = Astro.props.lang === 'en';
-const text = en ? {
-  legend: 'Change the linked worktree’s skill directory', index: 'Memory index', skills: 'Skill catalog',
-  opts: ['Absent', 'Empty', 'Own skill'], states: [
-    ['DESC_RELEASE', 'Falls back to the main checkout.'],
-    ['—', 'The directory exists. Fallback stops, even with no local entries.'],
-    ['DESC_SIDE', 'Only the linked checkout’s test skill appears.'],
-  ], cap: 'Three fresh processes, one linked checkout. The prompt and CLI configuration were identical.'
+// 图 4：linked worktree 技能目录的三种状态对比（极简下划线 Tab 交互）
+interface Props { lang?: 'zh' | 'en'; }
+const { lang = 'zh' } = Astro.props;
+const uid = `cc-scope-${lang}`;
+
+const text = lang === 'en' ? {
+  index: 'Startup memory index',
+  skills: 'Skill catalog descriptions',
+  tabs: [
+    { id: '0', label: 'No .claude/skills/' },
+    { id: '1', label: 'Empty .claude/skills/' },
+    { id: '2', label: 'Has own skill' },
+  ],
+  states: [
+    { marker: 'DESC_RELEASE', status: 'ok', tip: 'Directory absent → falls back to the main checkout and lists its skills.' },
+    { marker: '—', status: 'cut', tip: 'Directory exists. Even completely empty, it cuts off fallback to the main checkout.' },
+    { marker: 'DESC_SIDE', status: 'local', tip: 'Lists only the linked worktree’s own skill; main-checkout skills stay hidden.' },
+  ],
+  cap: 'Figure 4. Three fresh processes in the same linked worktree with identical prompt and CLI config; only .claude/skills/ changes.',
 } : {
-  legend: '改变 linked worktree 的技能目录', index: '启动时的记忆索引', skills: '技能目录中的简介',
-  opts: ['目录缺席', '空目录', '有自己的 Skill'], states: [
-    ['DESC_RELEASE', '回退到主 checkout，列出那里的技能。'],
-    ['—', '本地目录已存在。即使里面空无一物，回退也已停用。'],
-    ['DESC_SIDE', '只列出 linked checkout 自己的测试技能。'],
-  ], cap: '同一个 linked checkout，三个新进程。每次的提示词和 CLI 配置相同。'
+  index: '启动时的记忆索引',
+  skills: 'Skill 清单里的简介',
+  tabs: [
+    { id: '0', label: '目录缺席' },
+    { id: '1', label: '空目录' },
+    { id: '2', label: '有自己的 Skill' },
+  ],
+  states: [
+    { marker: 'DESC_RELEASE', status: 'ok', tip: '本 worktree 没有技能目录，回退到主 checkout，列出主仓的技能。' },
+    { marker: '—', status: 'cut', tip: '本地 .claude/skills/ 已存在——哪怕里面空无一物，回退也立刻停用。' },
+    { marker: 'DESC_SIDE', status: 'local', tip: '只列出 linked worktree 自己的测试技能，主仓技能不再出现。' },
+  ],
+  cap: '图 4　同一个 linked worktree 里启动三个新进程，提示词与配置完全一致，只改变它的 .claude/skills/ 目录。',
 };
 ---
-<figure class="checkout-scope" lang={en ? 'en' : 'zh-CN'}>
-  <fieldset>
-    <legend>{text.legend}</legend>
-    <div class="choices">
-      {text.opts.map((label, n) => <label><input type="radio" name={`cc-skill-root-${en ? 'en' : 'zh'}`} value={n} checked={n === 0} /><span>{label}</span></label>)}
+
+<figure class="fig cc-scope" id={uid} data-sel="0" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="cc-tabs" role="tablist">
+    {text.tabs.map((tab, i) => (
+      <button
+        type="button"
+        role="tab"
+        class="cc-tab"
+        data-sel-btn={tab.id}
+        aria-selected={i === 0 ? 'true' : 'false'}
+      >{tab.label}</button>
+    ))}
+  </div>
+
+  <div class="comparison">
+    <div class="measure">
+      <span class="m-k">{text.index}</span>
+      <code class="m-v steady">INDEX_AFTER</code>
+      <p class="m-p">{lang === 'en' ? 'Shared across worktrees of the same repo.' : '同仓库所有 worktree 始终指向同一本机记忆目录。'}</p>
     </div>
-    <div class="comparison">
-      <div class="measure"><span>{text.index}</span><strong>INDEX_AFTER</strong></div>
-      <div class="measure"><span>{text.skills}</span>
-        {text.states.map(([marker, tip], n) => <div class={`state state-${n}`}><strong>{marker}</strong><p>{tip}</p></div>)}
-      </div>
+    <div class="measure">
+      <span class="m-k">{text.skills}</span>
+      {text.states.map((s, n) => (
+        <div class={`state state-${n}`}>
+          <code class={`m-v ${s.status}`}>{s.marker}</code>
+          <p class="m-p">{s.tip}</p>
+        </div>
+      ))}
     </div>
-  </fieldset>
+  </div>
   <figcaption>{text.cap}</figcaption>
 </figure>
+
+<script define:vars={{ uid }}>
+  (() => {
+    const root = document.getElementById(uid);
+    if (!root) return;
+    const btns = [...root.querySelectorAll('[data-sel-btn]')];
+    const apply = (id) => {
+      root.dataset.sel = id;
+      btns.forEach((b) => b.setAttribute('aria-selected', b.dataset.selBtn === id ? 'true' : 'false'));
+    };
+    btns.forEach((b) => {
+      b.addEventListener('click', () => apply(b.dataset.selBtn));
+      b.addEventListener('mouseenter', () => apply(b.dataset.selBtn));
+    });
+  })();
+</script>
+
 <style>
-  .checkout-scope fieldset { margin: 0; border: 0; padding: 0; min-width: 0; }
-  .checkout-scope legend { font: 550 1.22rem/1.45 var(--serif); padding: 0; color: var(--fg); }
-  .choices { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin: .7rem 0 .8rem; }
-  .choices label { font: 500 .86rem/1.6 var(--sans); cursor: pointer; display: inline-flex; align-items: center; gap: .32rem; }
-  .choices input { margin: 0; accent-color: var(--fg); }
-  .comparison { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); border-block: 1px solid var(--line); padding: .9rem 0; gap: .8rem; }
-  .measure > span { display: block; color: var(--mute); font: .77rem/1.4 var(--sans); margin-bottom: .45rem; }
-  .measure strong { color: var(--fg); font: 500 .86rem/1.5 var(--mono); padding: .1rem .3rem; background: var(--plat-soft); }
-  .measure p { margin: .4rem 0 0; color: var(--fg-2); font: .84rem/1.6 var(--sans); }
+  .cc-scope { margin: 1.6em 0 2em; }
+  .cc-scope .cc-tabs {
+    display: flex; flex-wrap: wrap; gap: 0 22px;
+    border-bottom: 1px solid var(--line); margin-bottom: 14px;
+  }
+  .cc-scope .cc-tab {
+    position: relative; background: none; border: 0; padding: 8px 2px 10px;
+    font: 500 13.5px/1.3 var(--sans); color: var(--mute); cursor: pointer;
+    transition: color .2s ease;
+  }
+  .cc-scope .cc-tab:hover { color: var(--fg); }
+  .cc-scope .cc-tab[aria-selected="true"] { color: var(--fg); font-weight: 600; }
+  .cc-scope .cc-tab::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: var(--plat); transform: scaleX(0); transform-origin: left center;
+    transition: transform .24s cubic-bezier(.22,1,.36,1);
+  }
+  .cc-scope .cc-tab[aria-selected="true"]::after { transform: scaleX(1); }
+
+  .comparison {
+    display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+    gap: 12px;
+  }
+  .measure {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 13px 15px;
+  }
+  .m-k { display: block; color: var(--mute); font: 600 12px/1.4 var(--sans); margin-bottom: 8px; }
+  .m-v {
+    display: inline-block; font: 500 13px/1.5 var(--mono);
+    padding: 3px 8px; border-radius: 6px; color: var(--fg); background: var(--plat-soft);
+  }
+  .m-v.cut { background: var(--code); color: var(--mute); border: 1px dashed var(--mute); }
+  .m-p { margin: 8px 0 0 !important; color: var(--fg-2); font: 13px/1.6 var(--sans); }
+
   .state { display: none; }
-  fieldset:has(input[value="0"]:checked) .state-0,
-  fieldset:has(input[value="1"]:checked) .state-1,
-  fieldset:has(input[value="2"]:checked) .state-2 { display: block; }
-  @media print {
-    .choices { display: none; }
-    .state { display: block; margin-bottom: .5em; }
+  .cc-scope[data-sel="0"] .state-0,
+  .cc-scope[data-sel="1"] .state-1,
+  .cc-scope[data-sel="2"] .state-2 { display: block; }
+  .cc-scope figcaption { margin-top: 8px; }
+
+  @media (max-width: 600px) {
+    .comparison { grid-template-columns: 1fr; }
   }
 </style>

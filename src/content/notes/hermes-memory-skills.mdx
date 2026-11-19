@@ -5,10 +5,13 @@ dek: "三类存储、三条写入路径，以及把它们串在一起的一条�
 summary: "Hermes 的记忆、会话历史和 Skill 分别怎样存储、由谁写入、什么时候被读到。"
 summaryEn: "How Hermes stores its memory, session history and skills, who writes to them, and when they are read."
 date: "2026-11-16"
-updated: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent 工程"
 status: "published"
 pinned: "hermes-agent @ bf0203a"
+tags:
+  - 记忆
+  - Skill
 ---
 import Src from '../../components/Src.astro';
 import CodeTr from '../../components/CodeTr.astro';
@@ -18,7 +21,7 @@ import FigReview from '../../components/FigReview.astro';
 import FigCurator from '../../components/FigCurator.astro';
 import Journey from '../../components/Journey.astro';
 
-**一句话结论：** Hermes 把「学到的东西」分进三类存储：两个很小、每轮都注入的 Markdown 文件，一个可按需检索的会话历史库，一组按需加载的 Skill。前台模型可以自己写，回合结束后满足条件时可触发后台复盘，受管 Skill 则由 curator 定期维护。这套设计里大部分看似别扭的地方，都能用同一条约束解释：**不要弄脏 system prompt 的前缀缓存。**
+**一句话结论：** Hermes 把经验拆进「每轮注入的极小记忆文件、按需检索的会话历史库、按需加载的 Skill」三类存储，靠前台写入、后台复盘与 curator 归档串起演进，而整套设计最核心的约束只有一条：**不要弄脏 system prompt 的前缀缓存。**
 
 读完这篇，你应该能回答五个问题：
 
@@ -321,7 +324,7 @@ if _should_review_skills:
 </div>
 </CodeTr>
 
-这里的不对称在于判断时机。**`skill_manage` 被调用后，后续模型请求在同一回合内继续计数。**例如默认阈值是 10，调用后又走满 10 次请求，收尾时仍可触发 Skill 复盘。记忆复盘如果已在回合开头达到阈值，本轮之后调用 `memory` 清零计数也不会撤销这个决定。 <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
+这里的不对称在于判断时机。**`skill_manage` 被调用后，后续模型请求在同一回合内继续计数**。例如默认阈值是 10，调用后又走满 10 次请求，收尾时仍可触发 Skill 复盘。记忆复盘如果已在回合开头达到阈值，本轮之后调用 `memory` 清零计数也不会撤销这个决定。 <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
 
 最终是否启动还要满足：有最终答复、回合没被中断、宿主没有要求跳过。复盘在**答复送出之后**才运行，注释的说法是不与用户的任务竞争；对 cron 这类没人在场的场景直接跳过，因为一次 fork 大约要花 3 万 token。<Src p="agent/turn_finalizer.py" l="778-792" /> 总开关是 `auxiliary.background_review.enabled`。<Src p="agent/background_review.py" l="185-250" />
 
@@ -527,6 +530,10 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 
 ## 附录
 
+<details>
+<summary>展开看：配置速查表与源码核对命令（commit `bf0203a`）</summary>
+<div class="d-body">
+
 ### 配置速查
 
 | 配置项 | 默认值 | 作用 | 出处 |
@@ -553,6 +560,9 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 ```bash title="取出固定提交里的一段源码"
 git show bf0203a794a07aac3ff764972ab9087baa4e4f4e:agent/curator.py | sed -n '248,260p'
 ```
+
+</div>
+</details>
 
 ### 同系列的五个对照实验
 

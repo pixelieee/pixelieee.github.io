@@ -1,94 +1,169 @@
 ---
-title: "What OpenCode remembers: project rules, compaction and skills"
-dek: "The full skill result survives in SQLite. The summarizer receives only its first 2,000 code units."
-summary: "Trace rules, skill permissions and compaction through the release binary. Compare the original result, summary input, persisted records and the first request after restart."
+title: "OpenCode's Memory Boundaries: Live Rules, Cached Skills, and a 2,000-Char Compaction Cut"
+dek: "The mirror image of Pi: AGENTS.md reloads from disk on every turn while SKILL.md bodies stay cached in process memory until restart; SQLite keeps raw tool outputs, yet the summarizer receives only the first 2,000 UTF-16 code units."
+summary: "Trace OpenCode v1.18.33 rules, SQLite compaction and skill permissions: why rules reload live while skills stay cached until restart, why duplicate skill names race, and why compaction slices tool outputs at 2,000 UTF-16 code units."
 date: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent engineering"
 status: "published"
 pinned: "opencode v1.18.33 @ 51ef4be"
+tags:
+  - Memory
+  - Skills
 ---
 import Src from '../../components/Src.astro';
 import Infer from '../../components/Infer.astro';
-import FigOpenCodeMemory from '../../components/FigOpenCodeMemory.astro';
+import FigOpenCodeArch from '../../components/FigOpenCodeArch.astro';
 import FigOpenCodeCheckpoint from '../../components/FigOpenCodeCheckpoint.astro';
+import FigOpenCodeMemory from '../../components/FigOpenCodeMemory.astro';
 
 export const source = { repo: 'anomalyco/opencode', rev: '51ef4be1d3c122f18fefb510dca8d778571f4f18' };
 
-OpenCode sent a release procedure to the model in full. When I compacted the session, the summarizer received only the **first 2,000 UTF-16 code units** of that tool result. I stopped the process and resumed the same session. The procedure’s end marker had disappeared from the request, yet a read-only SQLite query still found it in the original tool record. The answer to “does it remember?” depends on **which representation the next reader opens**.
+**The one-sentence version:** OpenCode has no unified built-in memory store, and its refresh cadence is the exact inverse of Pi's—`AGENTS.md` re-reads from disk every turn, `SKILL.md` bodies stay cached in process memory until restart, SQLite preserves raw tool records, and compaction slices tool outputs to 2,000 UTF-16 code units before summarizing. <Src {...source} p="packages/opencode/src/session/prompt.ts" l="1255-1285" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="50-79" />
 
-This note pins **v1.18.33** and follows both `opencode run` and `opencode serve`. The release binary handled ordinary requests, tool execution, SQLite writes, manual compaction and restart. A loopback HTTP service issued scripted tool calls and a fixed summary. Capturing its inputs lets us locate information lost *before* the summarizer gets a turn. [Pinned release](https://github.com/anomalyco/opencode/tree/51ef4be1d3c122f18fefb510dca8d778571f4f18)
+By the end, four things should be clear:
 
-## Three paths into the next request
+1. Edit `AGENTS.md` and `SKILL.md` mid-session: why does the next turn carry the **new rule** while `skill` still returns the **old body**?
+2. After a full skill call goes through compaction and restart, why does its tail vanish from the request while still sitting intact in SQLite?
+3. Why do two directories with the same skill name produce different winners across 8 cold starts—and mix both sources in one resumed request?
+4. When a skill exists on disk yet fails to load, which of **three separate gates** (discovery, catalog visibility, runtime permission) stopped it?
 
-| Information to retain | Who writes it | How it reaches a future request |
-| --- | --- | --- |
-| “This repository uses pnpm” | A maintainer, an authorized file edit, or an explicit `/init` run | The instruction loader reads matching files into the system prompt |
-| “Which command did we try?” | The runtime records messages and their parts | Continuing the session reconstructs its history, possibly with a summary in place of older turns |
-| “How to verify a release” | A skill author writes a `SKILL.md` file | The agent gets a catalog first. A permitted `skill` call returns the procedure |
+This note pins **v1.18.33** (`51ef4be`), exercising the release `opencode run` and `opencode serve` binaries against a local loopback HTTP provider.
 
-All three paths meet in the prompt loop. It reads the compacted view of one session, then builds the skill catalog, environment, instructions and model messages separately. Rules and skill metadata enter `system`. The reconstructed history enters `messages`. Deleting a session, editing a rule and replacing a skill therefore affect different inputs. <Src {...source} p="packages/opencode/src/session/prompt.ts" l="1089-1099" /> <Src {...source} p="packages/opencode/src/session/prompt.ts" l="1255-1285" />
+## One map: the mirror image of Pi
 
-## When a project rule takes effect
+Before each request, OpenCode's prompt loop combines three sources: fresh instructions and a permission-filtered skill catalog enter `system`, while SQLite history filtered by prune flags and compaction boundaries enters `messages`. <Src {...source} p="packages/opencode/src/session/prompt.ts" l="1089-1099" /> <Src {...source} p="packages/opencode/src/session/prompt.ts" l="1255-1285" />
 
-The global search starts with `AGENTS.md` in the config directory, with `~/.claude/CLAUDE.md` as a compatibility fallback. The project search tries `AGENTS.md`, the compatible `CLAUDE.md`, then the deprecated `CONTEXT.md`. The `break` in this search exits **the loop over filenames**. For the chosen filename, `findUp` gathers matches from the working directory up to the worktree root. Starting in a subdirectory can therefore select both its `AGENTS.md` and the root's. Once the project search has found that filename, it skips the `CLAUDE.md` pass. A global rule and a project rule may both apply. <Src {...source} p="packages/opencode/src/session/instruction.ts" l="60-68" /> <Src {...source} p="packages/opencode/src/session/instruction.ts" l="110-150" /> <Src {...source} p="packages/core/src/fs-util.ts" l="154-166" /> <Src {...source} p="packages/opencode/test/session/instruction.test.ts" l="213-229" />
+<FigOpenCodeArch lang="en" />
 
-A root-level session need not start with every nested package's rules. When the `read` tool opens a source file, a second lookup walks upward from that file. It skips instruction files already in the system set, already attached in the history, or already claimed by this assistant message. This explains why opening a package file can introduce a convention halfway through a conversation. Configuration can also add explicit files, globs and URLs through `instructions`. <Src {...source} p="packages/opencode/src/tool/read.ts" l="294-314" /> <Src {...source} p="packages/opencode/src/session/instruction.ts" l="179-220" /> <Src {...source} p="packages/opencode/test/session/instruction.test.ts" l="115-143" /> <Src {...source} p="packages/web/src/content/docs/rules.mdx" l="109-131" />
+| Channel | Where it lives | When disk is read | When edits take effect |
+|---|---|---|---|
+| **Project rules** (`AGENTS.md`) | Global config dir, repo ancestors, `read`-triggered subdirs | **Re-read on every ordinary request** | Next turn right after saving |
+| **Skills** (`SKILL.md`) | Process-local registry (including body `content`) | **Parsed once at process startup** | Only after restarting the process/server |
+| **Session history** (SQLite) | `session` / `message` / `part` tables | Queried by `session_id` and filtered per turn | Raw text stays in SQLite; model sees summary + kept tail |
 
-## Fresh sessions, resumed sessions and compaction
+Placed next to [Pi](/notes/pi-memory-skills/), the contrast is unmistakable: **Pi caches rules and reads skill bodies fresh; OpenCode reads rules fresh and caches skill bodies.**
 
-A session row records its project, working directory and optional parent. Messages belong to a session through `session_id`; their parts, including tool calls and results, additionally reference the message. Event projectors write the rows. The CLI can select a specific session, continue the most recent top-level session or create a new one. Loading messages filters the database query by **one session ID**. A fresh run in the same checkout can read the same project rules while starting with a different message history. <Src {...source} p="packages/core/src/session/sql.ts" l="22-36" /> <Src {...source} p="packages/core/src/session/sql.ts" l="68-98" /> <Src {...source} p="packages/core/src/session/projector.ts" l="260-279" /> <Src {...source} p="packages/core/src/session/projector.ts" l="308-329" /> <Src {...source} p="packages/opencode/src/cli/cmd/run.ts" l="452-528" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="433-448" />
+## Project rules: live every turn, with `read` attaching nested packages
 
-OpenCode has two ways to shorten a long input. **Session compaction** can start automatically from the model limits and the last reply’s token usage, or from an explicit request against a session. A compaction agent receives the selected older material and returns a summary. When it keeps recent original messages, the record carries a `tail_start_id` pointing at the first one. That boundary and a successful summary govern which history a later request sees. <Src {...source} p="packages/opencode/src/session/overflow.ts" l="8-34" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="358-405" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="525-575" />
+OpenCode loads global and project rules with two subtle behaviors:
 
-**Pruning old tool results takes a different path.** The backward scan skips recent turns and protects the `skill` tool. It retains roughly 40,000 estimated tool-output tokens, then checks whether the eligible older outputs exceed a 20,000-token minimum. If so, it sets `state.time.compacted`. The converter emits `[Old tool result content cleared]` when it sees the timestamp. That placeholder alone tells you nothing about the original string having been erased from SQLite. Likewise, protecting `skill` here does not exempt an entire conversation from subsequent summarization. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="28-33" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="271-315" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="290-302" />
+- **First matching filename wins the loop, yet collects every match up the tree.** Global search checks config `AGENTS.md` (fallback `~/.claude/CLAUDE.md`). Project search tries `AGENTS.md`, then `CLAUDE.md`, then deprecated `CONTEXT.md`. Finding any `AGENTS.md` between `cwd` and the worktree root gathers **all `AGENTS.md` files along that path** and breaks out before checking `CLAUDE.md`. <Src {...source} p="packages/opencode/src/session/instruction.ts" l="60-68" /> <Src {...source} p="packages/opencode/src/session/instruction.ts" l="110-150" /> <Src {...source} p="packages/core/src/fs-util.ts" l="154-166" />
+- **Opening a nested file with `read` pulls in nearby rules dynamically.** Starting at the repo root does not preload deep package rules; when `read` opens a source file inside a package, it walks upward and attaches any unattached instruction file (skipping those already in `system`, history, or claimed by the current assistant message). Config `instructions` can also add explicit paths, globs or URLs. <Src {...source} p="packages/opencode/src/tool/read.ts" l="294-314" /> <Src {...source} p="packages/opencode/src/session/instruction.ts" l="179-220" /> <Src {...source} p="packages/web/src/content/docs/rules.mdx" l="109-131" />
 
-## Experiment: one skill call, one checkpoint, one restart
+Because instructions reload per request while skill bodies sit cached in `info.content`, editing both `AGENTS.md` and a unique `revision` skill mid-session yields a clean split:
 
-I created a `release/SKILL.md` in a temporary Git repository. The body held two markers, `HEAD_CHECKPOINT_PROBE` and `TAIL_CHECKPOINT_PROBE`, separated by 2,500 ASCII `x` characters. On `TURN_OLD` the normal agent called `skill("release")`. The next turn, `TURN_KEEP`, received an ordinary `OK`. I disabled automatic compaction, set `tail_turns: 1`, invoked the public `POST /session/{id}/summarize` endpoint, then stopped the server and resumed the same session in a new process using the same data directory. The manual endpoint records a compaction request and runs the ordinary session loop. <Src {...source} p="packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts" l="273-292" />
+```text title="Same session calling unique skill revision · system rule / newly returned skill"
+Before editing, running service                 V1 / V1
+Both files edited to V2, called again           V2 / V1
+Restart server, resume same session ID          V2 / V2
+```
+<Src {...source} p="packages/opencode/src/session/instruction.ts" l="155-168" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="273-299" /> <Src {...source} p="packages/opencode/src/tool/skill.ts" l="45-54" />
 
-<FigOpenCodeCheckpoint lang="en" />
+## SQLite & compaction: raw text stays, yet compaction slices at 2,000 chars
 
-### What reached the summarizer
+Sessions persist across three SQLite tables (`session`, `message`, `part`); fresh runs in the same directory share zero history unless resumed by `--session` or continuing the latest top-level session. <Src {...source} p="packages/core/src/session/sql.ts" l="22-36" /> <Src {...source} p="packages/core/src/session/sql.ts" l="68-98" /> <Src {...source} p="packages/opencode/src/cli/cmd/run.ts" l="452-528" />
 
-The first tool message contained both markers. The summarizer’s input still had the head marker, had lost the tail marker, and included a literal `[truncated]`. I compared the serialized string against `part.data.state.output` in SQLite. **The 2,000 positions before the truncation notice matched the beginning of the stored result exactly.** The count includes the opening `<skill_content>` wrapper. The tail marker began at offset 2,574, counting from zero. The full output in this run was 2,894 characters, including a temporary path whose length varies by machine.
+OpenCode shortens long sessions through two distinct mechanisms, **neither of which erases SQLite**:
 
-```ts title="packages/opencode/src/session/compaction.ts · 76–79"
+1. **Tool output pruning (`prune`)—protects `skill`, stamps a timestamp only.** Walking backward from newest to oldest, it protects ~**40,000** estimated tool-output tokens and skips `skill`; when older prunable outputs exceed **20,000** tokens, it writes `state.time.compacted`. The message converter renders `[Old tool result content cleared]` without deleting the original string from SQLite. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="28-33" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="271-315" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="290-302" />
+2. **Session compaction (`compaction`)—does not exempt `skill`, hard-slices at 2,000 UTF-16 code units.** Triggered automatically on overflow or manually via `POST /session/{id}/summarize`, it serializes older history for a compaction agent and stores `tail_start_id` for kept recent turns. Every completed tool output passes through `truncate()`:
+
+```ts title="packages/opencode/src/session/compaction.ts · 51–52, 76–79"
+const truncate = (value: string) =>
+  value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
+
 const output = part.state.time.compacted
   ? "[Old tool result content cleared]"
   : truncate([part.state.output, ...attachments].join("\n"))
 return [call, `[Tool result]: ${output}`]
 ```
-<Src {...source} p="packages/opencode/src/session/compaction.ts" l="50-79" />
+<Src {...source} p="packages/opencode/src/session/compaction.ts" l="50-85" />
 
-This branch renders an older tool result as text for the summarizer. It handles `skill` like other completed calls. A result already marked by pruning becomes a placeholder. Otherwise the serializer appends attachment labels and takes the first 2,000 **UTF-16 code units** of the JavaScript string. That character cap is separate from the model’s token budget. The ordinary agent received the whole procedure. The summarizer never received the last instruction, so a summary-quality evaluation alone could not explain its disappearance. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="28-33" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="50-85" />
+Testing the release binary with a `release` skill carrying `HEAD_CHECKPOINT_PROBE` and `TAIL_CHECKPOINT_PROBE` (2,500 `x` fillers between them), manual compaction (`tail_turns: 1`), and process restart separates all three views cleanly:
 
-### How one ID retained the latest turn
+<FigOpenCodeCheckpoint lang="en" />
 
-In SQLite, the compaction part’s `tail_start_id` matched the message ID for `TURN_KEEP` exactly. The summary was a separate assistant message. Below is the full sequence captured after restart, excluding the system message. The first line renders the compaction request. The third line is the retained user input. <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="525-575" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="227-238" />
+- **Ordinary call**: receives all 2,894 characters with both markers intact;
+- **Compaction input**: hard-cut at 2,000 UTF-16 code units from `<skill_content>` onward (`[truncated]`); `TAIL` at offset 2,574 **never reaches the summarizer**;
+- **Resumed request**: sends `What did we do so far?` → `STUB_CHECKPOINT` → `TURN_KEEP` (via `tail_start_id`) → `OK` → `TURN_RESTART`; the old tool turn is gone;
+- **Raw SQLite query** (`part.data.state.output`): both `HEAD` (pos 50) and `TAIL` (pos 2,575) remain untouched. <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="525-575" />
 
-```text title="First request after restart · message order"
-user       What did we do so far?
-assistant  STUB_CHECKPOINT
-user       TURN_KEEP
-assistant  OK
-user       TURN_RESTART
+Two sharp compaction edge cases:
+- **When the entire history fits inside `preserve_recent_tokens`, manual compaction keeps zero verbatim tail.** Default `preserve_recent_tokens` is 1/4 of usable input budget (clamped to 2,000–15,000 tokens); when candidate cut index hits 0, the selector summarizes everything with no retained boundary. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="115-161" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="223-268" />
+- **Failed summaries do not cut history.** Only a completed, error-free summary stops the reverse scan; a stored `summary: true` message that errored on overflow is skipped on reload. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="358-391" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="525-546" />
+
+## Three gates for skills—plus an unbounded concurrency race
+
+When a skill on disk doesn't fire, separate three independent gates:
+
+1. **Discovery (startup scan + body cached)**: scans user/project `.claude/skills`, `.agents/skills`, OpenCode `skill/` or `skills/`, `skills.paths` and `skills.urls` (registering built-in `customize-opencode` first so disk files can override it). Frontmatter **and body `content`** are stored in the instance registry; a missing `description` does *not* reject the file. <Src {...source} p="packages/opencode/src/skill/index.ts" l="105-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="258-285" />
+2. **Catalog visibility (`<available_skills>` lives in `system`, not the tool description)**: `Skill.available(agent)` drops `deny` rules and omits entries without a description (`ask` stays listed). The formatted catalog enters the **`system` message**, while the `skill` tool description merely points there. <Src {...source} p="packages/opencode/src/skill/index.ts" l="310-337" /> <Src {...source} p="packages/opencode/src/session/system.ts" l="107-118" /> <Src {...source} p="packages/opencode/src/tool/skill.txt" l="1-5" />
+3. **Runtime approval (`ctx.ask`)**: execution resolves the cached record, checks the last matching permission rule, and returns `info.content`, base dir, and **at most 10** auxiliary file paths (listed only—never executed or read). <Src {...source} p="packages/opencode/src/tool/skill.ts" l="21-65" /> <Src {...source} p="packages/opencode/src/permission/index.ts" l="67-101" />
+
+Observed behavior for the same `release` skill under three policies:
+
+| Policy | Listed in `system` catalog? | Result of `skill("release")` |
+|---|---|---|
+| `allow` (ordinary agent) | Yes | Returns full body and sampled file list |
+| `deny` (`reviewer`) | No | `skill` tool stays in schema; named call returns a permission error with no body |
+| `ask` (`approver`) | Yes | Emits a pending approval; replying `once` unlocks only that call (next call gets a new ID) |
+
+### Why duplicate skill names win at random
+
+After collecting all matching paths, `loadSkills` parses them with **unbounded concurrency** and assigns directly to `state.skills[md.data.name]`—**last finisher overwrites earlier ones**:
+
+```ts title="packages/opencode/src/skill/index.ts · 240–243"
+yield* Effect.forEach(discovered.matches, (match) => add(state, match, events), {
+  concurrency: "unbounded",
+  discard: true,
+})
 ```
+<Src {...source} p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="235-245" />
 
-The stub returned the fixed string `STUB_CHECKPOINT` to identify the summary's position. A raw database read still found both markers in the old tool part after restarting. The resumed request contained no tool message. A permitted new `skill` call could load the current definition. The old execution record, the current procedure and the material actually sent on this request have separate histories.
+Across 8 cold starts of `opencode debug skill` on Windows with two `probe` files, **`BODY_EXTRA_MARKER` won 7 times and `BODY_REPO_MARKER` won once** (and 8/8 in a separate isolated run). Directory scan order does not establish precedence—and when resuming a session in a new process, the retained `tool` message and rebuilt `system` catalog can point to **two different files inside one request**:
 
-To choose the cut, `tail_turns` limits the number of recent turns considered. `preserve_recent_tokens` limits their size. Its default is one quarter of the usable input budget, rounded down and clamped between 2,000 and 15,000 tokens. The selector starts at the newest turn. When a whole turn will not fit, it tests a suffix starting at a later message within that turn. One surprising case is when the entire history would fit. Its candidate boundary is zero, so the implementation selects **the entire history for summarization with no retained boundary**. Spare context alone cannot tell you which original messages a manual compaction will preserve. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="115-161" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="223-268" /> <Src {...source} p="packages/opencode/test/session/compaction.test.ts" l="992-1048" /> <Src {...source} p="packages/opencode/test/session/compaction.test.ts" l="1055-1097" />
+<FigOpenCodeMemory lang="en" />
 
-On reload, a finished, error-free summary can stop the reverse scan at its corresponding compaction request. If the summarization call itself overflows, the processor records an error and stops. A stored assistant message with `summary: true` is therefore insufficient evidence of a successful cut. Subsequent compactions receive the most recent successful summary alongside newly selected older history. A fact already in the summary can travel forward this way. A step absent from the summarizer’s own input needs another surviving source. <Src {...source} p="packages/opencode/src/session/compaction.ts" l="97-112" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="358-391" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="450-465" /> <Src {...source} p="packages/opencode/src/session/message-v2.ts" l="525-546" /> <Src {...source} p="packages/opencode/test/session/compaction.test.ts" l="1426-1473" />
+## What actually outlives a session
 
-### Reproduce the trace
+OpenCode has no post-turn review loop rewriting `SKILL.md`. Cross-session persistence runs through three explicit paths:
 
-Download the script and run it with Python 3.10+, Git and OpenCode 1.18.33 on your path. An optional final argument accepts the full path to the executable. The script prints a new temporary directory and leaves the captured `requests.json` and SQLite database there. The provider runs on loopback without a model key. The same script exercises the `deny` and `ask` cases below. [Download the experiment](/experiments/opencode-checkpoint.py)
+1. **Writing to discoverable files**: `/init` guides the agent to create/update root `AGENTS.md`, and authorized editing tools can save verified procedures into `SKILL.md`. <Src {...source} p="packages/opencode/src/command/template/initialize.txt" l="33-66" /> <Src {...source} p="packages/opencode/src/tool/registry.ts" l="211-246" />
+2. **Model-specific prompt workflow (not a default memory store)**: certain model names select `PROMPT_BEAST`, telling the model to write `.github/instructions/memory.instruction.md`—but the default instruction loader never lists that filename. <Src {...source} p="packages/opencode/src/session/llm/request.ts" l="53-67" /> <Src {...source} p="packages/opencode/src/session/prompt/beast.txt" l="114-134" />
+3. **Plugin hook**: `experimental.session.compacting` lets plugins inject extra context or replace the compaction prompt; long-term persistence and skill evolution belong to the plugin. <Src {...source} p="packages/plugin/src/index.ts" l="291-316" /> <Src {...source} p="packages/web/src/content/docs/plugins.mdx" l="350-389" />
+
+## Gotchas & where docs disagree with code
+
+### Four practical gotchas
+
+<Infer lang="en" /> Engineering judgment based on the code and traces above:
+
+1. **Seeing a new rule does not mean your edited skill reloaded**: `AGENTS.md` reloads every turn while skill bodies stay cached until restart (`V2 / V1`).
+2. **Long skills lose their tail before summarization**: `prune` protects `skill`, but compaction hard-cuts tool outputs at 2,000 UTF-16 code units including `<skill_content>` wrappers.
+3. **Never rely on directory precedence for duplicate skill names**: unbounded concurrent parsing lets the last finisher win, causing cross-restart mismatches.
+4. **Manual compaction on a short session can drop all verbatim tail**: when all history fits in `preserve_recent_tokens`, the cut index hits 0 and sets no `tail_start_id`.
+
+### Where official docs and code disagree
+
+| Topic | Official docs | Code & observed behavior |
+|---|---|---|
+| Where `<available_skills>` lives | guide describes the catalog as part of the `skill` tool description <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="103-124" /> | rendered inside the **`system` message**; the tool description merely points there <Src {...source} p="packages/opencode/src/session/system.ts" l="107-118" /> <Src {...source} p="packages/opencode/src/tool/skill.txt" l="1-5" /> |
+| Missing `description` | guide requires a description <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="35-44" /> | parser still accepts the file (visible in `debug skill`), and catalog formatting simply hides it <Src {...source} p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="310-337" /> |
+
+<details>
+<summary>Expand: reproduction scripts (checkpoint / collision race) & SQLite verification query</summary>
+<div class="d-body">
+
+Requires Python 3.10+, Git, and OpenCode `v1.18.33`. Both scripts run against a local loopback provider (no API key needed) and preserve raw `requests.json` plus the SQLite database:
+
+- **Compaction cut, restart & `allow`/`deny`/`ask` permissions**: [Download opencode-checkpoint.py](/experiments/opencode-checkpoint.py)
 
 ```sh title="Run locally"
 python opencode-checkpoint.py
 ```
 
-To inspect the archived result independently, bind `:session_id` to the compacted session ID printed by the script. SQLite positions start at 1. This run returned `50` and `2575`.
+Bind `:session_id` to inspect the untouched raw tool record in SQLite (returned `head = 50`, `tail = 2575`):
 
 ```sql title="SQLite · part.data"
 SELECT instr(json_extract(data, '$.state.output'), 'HEAD_CHECKPOINT_PROBE') AS head,
@@ -98,82 +173,21 @@ WHERE session_id = :session_id
   AND json_extract(data, '$.tool') = 'skill';
 ```
 
-## Skills are discovered, advertised and authorized separately
-
-With compatibility enabled, discovery checks user and project `.claude/skills` and `.agents/skills` directories. It also scans OpenCode's config directories for `skill/` or `skills/`, explicit `skills.paths`, and directories pulled from `skills.urls`. Parsing a discovered file puts its frontmatter **and content** in an instance-local registry. “On demand” refers to when the **model** receives the body. The application may already have read it from disk. <Src {...source} p="packages/opencode/src/skill/index.ts" l="105-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="183-229" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="258-285" />
-
-Two checks stand between that registry and the model. The catalog respects the agent's permissions and omits entries without a description. On execution, the tool resolves the name, asks for the `skill` permission and, if allowed, returns the body, base directory and a sample of **at most ten** auxiliary paths. Listing a script does not execute it or include its contents in the result. <Src {...source} p="packages/opencode/src/skill/index.ts" l="310-337" /> <Src {...source} p="packages/opencode/src/session/system.ts" l="107-118" /> <Src {...source} p="packages/opencode/src/tool/skill.ts" l="21-65" /> <Src {...source} p="packages/opencode/test/skill/skill.test.ts" l="214-240" />
-
-The guide at this tag describes the catalog as part of the `skill` tool description. In the captured request, the **system message** contained `<available_skills>`. The tool description directed the model there. The guide also requires a description. That is a useful authoring constraint, though the parser in this release accepts a skill without one. When diagnosing a missing skill, check three different things: what discovery found, what this agent was shown and what the call was allowed to load. <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="35-44" /> <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="103-124" /> <Src {...source} p="packages/opencode/src/tool/skill.txt" l="1-5" />
-
-### Being listed, waiting for approval and receiving the body
-
-To separate catalog visibility from executable access, I configured two primary agents for the same `release` definition. A second skill, `other`, remained allowed. The test provider issued a named call directly, so model tool selection could not affect the result. Each permission case used a fresh session with the same unchanged skill file.
-
-| Policy for `release` | System catalog | Observed execution |
-| --- | --- | --- |
-| `allow`, ordinary agent | Listed `release` | The next ordinary request carried both markers in a tool message |
-| `deny`, `reviewer` | Listed `other` and omitted `release` | The `skill` tool remained in the schema. A named call returned a permission error and no body |
-| `ask`, `approver` | Listed `release` | A pending request specified `permission=skill, patterns=["release"]`. Replying `once` released the body. Calling it again in the same session produced a new approval ID |
-
-These outcomes follow from two decision points. During catalog generation, `Skill.available(agent)` filters out `deny`, so an `ask` entry can be listed. During tool execution, the name must resolve, then `ctx.ask` checks that name before the tool returns its body. The permission evaluator uses the last rule that matches both the tool and pattern. A denial returns an error; an `ask` pauses for a reply. Choosing `once` resolves that pending request only. A wildcard disabling the entire tool can also cause the prompt builder to omit the whole skill section. A missing catalog entry, a callable tool returning no procedure and an approval prompt have different causes. <Src {...source} p="packages/opencode/src/skill/index.ts" l="310-323" /> <Src {...source} p="packages/opencode/src/session/system.ts" l="107-118" /> <Src {...source} p="packages/opencode/src/tool/skill.ts" l="21-51" /> <Src {...source} p="packages/opencode/src/permission/index.ts" l="28-38" /> <Src {...source} p="packages/opencode/src/permission/index.ts" l="67-101" /> <Src {...source} p="packages/opencode/src/permission/index.ts" l="140-151" /> <Src {...source} p="packages/opencode/src/permission/index.ts" l="204-219" />
-
-## Offline experiment: the same name in two directories
-
-On Windows I gave two skill files the same frontmatter name, `probe`, and distinct descriptions and body markers. A third skill, `quiet`, had no description. Each `opencode debug skill` invocation started a new process over the same working tree.
-
-Across eight cold starts, `probe` returned **`BODY_EXTRA_MARKER` seven times and `BODY_REPO_MARKER` once**. The raw inventory included `quiet` with no description. The ratio is incidental; repeated runs can also all choose the same file. The source explains both possible outcomes. It parses matching files concurrently, warns about duplicates, then assigns to a shared key taken from frontmatter. A later completion can overwrite its predecessor. The order in which directories were scanned does not establish a reliable override contract. <Src {...source} p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="235-245" /> <Src {...source} p="packages/opencode/src/cli/cmd/debug/skill.ts" l="6-13" />
-
-I repeated the experiment with an extra root in the inherited `OPENCODE_CONFIG_CONTENT`. An ordinary `debug skill` call saw the external marker. Running the downloadable script in that same environment produced eight inventories containing only `customize-opencode`, `probe` and `quiet`. All eight chose `BODY_EXTRA_MARKER`. The change from seven wins to eight is another reason to avoid interpreting a frequency as a precedence rule.
-
-Download the script and use Python 3.10+, Git and the v1.18.33 executable. It clears inherited `OPENCODE_*` settings, including `OPENCODE_CONFIG_CONTENT`, and uses isolated config, data and cache directories. It prints the path to all eight inventories so the selected names, source paths and bodies can be inspected. [Download the duplicate-name experiment](/experiments/opencode-skill-roots.py)
+- **Duplicate skill name race across 8 cold starts** (clears inherited `OPENCODE_*` vars): [Download opencode-skill-roots.py](/experiments/opencode-skill-roots.py)
 
 ```sh title="Run locally"
 python opencode-skill-roots.py
 ```
 
-For a second observation I added different markers to a repository `AGENTS.md` and `CLAUDE.md`, then ran the release CLI against an OpenAI-compatible HTTP service on loopback. It returned one `skill({"name":"probe"})` call followed by `OK`. A separate title-generation request was excluded.
+</div>
+</details>
 
-| Where I looked | What arrived |
-| --- | --- |
-| First system message | The `AGENTS.md` marker, `probe`, `repo description` and its source path. No sibling `CLAUDE.md` marker, catalog entry for `quiet`, or skill body marker |
-| First tool definition | The `skill` description referred to the catalog in the system prompt and accepted a name |
-| Second request, tool message | `BODY_REPO_MARKER` inside `<skill_content name="probe">`, followed by the base directory and file list |
+### Companion notes
 
-A separate three-run sequence in the same Git directory made the session boundary visible on the wire. I passed the session ID emitted by the first run to the third. These were the actual user turns received by the loopback service:
-
-```text title="opencode run --format json --model localprobe/probe · user turns"
-run PIXEL_REQUEST_MARKER                     -> [PIXEL_REQUEST_MARKER]
-run PIXEL_FRESH_MARKER                       -> [PIXEL_FRESH_MARKER]
-run --session <first-id> PIXEL_RESUME_MARKER -> [PIXEL_REQUEST_MARKER, PIXEL_RESUME_MARKER]
-```
-
-In the resumed request, the current catalog said `repo description` while the retained tool message still contained `BODY_EXTRA_MARKER`. These describe different events. **The catalog identifies what this process found; the tool message records what the earlier process read.** A name shared by two files can refer to different sources within the very same outbound request.
-
-<FigOpenCodeMemory lang="en" />
-
-## Which edits reach the next turn?
-
-I removed the collision from a separate experiment by giving a single skill the name `revision`. In one session I loaded version V1, then edited both the root `AGENTS.md` and the skill’s `SKILL.md` to carry V2 markers. The provider requested the same skill each time. I checked the **system instruction** and the **last newly returned tool result**, so an older V1 message already in the conversation could not be mistaken for a fresh read.
-
-```text title="Same session · system rule / newly returned skill"
-Before editing, running service                 V1 / V1
-Both files saved, same service                  V2 / V1
-Restart server, resume the same session ID      V2 / V2
-```
-
-The instruction loader reads the matching files while preparing each ordinary request. In this run the next request already carried the V2 rule. Skill discovery had previously stored the body along with frontmatter in the instance registry. The tool returned `info.content` from that record. Restarting the server while keeping the session ID forced discovery again, and the next call finally returned V2. The comparison held the skill name, permissions and session identity constant. <Src {...source} p="packages/opencode/src/session/prompt.ts" l="1255-1268" /> <Src {...source} p="packages/opencode/src/session/instruction.ts" l="155-168" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="273-299" /> <Src {...source} p="packages/opencode/src/tool/skill.ts" l="45-54" />
-
-The pinned version also ships a built-in skill called `customize-opencode`. The runtime registers it before disk discovery, allowing a disk definition with the same name to override it. Its own guide tells users to restart after editing a skill or another configuration-time file. A committed skill change and a refreshed project rule can therefore coexist with an ordinary tool call still returning the earlier procedure. <Src {...source} p="packages/opencode/src/skill/index.ts" l="273-285" /> <Src {...source} p="packages/core/src/plugin/skill/customize-opencode.md" l="30-49" />
-
-## Which changes can outlive the session?
-
-`/init` is an explicit write path. Its template asks the agent to inspect a repository and create or improve the root `AGENTS.md`, preserving verified guidance when the file exists. Authorized editing tools can also write a procedure into a skill when requested. The evidence for cross-session learning is a **persisted file in a discoverable location**. A successful skill call, by itself, shows no subsequent revision. <Src {...source} p="packages/web/src/content/docs/rules.mdx" l="10-28" /> <Src {...source} p="packages/opencode/src/command/template/initialize.txt" l="33-66" /> <Src {...source} p="packages/opencode/src/tool/registry.ts" l="211-246" />
-
-It would also be too broad to say “OpenCode has no memory file.” In the absence of a custom agent prompt, certain model names select `PROMPT_BEAST`. That template tells the model to update `.github/instructions/memory.instruction.md` when the user asks it to remember something. This is a model-specific, prompt-directed file workflow. The default rule loader does not list that filename, so it cannot establish an automatic re-read for every model and future run. <Src {...source} p="packages/opencode/src/session/llm/request.ts" l="53-67" /> <Src {...source} p="packages/opencode/src/session/system.ts" l="28-43" /> <Src {...source} p="packages/opencode/src/session/prompt/beast.txt" l="114-134" /> <Src {...source} p="packages/opencode/src/session/instruction.ts" l="60-68" />
-
-Plugins provide another explicit extension point. `experimental.session.compacting` can supply context or replace the default summary prompt. Persisting long-term knowledge, deduplicating it or evaluating new skills would require a concrete implementation. On the path examined here I found evidence of session summarization, instruction reads and skill loading, but no end-of-turn curator automatically writing a new `SKILL.md`. To evaluate a particular installation, follow the write and subsequent read: **which persistent object changed, and which later model request consumed it?** <Src {...source} p="packages/plugin/src/index.ts" l="291-316" /> <Src {...source} p="packages/opencode/src/session/compaction.ts" l="372-391" /> <Src {...source} p="packages/web/src/content/docs/plugins.mdx" l="350-389" />
-
-<Infer lang="en" /> For a release procedure, an earlier complete tool result answers what the agent read at the time. Reuse on the next release depends on the version on disk, the version loaded by the current instance and the agent’s permission to read it again. Session storage makes the old execution auditable. A project skill gives maintainers a versioned procedure. Those records can legitimately change at different times. The traces locate transformations in the runtime. How much business-critical detail a real model preserves in a summary remains a separate, task-specific measurement.
-
-Hermes has a curator for managed skills. OpenCode’s collision illustrates a separate possibility when a catalog changes: the selected file may be different even though neither file was edited. [Compare the Hermes implementation](/notes/hermes-memory-skills/#skills-know-how-loaded-on-demand)
+| Agent | What to compare with OpenCode |
+|---|---|
+| [Pi](/notes/pi-memory-skills/) | Exact mirror image: Pi caches `AGENTS.md`, reads skill bodies fresh, and skips a dedicated `skill` tool |
+| [Hermes Agent](/notes/hermes-memory-skills/) | Hermes's curator actively rewrites managed skills; OpenCode never auto-evolves skills, and catalog shifts can come from duplicate-name races |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | Also preserves raw logs while transforming model views via `surface` shadowing and catalog republication |
+| [Codex CLI](/notes/codex-memory-skills/) | Two-phase background pipeline consolidating global memory from old threads vs. OpenCode's explicit file writes |
+| [Claude Code](/notes/claude-code-memory-skills/) | Shares `CLAUDE.md` and skills, plus an auto-memory `MEMORY.md` index—compare when writes become visible |
