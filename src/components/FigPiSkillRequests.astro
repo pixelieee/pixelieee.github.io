@@ -27,11 +27,14 @@ const id = (i: number) => `pi-request-${lang}-${i}`;
 <style>
   fieldset{min-inline-size:0;margin:0;padding:0;border:0}
   legend{padding:0;font:600 1rem/1.6 var(--sans);color:var(--fg)}
-  .choices{display:flex;flex-wrap:wrap;gap:.3rem .9rem;border-bottom:1px solid var(--line);padding:.65rem 0}
-  label{position:relative;cursor:pointer;font: .84rem/1.65 var(--sans);color:var(--mute);padding:.12rem .15rem}
+  .choices{display:flex;flex-wrap:wrap;gap:0 22px;border-bottom:1px solid var(--line);padding:0}
+  label{position:relative;cursor:pointer;font:400 13.5px/1.4 var(--sans);color:var(--mute);padding:8px 2px 9px;transition:color .18s ease}
+  label::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--plat);transform:scaleX(0);transform-origin:center;transition:transform .22s cubic-bezier(.2,.8,.2,1)}
+  label:hover{color:var(--fg-2)}
   label input{position:absolute;opacity:0;inset:0;width:100%;height:100%;margin:0;cursor:pointer}
-  label:has(:checked){color:var(--fg);box-shadow:inset 0 -2px var(--plat-ink)}
-  label:has(:focus-visible){outline:2px solid var(--plat-ink);outline-offset:2px}
+  label:has(:checked){color:var(--fg);font-weight:500}
+  label:has(:checked)::after{transform:scaleX(1)}
+  label:has(:focus-visible){outline:1.5px solid var(--plat);outline-offset:2px;border-radius:3px}
   .packet{display:none}
   fieldset:has([value="0"]:checked) [data-step="0"], fieldset:has([value="1"]:checked) [data-step="1"],
   fieldset:has([value="2"]:checked) [data-step="2"], fieldset:has([value="3"]:checked) [data-step="3"],

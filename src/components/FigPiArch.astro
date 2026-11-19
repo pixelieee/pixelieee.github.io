@@ -1,9 +1,14 @@
 ---
-// 图 1：Pi 的三栏动态数据流（参考 SoL-Pi 风格：按「启动/重载 → 每次调用 → 倒推组装请求」三拍循环演示信号流动）。
+// 图 1：交互式三栏动态数据流——鼠标悬停或点击任意模块，该路径立刻高亮并流动；移开后在视口内自动三拍循环。
 const { lang = 'zh' } = Astro.props;
+const en = lang === 'en';
 const T = {
   zh: {
     k0: 'Pi 的整体结构：左侧磁盘文件按两种时机进入中间的 JSONL 会话树，每次请求再从当前叶节点倒推回根拼出上下文',
+    tAuto: '自动演示',
+    tBoot: '启动 /reload',
+    tCall: '调用 Skill',
+    tReq: '组装请求',
     c1a: '启动或 /reload 时读取',
     c1a1: 'AGENTS.md 规则文件',
     c1a2: '各级目录叠加 · 无需信任',
@@ -36,11 +41,20 @@ const T = {
     s3b: '   隐藏或替换目标消息',
     s4: '4. 带上最新系统提示词',
     s4b: '   （留在原处或合并到开头）',
-    foot: '完整支持 Skill，故意不做内置记忆库；想跨会话留住经验，要么写进左侧文件，要么续用中间的旧会话。',
-    cap: '图 1\u3000Pi 的存储与上下文组装（悬停任意模块可暂停动画查看细节）。左侧文件无论何时读取，都只往中间的会话树末尾追加记录；右侧每次请求都从当前 leaf 倒推回根，拼出模型看到的单条分支。',
+    notes: {
+      auto: '完整支持 Skill，故意不做内置记忆库；跨会话留存靠改写左侧文件，或续用中间的旧会话。',
+      boot: '启动或 /reload：把 AGENTS.md 与 SKILL.md 索引表读进内存，变化部分追加成新的 system 消息（中途改文件不自动刷新）。',
+      call: '调用 Skill：内存不缓存正文；每次 /skill:name 或模型调 read 都直接读磁盘最新文件，不重载也立刻生效。',
+      req: '每次发请求前：从当前 leaf 沿 parentId 倒推回根，套用该分支上的压缩与隐藏记录，拼出模型看到的上下文。',
+    },
+    cap: '图 1\u3000Pi 的三条信息通道与上下文组装。',
   },
   en: {
     k0: 'Overview of Pi: disk files enter the append-only JSONL tree on two different schedules, and each request is assembled from the active leaf',
+    tAuto: 'Auto',
+    tBoot: 'Startup /reload',
+    tCall: 'Invoke skill',
+    tReq: 'Build request',
     c1a: 'Read at startup · /reload',
     c1a1: 'AGENTS.md rules',
     c1a2: 'stacked dirs · no trust gate',
@@ -73,15 +87,26 @@ const T = {
     s3b: '   to hide or replace entries',
     s4: '4. Include latest system prompt',
     s4b: '   (in place or merged at head)',
-    foot: 'Full Skill system, deliberately no built-in memory store: durability comes from editing disk files on the left or resuming a session branch.',
-    cap: 'Figure 1. Stores and context assembly in Pi (hover to pause). Both disk schedules only append to the tree; each request walks back from the active leaf to build one branch.',
+    notes: {
+      auto: 'Full Skill support, deliberately no built-in memory store: durability comes from editing disk files or resuming a session branch.',
+      boot: 'Startup / /reload: reads AGENTS.md and the skill catalog into memory and appends changed sections as a new system message.',
+      call: 'Skill invocation: bodies are never cached; every /skill:name or read call reads disk fresh and appends a message.',
+      req: 'Before every request: walks parentId from leaf back to root, applies compaction & context_edit, and builds the prompt.',
+    },
+    cap: 'Figure 1. Pi’s three input channels and context assembly.',
   },
-};
-const t = T[lang] ?? T.zh;
+}[en ? 'en' : 'zh'];
 ---
-<figure class="fig pi-arch" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+<figure class="fig pi-arch" data-mode="auto" data-visible="1" lang={en ? 'en' : 'zh-CN'}>
+  <div class="arch-bar" role="tablist" aria-label={en ? 'Highlight data flow' : '切换演示路径'}>
+    <button type="button" role="tab" aria-selected="true" class="arch-tab on" data-set="auto">{T.tAuto}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="boot">{T.tBoot}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="call">{T.tCall}</button>
+    <button type="button" role="tab" aria-selected="false" class="arch-tab" data-set="req">{T.tReq}</button>
+  </div>
+
   <div class="fig-scroll">
-    <svg viewBox="0 0 820 324" role="img" aria-label={t.k0}>
+    <svg viewBox="0 0 820 294" role="img" aria-label={T.k0}>
       <defs>
         <marker id={`pi-ah-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0L10 5L0 10z" fill="var(--mute)" />
@@ -91,191 +116,304 @@ const t = T[lang] ?? T.zh;
         </marker>
       </defs>
 
-      <g class="bx">
-        <rect x="12" y="12" width="204" height="154" rx="11" class="stage-boot" />
-        <rect x="12" y="182" width="204" height="98" rx="11" class="stage-call" />
-        <rect x="308" y="12" width="252" height="268" rx="12" class="stage-tree" />
-        <rect x="616" y="12" width="192" height="268" rx="12" class="req stage-req" />
+      <!-- Group 1: Startup / /reload -->
+      <g class="zone zone-boot" data-focus="boot">
+        <rect x="12" y="12" width="204" height="154" rx="11" class="box stage-boot" />
+        <rect x="24" y="44" width="180" height="52" rx="7" class="inner" />
+        <rect x="24" y="104" width="180" height="50" rx="7" class="inner" />
+        <text x="24" y="33" class="h">{T.c1a}</text>
+        <text x="34" y="64" class="mo">{T.c1a1}</text>
+        <text x="34" y="83" class="m">{T.c1a2}</text>
+        <text x="34" y="124" class="mo">{T.c1a3}</text>
+        <text x="34" y="143" class="m">{T.c1a4}</text>
       </g>
 
-      <g class="in">
-        <rect x="24" y="44" width="180" height="52" rx="7" />
-        <rect x="24" y="104" width="180" height="50" rx="7" />
-        <rect x="24" y="216" width="180" height="52" rx="7" />
-
-        <rect x="322" y="66" width="224" height="44" rx="7" class="row-sys" />
-        <rect x="322" y="118" width="224" height="44" rx="7" />
-        <rect x="322" y="170" width="224" height="44" rx="7" />
-        <rect x="322" y="222" width="224" height="46" rx="7" class="row-msg" />
+      <!-- Group 2: Per-invocation Skill read -->
+      <g class="zone zone-call" data-focus="call">
+        <rect x="12" y="182" width="204" height="98" rx="11" class="box stage-call" />
+        <rect x="24" y="216" width="180" height="52" rx="7" class="inner" />
+        <text x="24" y="203" class="h">{T.c1b}</text>
+        <text x="34" y="236" class="mo">{T.c1b1}</text>
+        <text x="34" y="255" class="m">{T.c1b2}</text>
       </g>
 
-      <g class="t">
-        <text x="24" y="33" class="h">{t.c1a}</text>
-        <text x="34" y="64" class="mo">{t.c1a1}</text>
-        <text x="34" y="83" class="m">{t.c1a2}</text>
-        <text x="34" y="124" class="mo">{t.c1a3}</text>
-        <text x="34" y="143" class="m">{t.c1a4}</text>
-
-        <text x="24" y="203" class="h">{t.c1b}</text>
-        <text x="34" y="236" class="mo">{t.c1b1}</text>
-        <text x="34" y="255" class="m">{t.c1b2}</text>
-
-        <text x="322" y="35" class="h">{t.c2}</text>
-        <text x="322" y="54" class="m">{t.c2s}</text>
-        <text x="332" y="85" class="mo">{t.r1}</text>
-        <text x="332" y="102" class="m">{t.r1s}</text>
-        <text x="332" y="137" class="mo">{t.r2}</text>
-        <text x="332" y="154" class="m">{t.r2s}</text>
-        <text x="332" y="189" class="mo">{t.r3}</text>
-        <text x="332" y="206" class="m">{t.r3s}</text>
-        <text x="332" y="241" class="mo">{t.r4}</text>
-        <text x="332" y="258" class="m">{t.r4s}</text>
-
-        <text x="628" y="36" class="h">{t.c3}</text>
-        <text x="628" y="74" class="m">{t.s1}</text>
-        <text x="628" y="114" class="m">{t.s2}</text>
-        <text x="628" y="132" class="m">{t.s2b}</text>
-        <text x="628" y="172" class="m">{t.s3}</text>
-        <text x="628" y="190" class="m">{t.s3b}</text>
-        <text x="628" y="230" class="m">{t.s4}</text>
-        <text x="628" y="248" class="m">{t.s4b}</text>
+      <!-- Group 3: Session Tree -->
+      <g class="zone zone-tree" data-focus="req">
+        <rect x="308" y="12" width="252" height="268" rx="12" class="box stage-tree" />
+        <rect x="322" y="66" width="224" height="44" rx="7" class="inner row-sys" />
+        <rect x="322" y="118" width="224" height="44" rx="7" class="inner" />
+        <rect x="322" y="170" width="224" height="44" rx="7" class="inner" />
+        <rect x="322" y="222" width="224" height="46" rx="7" class="inner row-msg" />
+        <text x="322" y="35" class="h">{T.c2}</text>
+        <text x="322" y="54" class="m">{T.c2s}</text>
+        <text x="332" y="85" class="mo">{T.r1}</text>
+        <text x="332" y="102" class="m">{T.r1s}</text>
+        <text x="332" y="137" class="mo">{T.r2}</text>
+        <text x="332" y="154" class="m">{T.r2s}</text>
+        <text x="332" y="189" class="mo">{T.r3}</text>
+        <text x="332" y="206" class="m">{T.r3s}</text>
+        <text x="332" y="241" class="mo">{T.r4}</text>
+        <text x="332" y="258" class="m">{T.r4s}</text>
       </g>
 
+      <!-- Group 4: Model Request -->
+      <g class="zone zone-req" data-focus="req">
+        <rect x="616" y="12" width="192" height="268" rx="12" class="box req stage-req" />
+        <text x="628" y="36" class="h">{T.c3}</text>
+        <text x="628" y="74" class="m">{T.s1}</text>
+        <text x="628" y="114" class="m">{T.s2}</text>
+        <text x="628" y="132" class="m">{T.s2b}</text>
+        <text x="628" y="172" class="m">{T.s3}</text>
+        <text x="628" y="190" class="m">{T.s3b}</text>
+        <text x="628" y="230" class="m">{T.s4}</text>
+        <text x="628" y="248" class="m">{T.s4b}</text>
+      </g>
+
+      <!-- Base connectors -->
       <g class="ln">
-        <path d="M216 88 H308" marker-end={`url(#pi-ah-${lang})`} />
-        <path d="M216 244 H308" marker-end={`url(#pi-ah-${lang})`} />
-        <path d="M560 146 H616" marker-end={`url(#pi-ag-${lang})`} class="gd" />
+        <path d="M216 88 H308" marker-end={`url(#pi-ah-${lang})`} class="ln-boot" />
+        <path d="M216 244 H308" marker-end={`url(#pi-ah-${lang})`} class="ln-call" />
+        <path d="M560 146 H616" marker-end={`url(#pi-ag-${lang})`} class="gd ln-req" />
       </g>
 
+      <!-- Animated signal overlays -->
       <g class="signals" aria-hidden="true">
         <path d="M216 88 H305" pathLength="1" class="sig sig-boot" />
         <path d="M216 244 H305" pathLength="1" class="sig sig-call" />
         <path d="M560 146 H612" pathLength="1" class="sig sig-req" />
-        <circle cx="216" cy="88" r="3" class="dot dot-boot" />
-        <circle cx="216" cy="244" r="3" class="dot dot-call" />
-        <circle cx="560" cy="146" r="3.2" class="dot dot-req" />
+        <circle cx="216" cy="88" r="3.2" class="dot dot-boot" />
+        <circle cx="216" cy="244" r="3.2" class="dot dot-call" />
+        <circle cx="560" cy="146" r="3.4" class="dot dot-req" />
       </g>
 
       <g class="t" text-anchor="middle">
-        <text x="262" y="77" class="s">{t.a1}</text>
-        <text x="262" y="105" class="s">{t.a2}</text>
-        <text x="262" y="233" class="s">{t.a3}</text>
-        <text x="262" y="261" class="s">{t.a4}</text>
-        <text x="588" y="134" class="g">{t.ag1}</text>
-        <text x="588" y="164" class="g">{t.ag2}</text>
+        <text x="262" y="77" class="s lbl-boot">{T.a1}</text>
+        <text x="262" y="105" class="s lbl-boot">{T.a2}</text>
+        <text x="262" y="233" class="s lbl-call">{T.a3}</text>
+        <text x="262" y="261" class="s lbl-call">{T.a4}</text>
+        <text x="588" y="134" class="g lbl-req">{T.ag1}</text>
+        <text x="588" y="164" class="g lbl-req">{T.ag2}</text>
       </g>
-
-      <text x="12" y="309" class="m">{t.foot}</text>
     </svg>
   </div>
-  <figcaption>{t.cap}</figcaption>
+
+  <div class="arch-live" aria-live="polite">
+    <p data-note="auto">{T.notes.auto}</p>
+    <p data-note="boot">{T.notes.boot}</p>
+    <p data-note="call">{T.notes.call}</p>
+    <p data-note="req">{T.notes.req}</p>
+  </div>
+  <figcaption>{T.cap}</figcaption>
 </figure>
+
+<script is:inline>
+  if (!window.__piArchBound) {
+    window.__piArchBound = true;
+    const init = () => {
+      document.querySelectorAll('.pi-arch').forEach((fig) => {
+        if (fig.dataset.inited) return;
+        fig.dataset.inited = '1';
+        let locked = 'auto';
+        const setActive = (stage) => {
+          fig.dataset.mode = stage;
+          fig.querySelectorAll('.arch-tab').forEach((b) => {
+            const on = b.dataset.set === stage;
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+        };
+        fig.querySelectorAll('.arch-tab').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            locked = btn.dataset.set;
+            setActive(locked);
+          });
+        });
+        fig.querySelectorAll('[data-focus]').forEach((zone) => {
+          const target = zone.getAttribute('data-focus');
+          zone.addEventListener('pointerenter', () => setActive(target));
+          zone.addEventListener('pointerleave', () => setActive(locked));
+          zone.addEventListener('click', () => {
+            locked = locked === target ? 'auto' : target;
+            setActive(locked);
+          });
+        });
+        if ('IntersectionObserver' in window) {
+          const io = new IntersectionObserver((entries) => {
+            entries.forEach((e) => { fig.dataset.visible = e.isIntersecting ? '1' : '0'; });
+          }, { threshold: 0.2 });
+          io.observe(fig);
+        }
+      });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  }
+</script>
+
 <style>
+  .pi-arch { margin: 1.8em 0; }
+  .arch-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 22px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .arch-tab {
+    position: relative;
+    cursor: pointer;
+    padding: 8px 2px 9px;
+    border: 0;
+    background: transparent;
+    color: var(--mute);
+    font: 400 13.5px/1.4 var(--sans);
+    transition: color .18s ease;
+  }
+  .arch-tab::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--plat);
+    transform: scaleX(0);
+    transform-origin: center;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1);
+  }
+  .arch-tab:hover { color: var(--fg-2); }
+  .arch-tab.on { color: var(--fg); font-weight: 500; }
+  .arch-tab.on::after { transform: scaleX(1); }
+  .arch-tab:focus-visible { outline: 1.5px solid var(--plat); outline-offset: 2px; border-radius: 3px; }
+
   .pi-arch svg { width: 100%; height: auto; display: block; }
-  .pi-arch .bx rect { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .25s, filter .25s; }
-  .pi-arch .bx rect.req { stroke: var(--plat); stroke-width: 1.3; }
-  .pi-arch .in rect { fill: var(--code); stroke: var(--line); stroke-width: 1; transition: stroke .25s, fill .25s; }
-  .pi-arch text { fill: var(--fg); font-size: 13.5px; font-family: var(--sans); }
+  .pi-arch .zone { cursor: pointer; transition: opacity .22s ease; }
+  .pi-arch .box { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .22s, filter .22s; }
+  .pi-arch .box.req { stroke: var(--plat); stroke-width: 1.3; }
+  .pi-arch .inner { fill: var(--code); stroke: var(--line); stroke-width: 1; transition: stroke .22s, fill .22s; }
+  .pi-arch .zone:hover .box { stroke: var(--plat); }
+  .pi-arch text { fill: var(--fg); font-size: 13.5px; font-family: var(--sans); pointer-events: none; }
   .pi-arch .h { font-weight: 600; font-size: 14.5px; }
   .pi-arch .mo { font-family: var(--mono); font-size: 12px; font-weight: 500; }
   .pi-arch .m { fill: var(--mute); font-size: 11.5px; }
-  .pi-arch .s { fill: var(--mute); font-size: 11px; }
-  .pi-arch .g { fill: var(--plat-ink); font-size: 11.5px; font-family: var(--mono); }
-  .pi-arch .ln path { fill: none; stroke: var(--mute); stroke-width: 1.2; }
+  .pi-arch .s { fill: var(--mute); font-size: 11px; transition: opacity .22s; }
+  .pi-arch .g { fill: var(--plat-ink); font-size: 11.5px; font-family: var(--mono); transition: opacity .22s; }
+  .pi-arch .ln path { fill: none; stroke: var(--mute); stroke-width: 1.2; transition: opacity .22s; }
   .pi-arch .ln .gd { stroke: var(--plat); stroke-width: 1.5; }
+
+  .arch-live {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-left: 2.5px solid var(--plat);
+    border-radius: 6px;
+    background: var(--card);
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--fg-2);
+  }
+  .arch-live p { margin: 0 !important; display: none; }
+  .pi-arch[data-mode="auto"] .arch-live [data-note="auto"],
+  .pi-arch[data-mode="boot"] .arch-live [data-note="boot"],
+  .pi-arch[data-mode="call"] .arch-live [data-note="call"],
+  .pi-arch[data-mode="req"]  .arch-live [data-note="req"] { display: block; }
   .pi-arch figcaption { margin-top: 8px; }
 
-  /* SoL-Pi style choreographed 3-beat signal flow */
   .pi-arch .sig {
     fill: none;
     stroke: var(--plat);
-    stroke-width: 2.2;
+    stroke-width: 2.4;
     stroke-linecap: round;
-    stroke-dasharray: 0.32 1;
-    stroke-dashoffset: 0.35;
+    stroke-dasharray: 0.34 1;
+    stroke-dashoffset: 0.36;
     opacity: 0;
   }
   .pi-arch .dot { fill: var(--plat); opacity: 0; }
 
-  .pi-arch .stage-boot { animation: pi-card-boot 9s ease-in-out infinite; }
-  .pi-arch .sig-boot   { animation: pi-sig-boot 9s ease-in-out infinite; }
-  .pi-arch .dot-boot   { animation: pi-dot-boot 9s ease-in-out infinite; }
-  .pi-arch .row-sys    { animation: pi-row-sys 9s ease-in-out infinite; }
+  /* Auto mode: 3-beat cycle when visible */
+  .pi-arch[data-mode="auto"][data-visible="1"] .stage-boot { animation: pi-card-boot 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .sig-boot   { animation: pi-sig-boot 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .dot-boot   { animation: pi-dot-boot 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .row-sys    { animation: pi-row-sys 7.5s ease-in-out infinite; }
 
-  .pi-arch .stage-call { animation: pi-card-call 9s ease-in-out infinite; }
-  .pi-arch .sig-call   { animation: pi-sig-call 9s ease-in-out infinite; }
-  .pi-arch .dot-call   { animation: pi-dot-call 9s ease-in-out infinite; }
-  .pi-arch .row-msg    { animation: pi-row-msg 9s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .stage-call { animation: pi-card-call 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .sig-call   { animation: pi-sig-call 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .dot-call   { animation: pi-dot-call 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .row-msg    { animation: pi-row-msg 7.5s ease-in-out infinite; }
 
-  .pi-arch .stage-tree { animation: pi-card-tree 9s ease-in-out infinite; }
-  .pi-arch .sig-req    { animation: pi-sig-req 9s ease-in-out infinite; }
-  .pi-arch .dot-req    { animation: pi-dot-req 9s ease-in-out infinite; }
-  .pi-arch .stage-req  { animation: pi-card-req 9s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .stage-tree { animation: pi-card-tree 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .sig-req    { animation: pi-sig-req 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .dot-req    { animation: pi-dot-req 7.5s ease-in-out infinite; }
+  .pi-arch[data-mode="auto"][data-visible="1"] .stage-req  { animation: pi-card-req 7.5s ease-in-out infinite; }
 
-  .pi-arch:hover svg * { animation-play-state: paused; }
+  /* Focused mode: hover or click immediately runs lively stream on THAT exact path */
+  .pi-arch[data-mode="boot"] .zone-call,
+  .pi-arch[data-mode="boot"] .zone-req,
+  .pi-arch[data-mode="boot"] .ln-call,
+  .pi-arch[data-mode="boot"] .ln-req,
+  .pi-arch[data-mode="boot"] .lbl-call,
+  .pi-arch[data-mode="boot"] .lbl-req { opacity: 0.34; }
+  .pi-arch[data-mode="boot"] .stage-boot { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .pi-arch[data-mode="boot"] .row-sys { stroke: var(--plat); fill: var(--plat-soft); }
+  .pi-arch[data-mode="boot"] .sig-boot { animation: pi-stream 1.4s linear infinite; }
+  .pi-arch[data-mode="boot"] .dot-boot { animation: pi-dot-run-l 1.4s linear infinite; }
 
-  @keyframes pi-card-boot {
-    0%, 2%, 28%, 100% { stroke: var(--line); filter: none; }
-    6%, 18% { stroke: var(--plat); filter: drop-shadow(0 4px 12px var(--plat-soft)); }
+  .pi-arch[data-mode="call"] .zone-boot,
+  .pi-arch[data-mode="call"] .zone-req,
+  .pi-arch[data-mode="call"] .ln-boot,
+  .pi-arch[data-mode="call"] .ln-req,
+  .pi-arch[data-mode="call"] .lbl-boot,
+  .pi-arch[data-mode="call"] .lbl-req { opacity: 0.34; }
+  .pi-arch[data-mode="call"] .stage-call { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .pi-arch[data-mode="call"] .row-msg { stroke: var(--plat); fill: var(--plat-soft); }
+  .pi-arch[data-mode="call"] .sig-call { animation: pi-stream 1.4s linear infinite; }
+  .pi-arch[data-mode="call"] .dot-call { animation: pi-dot-run-l 1.4s linear infinite; }
+
+  .pi-arch[data-mode="req"] .zone-boot,
+  .pi-arch[data-mode="req"] .zone-call,
+  .pi-arch[data-mode="req"] .ln-boot,
+  .pi-arch[data-mode="req"] .ln-call,
+  .pi-arch[data-mode="req"] .lbl-boot,
+  .pi-arch[data-mode="req"] .lbl-call { opacity: 0.34; }
+  .pi-arch[data-mode="req"] .stage-tree,
+  .pi-arch[data-mode="req"] .stage-req { stroke: var(--plat); stroke-width: 1.5; filter: drop-shadow(0 5px 14px var(--plat-soft)); }
+  .pi-arch[data-mode="req"] .sig-req { animation: pi-stream 1.2s linear infinite; }
+  .pi-arch[data-mode="req"] .dot-req { animation: pi-dot-run-r 1.2s linear infinite; }
+
+  @keyframes pi-stream {
+    0% { stroke-dashoffset: 0.36; opacity: 0; }
+    15% { opacity: 1; }
+    85% { opacity: 1; }
+    100% { stroke-dashoffset: -0.78; opacity: 0; }
   }
-  @keyframes pi-sig-boot {
-    0%, 7% { stroke-dashoffset: 0.35; opacity: 0; }
-    10% { opacity: 1; }
-    20% { stroke-dashoffset: -0.72; opacity: 1; }
-    23%, 100% { stroke-dashoffset: -0.78; opacity: 0; }
+  @keyframes pi-dot-run-l {
+    0% { opacity: 0; transform: translateX(0); }
+    12% { opacity: 1; transform: translateX(0); }
+    88% { opacity: 1; transform: translateX(88px); }
+    100% { opacity: 0; transform: translateX(88px); }
   }
-  @keyframes pi-dot-boot {
-    0%, 7% { opacity: 0; transform: translateX(0); }
-    10% { opacity: 1; transform: translateX(0); }
-    20% { opacity: 1; transform: translateX(88px); }
-    22%, 100% { opacity: 0; transform: translateX(88px); }
-  }
-  @keyframes pi-row-sys {
-    0%, 16%, 33%, 100% { stroke: var(--line); fill: var(--code); }
-    20%, 28% { stroke: var(--plat); fill: var(--plat-soft); }
+  @keyframes pi-dot-run-r {
+    0% { opacity: 0; transform: translateX(0); }
+    12% { opacity: 1; transform: translateX(0); }
+    88% { opacity: 1; transform: translateX(52px); }
+    100% { opacity: 0; transform: translateX(52px); }
   }
 
-  @keyframes pi-card-call {
-    0%, 34%, 60%, 100% { stroke: var(--line); filter: none; }
-    38%, 50% { stroke: var(--plat); filter: drop-shadow(0 4px 12px var(--plat-soft)); }
-  }
-  @keyframes pi-sig-call {
-    0%, 39% { stroke-dashoffset: 0.35; opacity: 0; }
-    42% { opacity: 1; }
-    52% { stroke-dashoffset: -0.72; opacity: 1; }
-    55%, 100% { stroke-dashoffset: -0.78; opacity: 0; }
-  }
-  @keyframes pi-dot-call {
-    0%, 39% { opacity: 0; transform: translateX(0); }
-    42% { opacity: 1; transform: translateX(0); }
-    52% { opacity: 1; transform: translateX(88px); }
-    54%, 100% { opacity: 0; transform: translateX(88px); }
-  }
-  @keyframes pi-row-msg {
-    0%, 48%, 65%, 100% { stroke: var(--line); fill: var(--code); }
-    52%, 60% { stroke: var(--plat); fill: var(--plat-soft); }
-  }
+  @keyframes pi-card-boot { 0%,2%,29%,100%{stroke:var(--line);filter:none} 6%,19%{stroke:var(--plat);filter:drop-shadow(0 4px 12px var(--plat-soft))} }
+  @keyframes pi-sig-boot  { 0%,7%{stroke-dashoffset:.36;opacity:0} 10%{opacity:1} 21%{stroke-dashoffset:-.74;opacity:1} 24%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes pi-dot-boot  { 0%,7%{opacity:0;transform:translateX(0)} 10%{opacity:1;transform:translateX(0)} 21%{opacity:1;transform:translateX(88px)} 23%,100%{opacity:0;transform:translateX(88px)} }
+  @keyframes pi-row-sys   { 0%,16%,33%,100%{stroke:var(--line);fill:var(--code)} 20%,28%{stroke:var(--plat);fill:var(--plat-soft)} }
 
-  @keyframes pi-card-tree {
-    0%, 64%, 82%, 100% { stroke: var(--line); }
-    68%, 76% { stroke: var(--plat); }
-  }
-  @keyframes pi-sig-req {
-    0%, 68% { stroke-dashoffset: 0.35; opacity: 0; }
-    71% { opacity: 1; }
-    81% { stroke-dashoffset: -0.72; opacity: 1; }
-    84%, 100% { stroke-dashoffset: -0.78; opacity: 0; }
-  }
-  @keyframes pi-dot-req {
-    0%, 68% { opacity: 0; transform: translateX(0); }
-    71% { opacity: 1; transform: translateX(0); }
-    81% { opacity: 1; transform: translateX(52px); }
-    83%, 100% { opacity: 0; transform: translateX(52px); }
-  }
-  @keyframes pi-card-req {
-    0%, 76%, 96%, 100% { stroke: var(--plat); filter: none; }
-    80%, 91% { stroke: var(--plat); filter: drop-shadow(0 6px 16px var(--plat-soft)); }
-  }
+  @keyframes pi-card-call { 0%,34%,61%,100%{stroke:var(--line);filter:none} 38%,51%{stroke:var(--plat);filter:drop-shadow(0 4px 12px var(--plat-soft))} }
+  @keyframes pi-sig-call  { 0%,39%{stroke-dashoffset:.36;opacity:0} 42%{opacity:1} 53%{stroke-dashoffset:-.74;opacity:1} 56%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes pi-dot-call  { 0%,39%{opacity:0;transform:translateX(0)} 42%{opacity:1;transform:translateX(0)} 53%{opacity:1;transform:translateX(88px)} 55%,100%{opacity:0;transform:translateX(88px)} }
+  @keyframes pi-row-msg   { 0%,48%,65%,100%{stroke:var(--line);fill:var(--code)} 52%,60%{stroke:var(--plat);fill:var(--plat-soft)} }
+
+  @keyframes pi-card-tree { 0%,64%,83%,100%{stroke:var(--line)} 68%,77%{stroke:var(--plat)} }
+  @keyframes pi-sig-req   { 0%,68%{stroke-dashoffset:.36;opacity:0} 71%{opacity:1} 82%{stroke-dashoffset:-.74;opacity:1} 85%,100%{stroke-dashoffset:-.78;opacity:0} }
+  @keyframes pi-dot-req   { 0%,68%{opacity:0;transform:translateX(0)} 71%{opacity:1;transform:translateX(0)} 82%{opacity:1;transform:translateX(52px)} 84%,100%{opacity:0;transform:translateX(52px)} }
+  @keyframes pi-card-req  { 0%,76%,96%,100%{stroke:var(--plat);filter:none} 80%,92%{stroke:var(--plat);filter:drop-shadow(0 6px 16px var(--plat-soft))} }
 
   @media (prefers-reduced-motion: reduce) {
     .pi-arch svg * { animation: none !important; }

@@ -5,27 +5,25 @@ const en = lang === 'en';
 const T = {
   zh: {
     desc: 'base 分出两条分支：上支 attempt A 后追加 context_edit(null)，下支 attempt B 后追加压缩摘要 checkpoint 并通过 firstKeptEntryId 指回 attempt B。切换上方叶指针位置，可动态观察回溯路径与模型收到的消息。',
-    tabB: '叶指针在分支 B（压缩后）',
-    tabA: '/tree 切回分支 A（带隐藏编辑）',
-    hint: 'JSONL 始终保留全部 5 行，只移动 leaf',
+    tabB: '分支 B（压缩后）',
+    tabA: '分支 A（/tree 切回 · 带隐藏编辑）',
     edit: 'context_edit (null)',
     projA: '当前在分支 A → 模型收到',
     projAnote: 'attempt A 仍在日志但被隐藏；B 不在路径上',
     projB: '当前在分支 B → 模型收到',
     projBnote: 'base 早于保留起点，由摘要 checkpoint 替代',
-    cap: '图 2\u3000同一份 JSONL 会话里的两条分支（可点击切换叶指针位置）。实线是 parentId，虚线是 firstKeptEntryId，金色脉冲演示每次请求前从当前 leaf 倒推回根的路径；灰暗节点仍留在文件里，只是不在当前分支路径上。',
+    cap: '图 2\u3000同一份 JSONL 会话里的两条分支。实线是 parentId，虚线是 firstKeptEntryId；不在当前路径上的节点仍留在文件里。',
   },
   en: {
-    desc: 'Two branches descend from base: attempt A followed by context_edit(null), and attempt B followed by a compaction checkpoint whose firstKeptEntryId points back to attempt B. Toggle the active leaf above to watch the parentId walk and resulting model context.',
-    tabB: 'Leaf on branch B (compacted)',
-    tabA: '/tree back to branch A (with edit)',
-    hint: 'All 5 JSONL lines stay on disk; only leaf moves',
+    desc: 'Two branches descend from base: attempt A followed by context_edit(null), and attempt B followed by a compaction checkpoint whose firstKeptEntryId points back to attempt B.',
+    tabB: 'Branch B (compacted)',
+    tabA: 'Branch A (/tree · with edit)',
     edit: 'context_edit (null)',
     projA: 'Leaf at branch A → model receives',
     projAnote: 'attempt A hidden by edit; branch B is off-path',
     projB: 'Leaf at branch B → model receives',
     projBnote: 'base precedes firstKeptEntryId; summary leads',
-    cap: 'Figure 2. Two branches in one JSONL file (click tabs or branches to move leaf). Solid lines follow parentId, the dashed arc marks firstKeptEntryId, and the animated pulse traces buildSessionContext() walking back from the active leaf while off-path lines remain untouched on disk.',
+    cap: 'Figure 2. Two branches in one JSONL file. Solid lines follow parentId, the dashed arc marks firstKeptEntryId, and off-path entries remain untouched on disk.',
   },
 }[en ? 'en' : 'zh'];
 const idB = `pi-br-b-${lang}`;
@@ -33,18 +31,15 @@ const idA = `pi-br-a-${lang}`;
 const grp = `pi-br-grp-${lang}`;
 ---
 <figure class="branch" lang={en ? 'en' : 'zh-CN'}>
-  <div class="br-bar">
-    <div class="br-tabs" role="radiogroup" aria-label={en ? 'Active leaf branch' : '当前叶指针所在分支'}>
-      <label class="br-tab">
-        <input type="radio" id={idB} name={grp} value="b" checked />
-        <span>{T.tabB}</span>
-      </label>
-      <label class="br-tab">
-        <input type="radio" id={idA} name={grp} value="a" />
-        <span>{T.tabA}</span>
-      </label>
-    </div>
-    <span class="br-hint">{T.hint}</span>
+  <div class="br-bar" role="radiogroup" aria-label={en ? 'Active leaf branch' : '当前叶指针所在分支'}>
+    <label class="br-tab">
+      <input type="radio" id={idB} name={grp} value="b" checked />
+      <span>{T.tabB}</span>
+    </label>
+    <label class="br-tab">
+      <input type="radio" id={idA} name={grp} value="a" />
+      <span>{T.tabA}</span>
+    </label>
   </div>
 
   <div class="fig-scroll">
@@ -137,11 +132,17 @@ const grp = `pi-br-grp-${lang}`;
 <script is:inline>
   if (!window.__piBranchBound) {
     window.__piBranchBound = true;
+    const select = (g) => {
+      const input = document.getElementById(g.getAttribute('data-pick'));
+      if (input && !input.checked) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+    };
     document.addEventListener('click', (e) => {
       const g = e.target.closest?.('[data-pick]');
-      if (!g) return;
-      const input = document.getElementById(g.getAttribute('data-pick'));
-      if (input) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+      if (g) select(g);
+    });
+    document.addEventListener('pointerover', (e) => {
+      const g = e.target.closest?.('[data-pick]');
+      if (g) select(g);
     });
   }
 </script>
@@ -151,34 +152,36 @@ const grp = `pi-br-grp-${lang}`;
   .br-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     flex-wrap: wrap;
-    gap: 8px 16px;
-    padding: 0 0 10px;
-    margin-bottom: 6px;
+    gap: 0 22px;
+    margin-bottom: 12px;
     border-bottom: 1px solid var(--line);
   }
-  .br-tabs { display: inline-flex; flex-wrap: wrap; gap: 6px; }
   .br-tab {
     position: relative;
     cursor: pointer;
-    padding: 4px 11px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: var(--card);
+    padding: 8px 2px 9px;
     color: var(--mute);
-    font: 500 12.5px/1.4 var(--sans);
-    transition: color .18s, border-color .18s, background-color .18s;
+    font: 400 13.5px/1.4 var(--sans);
+    transition: color .18s ease;
   }
-  .br-tab:hover { color: var(--fg); }
+  .br-tab::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--plat);
+    transform: scaleX(0);
+    transform-origin: center;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1);
+  }
+  .br-tab:hover { color: var(--fg-2); }
   .br-tab input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
-  .br-tab:has(:checked) {
-    color: var(--fg);
-    border-color: var(--plat);
-    background: var(--plat-soft);
-  }
-  .br-tab:has(:focus-visible) { outline: 1.5px solid var(--plat); outline-offset: 2px; }
-  .br-hint { font: 11.5px/1.4 var(--mono); color: var(--mute); }
+  .br-tab:has(:checked) { color: var(--fg); font-weight: 500; }
+  .br-tab:has(:checked)::after { transform: scaleX(1); }
+  .br-tab:has(:focus-visible) { outline: 1.5px solid var(--plat); outline-offset: 2px; border-radius: 3px; }
 
   .branch svg { width: 100%; height: auto; display: block; }
   [data-pick] { cursor: pointer; }

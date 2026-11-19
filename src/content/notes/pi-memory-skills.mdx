@@ -5,7 +5,7 @@ dek: "完整支持 Skill，故意不做内置记忆库。对话、规则更新�
 summary: "Pi 为什么不做内置记忆库，会话树、AGENTS.md 和 Skill 怎样分工；为什么会话中途改文件会让新旧内容出现在同一次请求里，失败的编辑又为什么会被记成已修改。"
 summaryEn: "Why Pi skips a built-in memory store, how its session tree, AGENTS.md and skills divide the work, why editing files mid-session puts old and new content into one request, and why a failed edit still lands in modifiedFiles."
 date: "2026-11-18"
-updated: "2026-11-18"
+updated: "2026-11-19"
 topic: "Agent 工程"
 status: "published"
 pinned: "pi @ f0f9478"
@@ -15,87 +15,49 @@ import CodeTr from '../../components/CodeTr.astro';
 import Infer from '../../components/Infer.astro';
 import FigPiArch from '../../components/FigPiArch.astro';
 import FigPiBranch from '../../components/FigPiBranch.astro';
-import FigPiTimeline from '../../components/FigPiTimeline.astro';
 import FigPiSkillRequests from '../../components/FigPiSkillRequests.astro';
 
 export const source = { repo: "earendil-works/pi", rev: "f0f9478a204cfa8bca49945e9c2b04922e29f7ca" };
 
-**一句话结论：** Hermes、Claude Code 和 Codex 都内置了「跨会话记忆」——专门的记忆文件，加上自动写入工具或后台提炼任务。Pi 走了相反的极简路线：**它完整实现了 Skill，却故意不做内置记忆库**——没有 `MEMORY.md`，没有 `memory` 工具，也没有回合结束后的后台复盘，和它默认不内置子 Agent、计划模式是同一个取舍。<Src {...source} p="packages/coding-agent/README.md" l="15-19" /> 默认情况下，能跨会话留存下来的只有两样东西：**磁盘上直接维护的 Markdown 文件**（`AGENTS.md` 与 `SKILL.md`），以及**会话本身——一棵像 Git 提交一样只追加、可分叉的 JSONL 树**。连 system prompt 的更新、上下文压缩、乃至隐藏一条失败消息，Pi 都不改旧记录，只在文件末尾**再追加一行**；每次发请求前，再从当前节点顺着父指针倒推回根，把这一条路上的记录拼成模型看到的上下文。这套设计里几乎所有看似反直觉的现象，都能用这四个字解释：**只追加，不改写。**
+**一句话结论：** Pi 完整支持 Skill，但故意不做内置记忆库；对话、规则更新、压缩与隐藏旧消息都只往 JSONL 树末尾追加一行，发请求时再从当前节点倒推回根拼出上下文。<Src {...source} p="packages/coding-agent/README.md" l="15-19" />
 
-读完这篇，你应该能回答五个问题：
+读完这篇，你能搞清四件事：
 
-1. 没有内置记忆库，日常用 Pi 时**长期约定、操作流程、排错进展**分别该放进哪里？
-2. 会话开着没关，你在磁盘上同时改了 `AGENTS.md` 和 `SKILL.md`：为什么不执行 `/reload` 直接调用时，发给模型的同一个请求里**既带着改之前的旧 `AGENTS.md`，又带着改之后的新 `SKILL.md` 正文**？
-3. JSONL 日志里明明写着的消息，**为什么**模型可能一次都看不到？切回旧分支时，另一条分支的压缩摘要**还在不在**？
-4. 上下文压缩**保留什么、丢掉什么**？摘要末尾的「已修改文件」清单为什么会记下**根本没改成功**的文件？
-5. 如果想在 Pi 上自己搭一套自动记忆或复盘机制，可以从**哪几个扩展接口**接入？
+1. 没有内置记忆库时，**长期规则、操作步骤、临时试错**在 Pi 里分别怎么存？
+2. 为什么在 JSONL 文件里写着的消息，模型可能一次都看不到？切回旧分支时，另一条分支的压缩摘要去哪了？
+3. 会话中途同时改了 `AGENTS.md` 和 `SKILL.md`、没跑 `/reload` 就调用：为什么同一次请求里会同时带着**旧 `AGENTS.md`、旧正文和新正文**？
+4. 想自己给 Pi 加上长期记忆，该从哪几个扩展接口切入？
 
-本文读的是 `@earendil-works/pi-coding-agent` 1.5.2，固定在提交 `f0f9478`。<Src {...source} p="packages/coding-agent/package.json" l="2-3" />
+本文对照 `@earendil-works/pi-coding-agent` 1.5.2，源码固定在提交 `f0f9478`。<Src {...source} p="packages/coding-agent/package.json" l="2-3" />
 
-## 全景：没有记忆库，知识往哪放
+## 一张图看懂：没有记忆库，知识放哪
 
-先把全局装进脑子里。Pi 里一切能影响模型上下文的输入，只走下面三条通道：
+Hermes、Claude Code 和 Codex 都自带跨会话记忆文件和自动提炼任务。Pi 走了相反的极简路线——没有 `MEMORY.md`，没有 `memory` 工具，也没有后台复盘。
+
+一切能进入模型上下文的信息，只走下面三条路：
 
 <FigPiArch />
 
-| | 会话树（对话与状态日志） | 上下文文件（常驻规则） | Skill（按需读取的操作指南） |
+| 通道 | 怎么进模型 | 何时读磁盘 | 适合放什么 |
 |---|---|---|---|
-| 位置 | `~/.pi/agent/sessions/--<cwd>--/<时间>_<id>.jsonl` | 个人全局目录 `~/.pi/agent/`，加上从 `cwd` 一路到文件系统根的每层目录 | `~/.pi/agent/skills`、`~/.agents/skills`、项目 `.pi/skills`、到 Git 根为止的 `.agents/skills`、Pi 包 |
-| 存什么 | 聊天消息、系统提示词与后续变更、压缩摘要、消息隐藏/替换、分支摘要 | 跨任务都成立的项目规范或个人偏好 | 某类任务的步骤说明、参考文档与配套脚本 |
-| 怎样进入模型 | 每次请求前从当前叶节点 `leaf` 倒推回根，现场拼出消息序列 | 作为 `<project_context>` 段放进 system prompt，每次请求整份带上 | 平时只在 system prompt 的 `<skills>` 段放名字、简介和文件路径；正文由模型用 `read` 打开，或由用户敲 `/skill:name` 展开 |
-| 何时读磁盘 | 打开会话时读一次；之后在内存追加并同步写盘 | 只在进程启动和手动执行 `/reload` 时读取 | 索引表只在启动或 `/reload` 时扫描生成；正文在每次 `/skill:name` 或 `read` 时直接读文件 |
-| 谁来写 | 运行时自动追加 | 手动编写，或让模型用 `write` / `edit` 修改文件 | 手动编写、安装 Pi 包，或让模型用 `write` / `edit` 修改文件 |
+| **会话树**（`*.jsonl`） | 每次请求前，从当前叶节点 `leaf` 倒推回根拼装 | 打开会话时读一次，之后边追加边写盘 | 当前任务的聊天与试错（走不通就 `/tree` 退回分叉） |
+| **上下文文件**（`AGENTS.md`） | 整份塞进 system prompt，每轮都占窗口 | 只在启动和 `/reload` 时读进内存 | 简短、所有任务都要遵守的硬规则（命令、边界、风格） |
+| **Skill**（`SKILL.md`） | 平时只在 `<skills>` 清单里占一行简介和路径；需要时再读正文 | 索引表在启动/`/reload` 时扫；**正文每次调用现读磁盘** | 几百行的发布流程、排障手册和脚本 |
 
-看懂这张表，关键在两行：
+抓住最后一列和「何时读磁盘」这两栏，整套系统的分工就立住了：**规则常驻、Skill 按需、试错留在分支树里**。
 
-- **「怎样进入模型」决定了什么内容该放哪里。** `AGENTS.md` 每次请求都会整份塞进提示词、一直占用上下文窗口，适合放简短、做任何任务都要遵守的硬约束（构建命令、目录边界、代码风格）；Skill 平时只占一行简介，适合放几百行的发布流程、排障手册和脚本；临时试错留在会话树里，走不通就用 `/tree` 退回分叉点重走，不必担心污染后面的上下文。
-- **「何时读磁盘」决定了修改何时生效。** 会话树在每次请求前都会重新拼装，所以切分支和压缩当场生效；`AGENTS.md` 和 Skill 索引表只在启动或 `/reload` 时读进内存，所以你在编辑器里改了它们，正在跑的会话并不会察觉；唯独 Skill 的**正文**不走内存缓存，每次调用都直接去磁盘读文件。所以只要在会话中途同时改了 `AGENTS.md` 和 `SKILL.md`、没跑 `/reload` 就再次调用这个 Skill，发出去的同一个请求里就会同时装进「旧版 `AGENTS.md` + 上一轮留下的旧版 `SKILL.md` 正文 + 本轮刚读出的新版 `SKILL.md` 正文」。
+## 唯一底层规则：只追加，不改写
 
-## 一条底层规则：只追加，不改写
+普通聊天客户端把会话存成数组：压缩就删掉旧元素换摘要，改 system prompt 就覆写第 0 项。一旦覆盖，就没法退回半小时前另试一条路，事后也还原不出当时模型到底看到了什么提示词。
 
-普通聊天客户端把会话存成一个数组：压缩了就把旧元素删掉换成摘要，改了 system prompt 就把第 0 项覆盖掉。一旦这样做，会话就只能往前走——没法像代码一样回退到半小时前的某个分叉点去试另一条路，事后也没法从日志还原「第 5 轮回答出错时，模型看到的提示词到底长什么样」。
+Pi 把整个会话存成一棵**只追加的 JSONL 树**。每行自带 `id` 和 `parentId`，指针 `leaf` 标记你此刻停在哪里——用 `/tree` 回到旧节点时一行不删，只是把 `leaf` 挪回去，新发言自动长出一条新分支。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="984-995" /> <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1591-1602" />
 
-Pi 的做法是把整份会话存成一棵**只追加的树**。文件里的每一行都是一个带 `id` 和 `parentId` 的节点，当前位置叫 `leaf`（叶指针）：
+最精巧的地方在于：**连非聊天状态的变化，也全都作为节点追加到树尾**：
 
-- 正常聊天时，新节点挂在当前 `leaf` 下面，`leaf` 跟着往前移；
-- 用 `/tree` 回退到较早的一轮时，Pi **不删任何旧行**，只是把 `leaf` 挪回那个旧节点；接下来新说的话会自动长成另一条分支。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1591-1602" />
-
-<CodeTr>
-
-```ts title="packages/coding-agent/src/core/session-manager.ts · 984–994"
-/**
- * Manages conversation sessions as append-only trees stored in JSONL files.
- *
- * Each session entry has an id and parentId forming a tree structure. The "leaf"
- * pointer tracks the current position. Appending creates a child of the current leaf.
- * Branching moves the leaf to an earlier entry, allowing new branches without
- * modifying history.
- *
- * Use buildSessionContext() to get the resolved message list for the LLM, which
- * handles compaction summaries and follows the path from root to current leaf.
- */
-```
-
-<div slot="tr">
-
-```ts title="packages/coding-agent/src/core/session-manager.ts · 984–994"
-/**
- * 以只追加的树管理会话，存为 JSONL 文件。
- *
- * 每个会话条目有 id 和 parentId，构成树结构。"leaf" 指针记录当前位置。
- * 追加会在当前叶节点下创建一个子节点。分支是把叶指针移回较早的条目，
- * 这样就能开新分支而不改动历史。
- *
- * 用 buildSessionContext() 得到交给 LLM 的消息列表：它处理压缩摘要，
- * 并沿根到当前叶的路径走一遍。
- */
-```
-
-</div>
-</CodeTr>
-<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="984-995" />
-
-真正体现功力的地方在于：**Pi 把原本不属于「聊天消息」的变化，也全都设计成了树上的追加节点**。就连 system prompt 和可用工具列表也不例外——会话开头的第 1 条 `system` 消息写下初始提示词（按 `<tools>`、`<rules>`、`<project_context>`、`<skills>` 等带名字的 XML 段落分块保存）和初始工具集；中途执行 `/reload` 改了规则或增减了工具，Pi 不会回头去改开头那条消息，而是**对比新旧内容，只把发生变化的段落打包成一条新的 `system` 消息**，追加到当前分支末尾。<Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="187-192" /> <Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="216-228" />
+- **规则或工具变更（新 `system` 消息）**：Pi 按 `<tools>`、`<rules>`、`<project_context>`、`<skills>` 等带名字的 XML 段落组织初始提示词；`/reload` 改了规则后，不回头改第 1 条消息，只把**有变化的段落**打包成一条新 `system` 消息追加到当前分支末尾。<Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="187-192" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1826-1848" />
+- **上下文压缩（`compaction`）**：追加一条摘要节点，记录「从哪条近期消息开始保留原文」（`firstKeptEntryId`），同时把那一刻合并后的完整 `system` 状态存成快照。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1278-1305" />
+- **隐藏或替换旧消息（`context_edit`）**：追加一条指向旧条目 `targetId` 的记录，`replacement: null` 代表对模型隐藏它，原消息在 JSONL 里纹丝不动。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="174-180" />
+- **跨分支带走结论（`branch_summary`）**：`/tree` 切走时若选择总结旧分支，摘要追加到**目标分支**，旧分支保持原样。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="4280-4292" />
 
 <CodeTr>
 
@@ -130,40 +92,23 @@ Pi 的做法是把整份会话存成一棵**只追加的树**。文件里的每�
 </CodeTr>
 <Src {...source} p="packages/ai/src/types.ts" l="559-585" />
 
-顺着源码数一遍，整套系统里有六种操作都在遵守同一条「只追加」纪律：
+这样做不仅让分叉回退零成本，还能**保住服务端前缀缓存（prefix cache）**：对允许对话中途出现 `system` 消息的模型接口，新更新直接留在末尾，前面几万 token 的历史前缀一字未动；对只认开头一条 `system` 的接口，才在发送前合并成新开头。<Src {...source} p="packages/ai/src/utils/transcript.ts" l="104-120" /> 就连请求模型生成压缩摘要这种一次性调用，Pi 都特意传了 `cacheRetention: "none"`，不花冤枉钱写缓存。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="626-632" /> 对比 [Hermes 的冻结快照](/notes/hermes-memory-skills/#一条约束不要弄脏前缀缓存)：Hermes 靠「会话中途不改 system prompt」保缓存，Pi 靠「允许更新但只往末尾追加差异」保缓存。
 
-1. **普通对话（`message`）**：挂在当前 `leaf` 下；如果写磁盘失败，连刚放进内存的条目和 `leaf` 指针也当场回滚，绝不留下指向空父节点的脏状态。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1199-1232" />
-2. **提示词与工具变更（追加 `system` 消息）**：对比当前分支已生效的各个段落与新内容，只把有变化的段落作为一条新 `system` 消息追加进去。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1826-1848" />
-3. **隐藏或替换旧消息（`context_edit`）**：追加一条指向旧条目 `targetId` 的编辑记录，`replacement: null` 代表对模型隐藏它，原消息在 JSONL 里纹丝不动。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="174-180" />
-4. **上下文压缩（`compaction`）**：追加一条摘要记录，用 `firstKeptEntryId` 指明从哪条近期消息开始保留原文，同时把那一刻合并后的完整 `system` 状态存成快照。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1278-1305" />
-5. **跨分支带走经验（`branch_summary`）**：`/tree` 切走时如果选择总结旧分支，摘要会作为新节点追加到**切入的目标位置**，离开的那条旧分支本身不被改动。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="4280-4292" />
-6. **上下文超限恢复**：某次回答因超限报错时，先追加 `context_edit` 把这次失败回答隐藏掉，再追加 `compaction` 压缩并自动重试。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="3211-3216" />
+## 会话树与压缩：一份文件怎样算出不同上下文
 
-这样做除了让分叉回退零成本，还有一个实打实的性能收益：**保住服务端的前缀缓存（prefix cache）**。不同模型接口对 `system` 消息的规矩不同——有的允许对话中间再插 `system` 消息，有的只认请求最开头那一条。对前者，Pi 直接把这条新 `system` 消息留在对话末尾，前面几万 token 的历史前缀一个字没变，照常命中缓存；对后者，Pi 在发请求前把所有 `system` 消息合并成一条新开头，每次改规则也只丢一次缓存。<Src {...source} p="packages/ai/src/utils/transcript.ts" l="104-120" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="657" /> 就连请求模型生成压缩摘要时，Pi 都特意传了 `cacheRetention: "none"`，因为这种一次性提示词下轮不会再用，没必要花钱写缓存。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="626-632" />
+同一份会话里，`/tree` 在原文件内切分支，`/fork` 把某条历史消息拆成独立新文件，`/clone` 把当前分支拷成新会话。<Src {...source} p="packages/coding-agent/docs/sessions.md" l="36-48" /> 正因为一份 JSONL 里可能并存好几条分叉，**文件的行顺序不是模型看到的顺序**。每次发请求前，`SessionManager` 按三步组装上下文：
 
-把它和 Hermes 对照最能看出门道：两边都在尽力保住前缀缓存，Hermes 选的是**在会话中途冻结 system prompt 里的记忆快照**，写入只落磁盘、下轮不改提示词；Pi 选的是**允许提示词中途更新，但只往末尾追加变化的部分**。[对照 Hermes 的冻结快照](/notes/hermes-memory-skills/#一条约束不要弄脏前缀缓存)
+1. **找祖先链**：从当前 `leaf` 顺着 `parentId` 走回根，倒序排成一条消息链；所有旁支无论多新一律忽略。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="390-416" />
+2. **截断到最近一次压缩**：取这条链上**最后一条** `compaction`，把更早的消息换成「压缩记录（先放合并好的 `system` 快照，再放摘要）+ `firstKeptEntryId` 起的近期原文 + 压缩后的新消息」。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="468-512" />
+3. **应用 `context_edit`**：对留下的条目应用链上最后一条指向它的编辑——`null` 就隐藏，否则替换正文。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="519-574" />
 
-## 会话树：一份文件怎样算出不同上下文
+同一份 JSONL 在分支 A 和分支 B 上会算出两套完全不同的上下文：
 
-### 落盘规则
+<FigPiBranch />
 
-会话文件默认按启动时的工作目录分组，存在 `~/.pi/agent/sessions/--<工作目录路径（斜杠换成 -）>--/` 下，文件名是 `<时间戳>_<会话ID>.jsonl`。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="586-595" /> 可以用 `--session-dir`、`PI_CODING_AGENT_SESSION_DIR` 或 `sessionDir` 改存储目录，也可以传 `--no-session` 纯内存运行。<Src {...source} p="packages/coding-agent/docs/sessions.md" l="64-68" />
+因为每步只沿当前祖先链计算，**压缩摘要和 `context_edit` 都严格属于它们所在的那条分支**。切回分支 A，分支 B 末端的 `checkpoint` 立刻退出视野，A 的原始消息完好回归。
 
-有两处工程细节很考究：
-
-- **光打开不说话，不留空文件。** 启动时生成的模型信息、思考档位和初始 `system` 消息先放在内存里；直到出现第一条 `user` 或 `assistant` 消息，才连同文件头信息一次性建文件写盘。代码注释专门解释了为什么在 `user` 消息一发出就立刻写盘，而不等 `assistant` 回复：万一第一轮请求中途断了，用户敲进去的长提示词也不会丢。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1168-1197" />
-- **损坏行自动跳过。** 读取会话文件时，遇到损坏或手动改坏的 JSON 行会直接忽略，不会因为一行脏数据废掉整份会话。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="617-625" />
-
-### 每次请求前的三步组装
-
-用户在同一个会话里可以用 `/tree` 切换分支，也可以用 `/fork` 从某条历史消息拆出独立的新会话文件，或用 `/clone` 把当前分支拷成新会话。<Src {...source} p="packages/coding-agent/docs/sessions.md" l="36-48" /> 正因为一份 JSONL 文件里可能并存着好几条分叉，**用编辑器从上往下读到的行顺序，并不是模型看到的顺序**。
-
-每次发请求前，`SessionManager` 按下面三步从树里算出当前上下文（源码叫 `buildSessionProjection`）：
-
-1. **顺着父指针找祖先链。** 从当前 `leaf` 一路沿 `parentId` 走回根节点，再倒过来排成一条从旧到新的消息链。凡是不在这条链上的旁支节点，不管时间戳有多新，一律忽略。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="390-416" />
-2. **截断到最近一次压缩。** 只在上面这条消息链里找**最后一条** `compaction` 记录。如果找到了，这条记录之前的早期消息就不再逐条发送，换成「压缩记录本身 + 从 `firstKeptEntryId` 开始保留的近期条目 + 压缩之后新追加的条目」：
-
-```ts title="packages/coding-agent/src/core/session-manager.ts · 499–511"
+```ts title="packages/coding-agent/src/core/session-manager.ts · 499–511（为什么跳过保留区里的 system）"
 const contextEntries: SessionEntry[] = [compaction];
 let foundFirstKept = false;
 for (let i = 0; i < compactionIdx; i++) {
@@ -178,111 +123,58 @@ for (let i = 0; i < compactionIdx; i++) {
 contextEntries.push(...path.slice(compactionIdx + 1));
 return contextEntries;
 ```
-<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="468-512" />
+<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="461-512" />
 
-注意上面第 8 行特意跳过了保留区间里的 `system` 消息：因为在生成 `compaction` 记录的那一刻，Pi 已经把当时生效的所有 `system` 消息合并成一份完整快照，存进了 `compaction.systemMessage` 字段里；组装上下文时，Pi 会先放上这份 `system` 快照、再放上摘要正文，如果保留区间里中途追加过的旧 `system` 消息不跳过，就会被重复应用一遍。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="461-464" /> <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1286-1302" />
+第 8 行特意跳过保留区里的旧 `system` 消息，因为压缩时 `compaction.systemMessage` 已经把此前所有提示词更新合并成一份完整快照，不跳过就会重复应用。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1286-1302" />
 
-3. **应用消息编辑（`context_edit`）。** 对留下的每个条目，检查这条链上有没有指向它的 `context_edit`（有多条时取最后一条）：`replacement` 为 `null` 就把该条目从本次上下文里彻底隐去；否则只替换消息正文，保留角色和元数据。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="519-574" />
+### 超限恢复、两个预算参数与「假修改」陷阱
 
-把这三步画出来，就能一眼看明白为什么同一份 JSONL 会算出完全不同的上下文：
+- **超限恢复为什么先写 `context_edit` 再压缩**：请求因超限报错或中途截断时，失败回答已记在树里（留着计费排查）。Pi 先追加 `context_edit(targetId, null)` 隐藏这次失败记录，再压缩并重试——**最多试一次**防止死循环烧钱；哪怕压缩本身中途失败，隐藏记录仍留在分支上，下次发请求不会再带进坏记录。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="3180-3216" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="85-98" />
+- **两个最容易搞混的预算**：`reserveTokens`（默认 **16,384**）决定**什么时候触发**（`contextTokens > contextWindow - reserveTokens`，随时也能敲 `/compact [补充要求]` 手动压缩）；`keepRecentTokens`（默认 **20,000**）决定**压的时候留多少近期原文**。连续压缩会在旧摘要上增量改写，每次都会再丢一层细节；切点绝不劈开工具调用与 `toolResult`，单轮超长时则把本轮前半程单独压成第二份摘要拼接。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="267-270" /> <Src {...source} p="packages/coding-agent/docs/compaction.md" l="27-41" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="872-894" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="976-1040" />
+- **「已修改文件」清单的陷阱**：摘要末尾自动附带 `<read-files>` 和 `<modified-files>`，但统计代码 `addFileOp` **只看工具调用的参数，完全不核对执行结果**（包括 codemode 批量脚本记在工具结果里的嵌套调用）——凡是调用过 `edit` 或 `write` 的路径一律归进 `modifiedFiles`（同时从 `readFiles` 剔除），跨次压缩还会一路累加。<Src {...source} p="packages/coding-agent/src/core/compaction/utils.ts" l="27-73" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="57-88" /> <Src {...source} p="packages/ai/src/types.ts" l="627-639" />
 
-<FigPiBranch />
+用固定提交源码和内存模拟服务商 `fauxProvider` 实测一次必定报错的 `edit` 调用（目标文件 `release.md` 内容为 `unchanged`，替换不存在的文字），结果直接印证了这个坑：
 
-**压缩摘要和消息编辑都严格属于它们所在的那条分支。** 在分支 B 上做了压缩，摘要节点挂在 B 末端；一旦用 `/tree` 切回分支 A，从 A 倒推回根的路上根本没有那个压缩节点，模型看到的立刻变回 A 的原始历史。同理，在 A 上用 `context_edit` 隐去了一条消息，切去 B 时也互不相干。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1377-1416" />
-
-### 超限恢复为什么先写 `context_edit` 再压缩
-
-`context_edit` 最重要的内置用处，是处理模型上下文超限（context overflow）或输出被提前截断。
-
-设想一次请求刚发出去，服务商返回了上下文超限错误，或者回答卡在半截停住了。此时这条失败的 `assistant` 记录已经写进了会话树（保留下来供计费统计和问题排查）。如果直接在这上面跑压缩，压缩器要么把半截废话总结进去，要么连压缩本身也超限。
-
-Pi 的恢复顺序是：先把这次失败回答及它带出的工具结果逐一追加 `context_edit(targetId, null)` 从模型视野里摘掉，然后跑一次自动压缩，再重新发起请求；**整个恢复最多只试一次**，再超限就直接报错停下，防止死循环烧钱。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="3180-3216" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1334-1340" /> 这里还有一个很稳健的细节：万一紧接着的压缩请求因为网络故障或用户按取消而没跑成，前面写下的那几条「隐藏失败请求」的 `context_edit` **依然保留在分支上**——分支上虽然没有新摘要，但下次发请求时，那次失败记录已经不会再混进上下文了。<Src {...source} p="packages/coding-agent/docs/compaction.md" l="85-98" />
-
-## 上下文压缩：滑动窗口与「假修改」陷阱
-
-### 触发条件与两个预算参数
-
-自动压缩的判断公式只有一行：
-
-```ts title="packages/coding-agent/src/core/compaction/compaction.ts · 267–270"
-export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
-	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+```json title="失败 edit 的实测结果（工具报错、文件未动，路径仍进 modifiedFiles）"
+{
+  "toolError": true,
+  "onDisk": "unchanged",
+  "readFiles": [],
+  "modifiedFiles": ["release.md"]
 }
 ```
-<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="267-270" />
 
-初学者看配置最容易把两个数字搞混：<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="126-130" />
+<Infer />源码没有解释为何不核对成败；从结构上看，`extractFileOpsFromMessage` 每次只单独看一条消息，不去把 `assistant` 调用和下一条 `toolResult.isError` 配对，实现最省事。代价是：`<modified-files>` 只能当「模型试图碰过的路径」参考，不能当成文件已改好的证据。
 
-- `reserveTokens`（默认 **16,384**）：只管**什么时候触发**——给接下来的回答和工具调用预留多少余量。比如 200K 窗口的模型，上下文涨到 `200,000 - 16,384 = 183,616` token 以上就启动压缩。
-- `keepRecentTokens`（默认 **20,000**）：只管**压的时候留多少近期原文不压**——从最新一条消息往回数，攒够约 20,000 token 的近期对话原样保留，更早的部分才送去生成摘要。两个值都可以按 `provider/modelId` 单独覆盖。<Src {...source} p="packages/coding-agent/docs/compaction.md" l="417-457" />
+<details>
+<summary>展开看：落盘细节（空文件保护、损坏行跳过）与分支实测脚本 probe.mjs</summary>
+<div class="d-body">
 
-除了每轮工具跑完后的阈值检查和上面的超限恢复，用户也可以随时敲 `/compact [补充要求]` 手动压缩，指定摘要重点保留哪方面信息。<Src {...source} p="packages/coding-agent/docs/compaction.md" l="27-41" />
+- **默认路径**：`~/.pi/agent/sessions/--<工作目录路径（斜杠换成 -）>--/<时间戳>_<会话ID>.jsonl`，可用 `--session-dir`、`PI_CODING_AGENT_SESSION_DIR` 修改，或传 `--no-session` 纯内存运行。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="586-595" /> <Src {...source} p="packages/coding-agent/docs/sessions.md" l="64-68" />
+- **工程防呆**：打开不说话不建空文件，第一条 `user` 消息一发出就立刻连同文件头写盘（防止首轮断网丢长提示词）；写盘抛错立刻回滚内存条目和 `leaf`；读盘遇到损坏 JSON 行直接跳过。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="617-625" /> <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="1168-1232" />
+- **分支切换隔离实测**（内存 `SessionManager` 实测，与上游分支压缩回归测试一致 <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="126-147" /> <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="211-246" />）：
 
-### 多次压缩怎样接力，超长单轮怎样切分
-
-用一组具体数字看懂连续压缩：假设第 1 次压缩把前 160K 历史压成了摘要 S1，留下了最近 20K 原文（起点记为 `firstKeptEntryId`）。继续聊到又触发第 2 次压缩时，Pi 从上次留下的那 20K 原文起点开始往后取需要总结的范围，把「**上次幸存的旧原文 + 这期间新增的早期对话**」连同 `<previous-summary>` 里的 **S1** 一起交给摘要模型，用一份「增量更新」提示词合成新摘要 S2。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="714-727" /> <Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="872-894" /> 这意味着：**每次再次压缩都会损耗一层细节**——第 1 次没写进 S1 的内容，第 2 次不可能再找回来。
-
-选切分点还有两条硬规矩：
-
-- **绝不把工具调用和工具结果劈成两半。** 切点只能落在 `user`、`assistant`、bash 执行或自定义消息上，不能落在 `toolResult` 上，否则保留段的开头会出现一条找不到对应调用的孤立结果，直接被模型接口拒收。<Src {...source} p="packages/coding-agent/docs/compaction.md" l="128-136" />
-- **单轮排错太长时，拆成两份摘要再拼接。** 比如你只说了一句「把测试修好」，模型一口气调了 30 次工具、单这一轮就超过了 20K 保留预算。此时切点不得不落在这轮中间的某条 `assistant` 消息上：Pi 会把这轮之前的旧历史总结成一份摘要，再把**这一轮前半程做过的事**单独总结成第二份摘要，用分隔线拼在一起，好让保留下来的后半程工具操作还记得最初的问题是什么：<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="976-1040" />
-
-```ts title="packages/coding-agent/src/core/compaction/compaction.ts · 1018"
-summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
+```js title="probe.mjs"
+import {SessionManager} from './packages/coding-agent/src/core/session-manager.ts';
+const log = SessionManager.inMemory();
+const say = text => log.appendMessage({role:'user', content:text, timestamp:0});
+const root=say('base'); const left=say('attempt A');
+log.branch(root); const right=say('attempt B');
+log.appendCompaction('checkpoint', right, 1200);   // 叶在 B → ['checkpoint', 'attempt B']
+log.branch(left);                                  // 切回 A → ['base', 'attempt A']
+log.appendContextEdit(left, null);                 // A 隐藏 → ['base']（日志三行仍在）
 ```
 
-### 「已修改文件」清单为什么会记下失败的编辑
+</div>
+</details>
 
-为了防止压缩后模型忘了自己动过哪些文件，默认压缩器会在摘要末尾自动附上一份 `<read-files>` 和 `<modified-files>` 清单，同时写进结构化的 `details` 字段。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="1042-1056" /> 但看一眼提取代码就会发现一个必须留心的坑——**它只看工具调用的参数，完全不看执行结果**：
+## AGENTS.md 与 Skill：为什么一次请求会新旧并存
 
-```ts title="packages/coding-agent/src/core/compaction/utils.ts · 48–62"
-function addFileOp(toolName: string, args: Record<string, unknown> | undefined, fileOps: FileOperations): void {
-	const path = typeof args?.path === "string" ? args.path : undefined;
-	if (!path) return;
-	switch (toolName) {
-		case "read":
-			fileOps.read.add(path);
-			break;
-		case "write":
-			fileOps.written.add(path);
-			break;
-		case "edit":
-			fileOps.edited.add(path);
-			break;
-	}
-}
-```
-<Src {...source} p="packages/coding-agent/src/core/compaction/utils.ts" l="27-73" />
+会话树管的是「单次会话怎么分叉和压缩」；能跨会话留下来的，是另外两条通道——磁盘上的 `AGENTS.md` 和 `SKILL.md`。把它们各自的读盘时机摆在一起，开头那个「新旧并存」的悬念立刻就通了。
 
-代码遍历待摘要区间里 `assistant` 发出的 `read`、`write`、`edit` 调用，以及 codemode（让模型写脚本批量调工具的模式）记在工具结果里的嵌套调用：凡是传给 `edit` 或 `write` 的路径一律归进 `modifiedFiles`（如果同一路径还传给过 `read`，会从 `readFiles` 里剔除，只留「只读未改」的文件）。**哪怕那次 `edit` 因为匹配不到旧文本当场报错、磁盘文件一个字节没变，路径照样进 `modifiedFiles`**；而且下一次压缩还会把上一次压缩记下的文件集合直接并进来。<Src {...source} p="packages/coding-agent/src/core/compaction/compaction.ts" l="57-88" /> <Infer />源码没有说明为什么不核对成败；从结构上看，`extractFileOpsFromMessage` 每次只单独看一条消息，不去把前一条 `assistant` 的工具调用与下一条 `toolResult.isError` 配对核对（就连工具结果里自带 `status` 字段的嵌套调用记录，也直接走同一个只看参数的 `addFileOp`），实现最简单。<Src {...source} p="packages/ai/src/types.ts" l="627-639" /> 代价很明确：这份清单只能当作「模型试图碰过哪些路径」的线索，不能当作「文件已经改好」的证据。后面的实验二专门验证了这一点。
+**上下文文件（`AGENTS.md`）按目录叠加、同目录覆盖，且没有文件监听。** Pi 先读 `~/.pi/agent/`，再从 `cwd` 一路向上扫到**文件系统根目录 `/`**（不停在 Git 根），同目录只取第一个命中的文件：`AGENTS.override.md > AGENTS.md > AGENTS.MD > CLAUDE.md > CLAUDE.MD`。<Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="214-233" /> <Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="262-304" /> 它在启动时读进内存后就不再重读——会话中途改了 `AGENTS.md`，必须敲 `/reload`，新内容才会作为一条新 `system` 更新追加进来。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1798-1824" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="3831-3873" />
 
-## 上下文文件：层层叠加，但每层只取一份
-
-讲完会话树，再看左边第一类磁盘资源——`AGENTS.md` 等静态规则文件。
-
-加载顺序分两步：先读个人全局目录（默认 `~/.pi/agent/`），再从当前工作目录 `cwd` 一路向上扫描每一级父目录，**一直扫到文件系统根目录为止**（注意：不在 Git 仓库根停下），最后按**从远到近**的顺序拼进 system prompt 的 `<project_context>` 段。<Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="262-304" /> <Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="79-86" />
-
-在**同一个目录**内部，Pi 按下面的优先级找候选文件名，**命中第一个就停，不会把同目录的 `AGENTS.md` 和 `CLAUDE.md` 叠在一起**：
-
-```ts title="packages/coding-agent/src/core/resource-loader.ts · 214–215"
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
-```
-<Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="214-233" />
-
-这带来两条非常实用的推论：
-
-- **不同目录之间是叠加关系，同一目录之内才是覆盖关系。** 在子目录 `repo/packages/web/` 放一份 `AGENTS.override.md`，只会替掉 `web/` 这一层自己的 `AGENTS.md`，仓库根目录 `repo/AGENTS.md` 照样加载。另外如果把额外检出的 Git 工作树（`git worktree`）建在主仓库目录里面（比如 `repo/.worktrees/feat`），且该工作树根目录自己有上下文文件，Pi 会自动跳过主仓库根那一份，防止同一份仓库级规则被加载两遍。<Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="235-260" />
-- **既不要求项目信任，也不会自动热更新。** 文档明确写明发现上下文文件不需要经过项目信任确认。<Src {...source} p="packages/coding-agent/docs/configuration.md" l="41-47" /> 同时，整个资源加载器和会话层都没有挂文件监听器——会话跑起来之后，你在外面改了 `AGENTS.md`，必须执行 `/reload`（或重开会话），新内容才会作为新的 `system` 更新追加进当前会话。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1798-1824" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="3831-3873" />
-
-## Skill：没有专用工具，内存只存索引、正文现用现读
-
-理解 Pi 的 Skill 机制，只要抓住一个和别的框架完全不同的设计：**Pi 没有专门的 `skill` 工具。**
-
-Hermes 有 `skill_view`，OpenCode 和 Claude Code 都注册了专门的 `Skill` 工具；而 Pi 只在 system prompt 的 `<skills>` 段落里放一张 `<available_skills>` XML 清单，写明每个可用 Skill 的名字、简介和**磁盘绝对路径**，然后直接告诉模型：**「遇到匹配的任务时，用 `read` 工具去读那个路径。」** <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="347-388" /> 如果当前连 `read` 和 `bash` 这两个能读文件的工具都被关掉了，Pi 干脆把整段 `<skills>` 清单都从 system prompt 里省掉——列出来模型也打不开。<Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="173-181" />
-
-把这个设计与手动输入 `/skill:name` 的处理代码放在一起看，所有行为立刻一目了然：
+**Skill 则完全相反：Pi 没有专门的 `skill` 工具，内存只存索引、正文现用现读。** Pi 只在 system prompt 的 `<skills>` 段落里放一张 `<available_skills>` 清单（名字 + 简介 + 磁盘绝对路径），直接让模型用 `read` 去读文件（如果连 `read` 和 `bash` 都被禁了，整段 `<skills>` 直接省掉）。<Src {...source} p="packages/coding-agent/src/core/skills.ts" l="347-388" /> <Src {...source} p="packages/coding-agent/src/core/system-prompt.ts" l="173-181" /> 而用户手敲 `/skill:name` 时，同样只查索引拿路径，然后当场 `readFileSync`：
 
 <CodeTr>
 
@@ -314,168 +206,74 @@ try {
 </CodeTr>
 <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="2309-2338" />
 
-**Pi 在内存里只缓存「名字 → 简介 + 文件路径」这张索引表，从不缓存 Skill 正文。** 由此直接推出三条日常必定会遇到的现象：
+这直接推出三条结果：
 
-1. **只改已有 Skill 的正文 → 立即生效，不用 `/reload`。** 索引表里的文件路径没变，无论模型调 `read` 还是你敲 `/skill:name`，都是当场去磁盘读最新文件。不过要注意：之前轮次已经展开进对话的旧正文是一条普通 `user` 消息，按「只追加」规则仍留在当前分支历史里。
-2. **改了 Skill 的 `description` 或 `disable-model-invocation` → 必须 `/reload`。** 这两项决定 system prompt 的 `<skills>` 清单怎么写（设为 `true` 的条目从清单里隐藏，只允许人工 `/skill:name` 调用）；不重载，模型看到的简介还是旧的。<Src {...source} p="packages/coding-agent/src/core/skills.ts" l="352-360" />
-3. **新建或改名了 Skill → 必须 `/reload`。** 索引表里还没有这个名字，模型不知道它存在；你手敲 `/skill:新名字` 也会走上面第 2 行的 `return text`，原封不动变成一句普通聊天文字发给模型。
+1. **只改已有 Skill 的正文** → 不用 `/reload`，下次 `read` 或 `/skill:name` 立刻拿到新正文；但之前轮次展开过的旧正文作为普通 `user` 消息仍留在历史里。
+2. **改了 `description` 或 `disable-model-invocation`** → 必须 `/reload`，因为 `<skills>` 清单缓存在内存里。<Src {...source} p="packages/coding-agent/src/core/skills.ts" l="352-360" />
+3. **新建或改名了 Skill** → 必须 `/reload`，否则索引里找不到，手敲 `/skill:新名字` 会原封不动当普通聊天发给模型。
 
-### 扫描目录、重名优先级与信任检查
-
-再看加载 Skill 时的四条具体规则：
-
-- **文件形态与校验**：标准形式是 `skills/<name>/SKILL.md`（识别到 `SKILL.md` 后不再往子目录递归，方便同目录放 `scripts/` 和 `references/`），同时也兼容在 Skill 根目录下直接放独立 `.md` 文件（Pi 仓库自己的 `.pi/skills/` 就这样放）。没写 `description` 或留空的文件会被跳过；名字优先取文件头部的 YAML 元数据（frontmatter），没写就用父目录名，超过 64 字符或含大写只记一条警告、**照样加载**。<Src {...source} p="packages/coding-agent/src/core/skills.ts" l="163-167" /> <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="277-345" />
-- **扫描路径与停止点**：用户级扫 `~/.pi/agent/skills` 和 `~/.agents/skills`；项目级扫 `.pi/skills` 以及从 `cwd` 往上**到 Git 仓库根即止**的 `.agents/skills`（对比前面一路扫到文件系统根的 `AGENTS.md`），此外还能从 Pi 包（npm / git）和扩展接口加载。<Src {...source} p="packages/coding-agent/src/core/package-manager.ts" l="538-557" /> <Src {...source} p="packages/coding-agent/src/core/package-manager.ts" l="2700-2754" />
-- **同名冲突**：底层按扫描顺序保留**第一个**登记的同名项并记一条重名告警（`collision`）；上层固定的扫描顺序保证：**项目 Skill > 用户 Skill > Pi 包里的 Skill**。<Src {...source} p="packages/coding-agent/src/core/skills.ts" l="426-455" /> <Src {...source} p="packages/coding-agent/test/suite/regressions/2781-skill-collision-precedence.test.ts" l="91-105" />
-- **信任门与权限边界**：项目里的 `.pi/skills` 和 `.agents/skills` **必须通过项目信任检查**（`defaultProjectTrust` 默认 `ask`，非交互模式且未授权时直接视为不可信），但同一仓库的 `AGENTS.md` 却不需要经过信任确认。<Src {...source} p="packages/coding-agent/src/core/project-trust.ts" l="47-96" /> <Infer />源码没有解释为什么两边待遇不同；从信任弹窗的提示语看，同一道信任门同时守着可直接执行代码的 `.pi/extensions`、可挂载包与 MCP 的 `.pi/settings.json` 以及常带可执行脚本的 Skill——它的防线画在「是否会引入可执行代码或外部包」上，而不是防提示词注入。<Src {...source} p="packages/coding-agent/src/core/project-trust.ts" l="25-27" /> <Src {...source} p="packages/coding-agent/docs/skills.md" l="65" /> 同理，虽然文档表格按 Agent Skills 规范列出了 `allowed-tools` 字段，源码里其实没有任何读取或授权逻辑——Pi 本身不做内置工具权限门禁，容器或沙箱隔离由外部环境负责。<Src {...source} p="packages/coding-agent/docs/skills.md" l="78" /> <Src {...source} p="README.md" l="90" />
-
-## 一次修改，何时被谁看到
-
-把前面讲的三条通道放进同一条时间线，跟踪一次规则修改和一次 Skill 修订：
-
-<FigPiTimeline />
-
-把常见操作场景汇总成一张速查表：
-
-| 场景 | 改了 `AGENTS.md` | 改了已有 Skill 的正文 | 新建 Skill 或改了简介 | 刚聊的一轮对话消息 |
-|---|---|---|---|---|
-| 同一会话的下一轮请求 | 看不到，system prompt 仍是旧内容 | `/skill:name` 和模型 `read` 都拿到新正文；早先展开过的旧正文仍留在分支历史里 | 索引表没变；敲 `/skill:新名字` 会当普通文字发走 | 在当前分支上立即可见 |
-| 执行 `/reload` 之后 | 追加一条新的 `system` 更新，从此生效 | 同上 | 索引表随 `system` 更新刷新，命令可正常展开 | 原分支历史保持不变 |
-| 同目录另开新会话（`/new`） | 直接读到新文件 | 直接读到新文件 | 出现在初始 `<skills>` 清单里 | **看不到**；只有 `--continue` 或 `/resume` 才接续旧会话 |
-| `/tree` 切到另一条旧分支 | 先恢复旧分支历史，下一轮请求前自动追加一条 `system` 更新把最新规则同步上去 | 各分支只保留自己当年展开过的那份正文 | 同左 | 只看到目标分支祖先链上的消息 |
-| 触发上下文压缩之后 | 当时生效的 `system` 状态合并进压缩节点的快照 | 早于 `firstKeptEntryId`（保留起点）的旧正文被压进摘要 | 同左 | 早于 `firstKeptEntryId` 的只剩摘要 |
-
-其中「切到旧分支后怎样对齐最新规则」由两段代码配合完成：`navigateTree` 先按目标分支恢复消息列表和当时的工具集；等下一轮发请求时，`_preparePromptAndToolLoadout` 再把那条分支合并出来的旧 `system` 段落跟内存里已加载的最新资源对比，把变化部分作为一条新 `system` 消息补到该分支上。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="4311-4314" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1836-1848" /> 这一行我只沿源码核对过，没有单独跑实验。
-
-## 作用域与扩展：想加长期记忆，从哪接入
-
-先把跨项目、跨会话的隔离边界理清：
-
-- **会话目录只管归档查找，不同会话互不共享历史。** `--continue` 会打开当前工作目录最近的一份会话；但只要你是新开会话（直接启动或 `/new`），哪怕在同一个目录里，上次聊过什么也绝不会自动混进来。<Src {...source} p="packages/coding-agent/docs/sessions.md" l="5-22" />
-- **全局与项目分层。** `~/.pi/agent/` 下的上下文文件和 `~/.pi/agent/skills`、`~/.agents/skills` 对本机所有项目生效；项目内的文件只覆盖对应目录树。
-
-如果你希望在 Pi 上做出类似 Hermes 的「后台复盘写记忆」或结构化状态管理，Pi 在扩展层提供了四种分工明确的接入方式：
-
-1. **`pi.appendEntry(customType, data)`**：往当前分支追加自定义状态记录，重启或切换分支后可以顺着分支历史重新读出恢复，但**完全不发给模型**，不占半个 token。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="118-132" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="1683-1690" />
-2. **`custom_message`（`sendMessage`）**：同样记在分支上，但**会转成消息进入模型上下文**，还能控制是否在终端界面显示。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="147-165" />
-3. **`before_agent_start`**：每轮运行前可动态增改 `systemPromptOptions.sections`（例如从外部记忆库检索相关条目塞进自定义段落，Pi 会自动对比段落变化并追加更新）。<Src {...source} p="packages/coding-agent/docs/extensions.md" l="615-657" />
-4. **`session_before_compact` 与 `agent_end`**：前者可以完全接管压缩摘要怎么写，后者可以在回合结束后异步提炼经验写回磁盘。<Src {...source} p="packages/coding-agent/docs/extensions.md" l="534-552" />
-
-仓库自带的两个扩展示例把这套机制用得很漂亮：`todo.ts` 把待办快照塞在每次工具结果的 `details` 里，收到 `session_start` 或 `session_tree` 事件就顺着**当前分支**从头读一遍历史结果来恢复状态——于是你用 `/tree` 退回较早的分支时，连待办列表也会跟着「时光倒流」回当时的状态。<Src {...source} p="packages/coding-agent/examples/extensions/todo.ts" l="106-133" /> `handoff.ts` 则提供 `/handoff` 命令，把当前分支的排错上下文浓缩成一份交接草稿放进新会话的输入框，由人审阅修改后再发出，用人工确认的交接草稿代替全自动的后台记忆。<Src {...source} p="packages/coding-agent/examples/extensions/handoff.ts" l="160-190" />
-
-## 实验验证
-
-下面三个实验都直接运行固定提交的 TypeScript 源码，用官方自带的内存模拟服务商 `fauxProvider` 在进程内截获准备发给模型的请求消息，不经过外部网络和真实大模型，因此能把「Pi 到底给模型组装出了什么消息」测得一清二楚。
-
-### 实验一：会话中途改磁盘文件，同一次请求里新旧版本并存
-
-按前面的源码分析，`system` 段落定格在资源加载时，`/skill:name` 每次直接读磁盘文件，而旧消息一直留在分支上。把这三件事串进同一个会话，应该能在单次请求里同时抓到新旧两代内容。
-
-脚本在临时目录里放好 `AGENTS.md`（写 `RULE_A`）和 `release` Skill（简介 `DESC_A`、正文 `BODY_A`）。第 1 轮调用 `/skill:release` 后，直接改写磁盘文件把三处标记全换成 `B`，顺手新建一个 `late` Skill，接着在不重载、重载、重开会话三种状态下发请求：
-
-```js title="pi-skill-lifecycle.mjs（节选）"
-await turn("initial", session, "/skill:release");
-await putSkill("release", "DESC_B", "BODY_B");
-await putSkill("late", "NEW_SKILL", "New instructions.");
-await writeFile(join(project, "AGENTS.md"), "RULE_B");
-await turn("edit on disk", session, "/skill:release");
-await turn("unknown name", session, "/skill:late");
-await session.reload();
-await turn("reload", session, "/skill:release");
-```
-
-点选下面面板里的五个阶段，可以直接核对每次请求里携带的标记：
+下面是直接跑源码截获的五次真实请求——启动时放 `RULE_A`（`AGENTS.md`）和 `release`（`DESC_A` / `BODY_A`），第 1 轮调用后把磁盘全改成 `B` 并新建 `late`。在「改磁盘文件后」那一轮，**同一次请求里同时装着 `RULE_A · DESC_A`、旧 `BODY_A` 和新 `BODY_B`**：
 
 <FigPiSkillRequests />
 
-**改完磁盘后的那次请求里，生效的 `system` 仍是 `RULE_A · DESC_A`，第 1 条用户消息里留着旧的 `BODY_A`，而第 2 条用户消息已经展开成了最新的 `BODY_B`；下一轮敲 `/skill:late` 则没被展开，直接当成普通文字 `/skill:late` 发给了模型。** 每一项都与源码路径严丝合缝。
+有个排查问题时极易误判的细节：`/reload` 后如果直接拿字符串全文搜底层请求，`RULE_A` **依然搜得到**——因为开头的第 1 条 `system` 消息没被改写，新内容是在末尾追加的第二条 `system` 更新；只有按顺序合并后（`getCurrentSystemMessage()`），生效的才是 `RULE_B · DESC_B · NEW_SKILL`。
 
-`/reload` 那一轮还验证了一个排查问题时极易误判的现象：如果直接拿字符串去搜底层原始请求，`RULE_A` **依然搜得到**——因为开头的第 1 条 `system` 消息从来没被改写；脚本同时检查了原始 `system` 列表（2 条：开头的 `A` 与追加的更新 `B`）和调用 `getCurrentSystemMessage()` 合并后的结果（只有 `RULE_B · DESC_B · NEW_SKILL`）。排查问题时如果只做全文搜索，就会把已经生效的热重载误判成失败。
+汇总成一张 4 行速查表：
 
-### 实验二：失败的 `edit` 照样写进压缩清单
+| 场景 | 改了 `AGENTS.md` | 改了已有 Skill 正文 | 新建 Skill 或改简介 |
+|---|---|---|---|
+| **同一会话下一轮** | 看不到（仍是旧规则） | 立刻拿到新正文；旧正文仍留在前面消息里 | 索引没变；`/skill:新名字` 当普通字发走 |
+| **执行 `/reload` 后** | 追加新 `system` 更新，生效 | 同上 | `<skills>` 索引更新，命令可正常展开 |
+| **同目录 `/new` 新会话** | 读到新文件 | 读到新文件 | 出现在初始 `<skills>` 清单（**不继承旧聊天**） |
+| **`/tree` 切回旧分支** | 下一轮前自动对比并补一条 `system` 更新同步最新规则[^tree] | 只保留该分支自己当年展开过的正文 | 同左 |
 
-为了验证前面发现的「只看参数、不看执行结果」，脚本在磁盘写入内容为 `unchanged` 的 `release.md`，让 `fauxProvider` 调用真实的内置 `edit` 工具去替换一段根本不存在的文字，确认工具返回 `isError: true` 且磁盘文件未变后，把会话交给 `prepareCompaction`（设 `keepRecentTokens: 1` 迫使该轮进入待摘要区）：
+[^tree]: 由 `navigateTree` 恢复旧分支与工具集，下一轮 `_preparePromptAndToolLoadout` 再对比内存里的最新资源补一条 `system` 更新（源码核对，未单独跑交互实验）。<Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="4311-4314" /> <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="1836-1848" />
 
-```json title="同一次失败编辑的三处实测结果"
-{
-  "toolError": true,
-  "onDisk": "unchanged",
-  "readFiles": [],
-  "modifiedFiles": ["release.md"]
-}
-```
+<details>
+<summary>展开看：Skill 扫描目录、重名优先级、git worktree 去重与信任门边界</summary>
+<div class="d-body">
 
-**工具明确报错、磁盘分毫未动，`release.md` 依然被列进了 `prepareCompaction` 算出的 `modifiedFiles`。** 后续模型如果只凭压缩摘要里的 `<modified-files>` 判断之前做过什么，就会误以为该文件已经改过。本实验测到 `prepareCompaction` 与 `computeFileLists` 为止；摘要文本拼接与跨次合并由源码直接确认。
+- **文件形态与校验**：支持 `skills/<name>/SKILL.md`（识别到后不继续递归子目录，方便放 `scripts/`）以及 Skill 根目录下的独立 `.md` 文件。没写 `description` 或留空会跳过；名字超 64 字符或含大写只记一条警告、**照样加载**。<Src {...source} p="packages/coding-agent/src/core/skills.ts" l="163-167" /> <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="277-345" />
+- **扫描范围与重名优先级**：用户级扫 `~/.pi/agent/skills` 和 `~/.agents/skills`；项目级扫 `.pi/skills` 及向上**到 Git 仓库根即止**的 `.agents/skills`，外加 Pi 包。同名保留先扫到的，顺序固定为 **项目 Skill > 用户 Skill > Pi 包**。<Src {...source} p="packages/coding-agent/src/core/package-manager.ts" l="538-557" /> <Src {...source} p="packages/coding-agent/src/core/package-manager.ts" l="2700-2754" /> <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="426-455" />
+- **`git worktree` 防重复**：若额外检出的工作树建在主仓库里面（如 `repo/.worktrees/feat`）且自带上下文文件，Pi 会跳过主仓库根那份 `AGENTS.md`，避免规则加载两遍。<Src {...source} p="packages/coding-agent/src/core/resource-loader.ts" l="235-260" />
+- **信任门的不对称**：项目内的 `.pi/skills`、`.agents/skills`、`.pi/extensions` **必须通过项目信任确认**（`defaultProjectTrust` 默认 `ask`），但同一仓库的 `AGENTS.md` 免信任确认。<Src {...source} p="packages/coding-agent/src/core/project-trust.ts" l="47-96" /> <Src {...source} p="packages/coding-agent/docs/configuration.md" l="41-47" /> <Infer />从弹窗提示语看，信任门守的是「可执行代码与外部包」而不是提示词注入。另外 `skills.md` 提到的 `allowed-tools` 字段源码中并无任何拦截逻辑，Pi 把沙箱隔离交给外部容器。<Src {...source} p="packages/coding-agent/docs/skills.md" l="78" /> <Src {...source} p="README.md" l="90" />
 
-### 实验三：切回分支 A，分支 B 的压缩摘要与编辑会串过来吗
+</div>
+</details>
 
-第三个实验用内存模式的真实 `SessionManager` 构造最小分叉树，直接传入固定摘要文字，单独验证会话树的三步组装逻辑：
+## 想自己加长期记忆，从哪接入
 
-```js title="probe.mjs"
-import {SessionManager} from './packages/coding-agent/src/core/session-manager.ts';
-const log = SessionManager.inMemory();
-const say = text => log.appendMessage({role:'user', content:text, timestamp:0});
-const root=say('base'); const left=say('attempt A');
-log.branch(root); const right=say('attempt B');
-console.log('raw messages',log.getEntries().filter(e=>e.type==='message').map(e=>e.message.content));
-console.log('active leaf',log.buildSessionContext().messages.map(m=>m.content));
-log.appendCompaction('checkpoint', right, 1200);
-console.log('compacted',log.buildSessionContext().messages.map(m=>m.summary ?? m.content));
-log.branch(left);
-console.log('other leaf',log.buildSessionContext().messages.map(m=>m.content));
-log.appendContextEdit(left, null);
-console.log('edited A', log.buildSessionContext().messages.map(m=>m.content));
-```
+默认不同会话互不共享历史（只有 `--continue` 或 `/resume` 才续接旧文件）。<Src {...source} p="packages/coding-agent/docs/sessions.md" l="5-22" /> 如果你想自己搭类似 Hermes 的后台复盘或结构化记忆，Pi 提供了四个互不打架的扩展接口：
 
-| 观察点 | `buildSessionContext()` 实测输出 |
-|---|---|
-| 遍历 JSONL 里的全部原始消息 | `base`、`attempt A`、`attempt B` |
-| 叶节点在 B | `base`、`attempt B` |
-| 在 B 后面追加压缩记录 `checkpoint`（从 `attempt B` 起保留） | `checkpoint`、`attempt B` |
-| 把叶节点切回 A | `base`、`attempt A` |
-| 在 A 上追加一条隐藏消息的 `context_edit(left, null)` | `base` |
+1. **`pi.appendEntry(customType, data)`**：往当前分支存自定义状态，重启或切分支可恢复，**完全不发给模型**、不占 token。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="118-132" /> <Src {...source} p="packages/coding-agent/docs/extensions.md" l="1683-1690" />
+2. **`custom_message`（`sendMessage`）**：同样挂在分支上，但**会转成消息进上下文**。<Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="147-165" />
+3. **`before_agent_start`**：每轮前动态修改 `systemPromptOptions.sections`（比如从外部库检索记忆塞进自定义段落，Pi 自动对比变化并追加更新）。<Src {...source} p="packages/coding-agent/docs/extensions.md" l="615-657" />
+4. **`session_before_compact` 与 `agent_end`**：前者接管压缩摘要怎么写，后者在回合结束后异步提炼经验落盘。<Src {...source} p="packages/coding-agent/docs/extensions.md" l="534-552" />
 
-**切回 A 的瞬间，B 上的 `checkpoint` 彻底退出模型视野；再对 A 追加隐藏编辑后，`attempt A` 仍躺在原始日志里，模型收到的上下文却只剩 `base`。** 这也和上游 `build-context.test.ts` 的分支与压缩回归测试完全吻合。<Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="126-147" /> <Src {...source} p="packages/coding-agent/test/session-manager/build-context.test.ts" l="211-246" />
+官方自带的两个示例很值得抄作业：`todo.ts` 把待办快照记在工具结果的 `details` 里，收到 `session_tree` 就顺着当前分支恢复——用 `/tree` 回退时连待办列表都会「时光倒流」；`handoff.ts` 的 `/handoff` 则把当前分支浓缩成一份可人工修改的交接草稿放进新会话，用人工确认代替黑盒自动记忆。<Src {...source} p="packages/coding-agent/examples/extensions/todo.ts" l="106-133" /> <Src {...source} p="packages/coding-agent/examples/extensions/handoff.ts" l="160-190" />
 
-## 设计评价
+## 踩坑清单与文档差异
 
-### 做得好的地方
+### 实战中最容易踩的 4 个坑
 
-1. **「只追加树」同时解决了回退试错、状态审计与前缀缓存三件事。** 不管是对话、规则更新、压缩还是隐藏失败消息，全都只是树上的新节点：分支切换零拷贝，支持中途 `system` 消息的模型不丢缓存，出了怪回答随时能顺着父指针还原当时的完整输入。
-2. **Skill 不造专用工具，复用率极高。** `<skills>` 清单只给路径，正文走普通 `read` 工具和现用现读的 `/skill:name`，既省掉了一套工具封装和正文缓存同步代码，又让作者改完 `SKILL.md` 正文就能立刻实测。
-3. **异常路径考虑周全。** 首次发言前不建空文件，写盘失败当场回滚内存节点和 `leaf` 指针，超限恢复先隐藏失败请求且最多重试一次——每处都在防止脏状态传染后续轮次。
-4. **内核克制，扩展接口分工清楚。** 不强塞一套黑盒自动记忆，而是把「存状态但不发给模型」（`appendEntry`）、「存消息发给模型」（`custom_message`）和「按段落更新提示词」（`before_agent_start`）拆成互不干扰的三件事。
+以下是我基于源码机制做的工程判断：
 
-### 值得警惕的地方
+1. **改了规则没任何刷新提示**：会话运行中改了 `AGENTS.md` 或 Skill 简介，界面不会提醒「需 `/reload`」，很容易对着旧规则白查半天。
+2. **反复改 Skill 反复调，新旧正文会同框**：每次 `/skill:name` 都把正文写成永久 `user` 消息，同一会话里多版正文并存，只能靠模型自己分哪条最新。
+3. **`modifiedFiles` 把「试图改」记成「已改过」**：`edit` 报错照样进清单、跨压缩一路累加，长会话多次压缩后可能误导模型跳过本该重做的修改。
+4. **`AGENTS.md` 免信任且一路扫到 `/`** ：刚克隆的陌生仓库带 `AGENTS.md` 就会直接进 system prompt；家目录 `~/` 放了全局 `AGENTS.md`，在 `~/tmp/` 做测试也会顺带扫进去。
 
-以下是我基于源码机制做的工程判断。
-
-1. **改了磁盘规则却没有任何未刷新提示。** 会话运行中改了 `AGENTS.md` 或 Skill 简介，界面不会提醒「磁盘已变，需 `/reload`」，用户极易对着旧规则排查半天。
-2. **同一上下文里可能并存新旧几版 Skill 正文。** `/skill:name` 每次展开都把整段正文写成永久留存的 `user` 消息；同一个会话里反复改 `SKILL.md` 反复调，新旧几版正文会同时留在历史里，只能靠模型自己分辨哪条最新。
-3. **`modifiedFiles` 把「试图改」记成了「已改过」。** 编辑报错也进清单、跨次压缩还一路累加，长会话多次压缩后容易误导模型跳过本该重做的修改。
-4. **连续压缩每次都会再丢一层细节。** 新摘要是在旧摘要文本上做增量改写，早期没写进摘要的约束或排错结论，后面不会再从原始日志补回来。
-5. **经验沉淀完全靠自觉。** 没有后台自动复盘，意味着一次排了半小时才踩明白的坑，只要人没开口让模型写进 `AGENTS.md` 或 `SKILL.md`，关掉会话就形同没发生过。
-6. **`AGENTS.md` 无需信任确认，且会一路向上扫到系统根目录。** 刚克隆的陌生仓库只要带 `AGENTS.md` 就会直接注入 system prompt；另外如果你在家目录 `~/` 放过一份全局 `AGENTS.md`，在 `~/tmp/` 下做任何隔离测试都会顺带把它扫进去。
-
-## 文档与代码不一致的地方
+### 文档与代码不一致的地方
 
 | 主题 | 官方文档怎么写 | 代码实际怎么做 |
 |---|---|---|
-| `CompactionEntry` 的字段 | 压缩参考文档给出的接口定义里没有 `system` 快照字段 <Src {...source} p="packages/coding-agent/docs/compaction.md" l="140-163" /> | 实际包含 `systemMessage`，保存压缩边界处合并后的完整提示词与工具集（另一份会话格式文档写对了） <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="91-104" /> <Src {...source} p="packages/coding-agent/docs/session-format.md" l="242" /> |
-| 改完 Skill 要不要 `/reload` | “Run `/reload` after editing a skill during an active session” <Src {...source} p="packages/coding-agent/docs/skills.md" l="89" /> | 只改正文时，`/skill:name` 和 `read` 每次都直接读磁盘，不重载也立刻生效；只有新建、改名或改简介才必须 `/reload` <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="2321-2325" /> |
-| `enableSkillCommands` 关掉什么 | 设置速查表写的是 “Register skills as `/skill:name` commands” <Src {...source} p="packages/coding-agent/docs/settings.md" l="160" /> | 设为 `false` 只把 `/skill:name` 从交互界面的自动补全菜单里隐藏；手动敲 `/skill:name` 在 `_expandSkillCommand` 里照样展开（`skills.md` 写明了这一点） <Src {...source} p="packages/coding-agent/src/modes/interactive/interactive-mode.ts" l="836-845" /> <Src {...source} p="packages/coding-agent/docs/skills.md" l="53" /> |
+| `CompactionEntry` 字段 | 压缩参考文档的接口定义漏了 `system` 快照字段 <Src {...source} p="packages/coding-agent/docs/compaction.md" l="140-163" /> | 实际包含 `systemMessage`，存压缩边界处合并后的完整提示词与工具集（`session-format.md` 写对了） <Src {...source} p="packages/coding-agent/src/core/session-manager.ts" l="91-104" /> <Src {...source} p="packages/coding-agent/docs/session-format.md" l="242" /> |
+| 改 Skill 要不要 `/reload` | “Run `/reload` after editing a skill during an active session” <Src {...source} p="packages/coding-agent/docs/skills.md" l="89" /> | 只改正文时 `/skill:name` 和 `read` 每次现读磁盘，不重载立刻生效；只有新建、改名或改简介才须 `/reload` <Src {...source} p="packages/coding-agent/src/core/agent-session.ts" l="2321-2325" /> |
+| `enableSkillCommands` 作用 | 设置速查表写 “Register skills as `/skill:name` commands” <Src {...source} p="packages/coding-agent/docs/settings.md" l="160" /> | 设为 `false` 只从自动补全菜单隐藏；手敲 `/skill:name` 仍照常展开（`skills.md` 写明了这一点） <Src {...source} p="packages/coding-agent/src/modes/interactive/interactive-mode.ts" l="836-845" /> <Src {...source} p="packages/coding-agent/docs/skills.md" l="53" /> |
 
-三处差异对日常聊天没有破坏性，但在自己写 JSONL 解析器、调试 Skill 热更新，或者想靠配置彻底禁掉 `/skill:name` 时会直接踩中。
-
-## 仍未弄清的问题
-
-1. **`/tree` 切回旧分支后的首轮 `system` 更新。** 从源码调用链看，切回旧分支后下一轮请求会自动追加一条把旧分支同步到最新已加载资源的 `system` 消息；这一点我只核对了代码路径，没有单独跑交互实验验证。
-2. **各服务商适配器的中途 `system` 消息支持表。** 每次 `/reload` 究竟是「留在原位置保缓存」还是「合并到开头丢一次缓存」，取决于对应模型适配器的 `supportsMidConvoSystemMessages` 标记，本文没有逐家统计。
-3. **真实摘要模型的信息保留率。** 本文实验均用固定文本代替摘要模型输出，测清的是「哪些内容被送进了压缩器」，没有评测真实模型在连续多次压缩后的细节遗漏率。
-
-## 附录
-
-### 配置速查
+<details>
+<summary>配置速查表（11 项默认值与源码出处）</summary>
+<div class="d-body">
 
 | 配置项 | 默认值 | 作用 | 出处 |
 |---|---|---|---|
@@ -486,20 +284,25 @@ console.log('edited A', log.buildSessionContext().messages.map(m=>m.content));
 | `branchSummary.reserveTokens` | `16384` | `/tree` 切分支生成摘要时的预算 | <Src {...source} p="packages/coding-agent/src/core/settings-defaults.ts" l="14-17" /> |
 | `branchSummary.skipPrompt` | `false` | 切分支时是否跳过「要不要总结旧分支」的确认提示 | <Src {...source} p="packages/coding-agent/src/core/settings-defaults.ts" l="14-17" /> |
 | `defaultProjectTrust` | `"ask"` | 遇到含 `.pi` 扩展或项目 Skill 的未授权目录时如何处理 | <Src {...source} p="packages/coding-agent/src/core/settings-defaults.ts" l="30" /> |
-| `enableSkillCommands` | `true` | 是否在输入 `/` 的补全菜单里列出 `/skill:name`；设为 `false` 后手敲完整命令仍会展开 | <Src {...source} p="packages/coding-agent/src/modes/interactive/interactive-mode.ts" l="836-845" /> |
+| `enableSkillCommands` | `true` | 是否在 `/` 补全菜单里列出 `/skill:name`（`false` 时手敲仍会展开） | <Src {...source} p="packages/coding-agent/src/modes/interactive/interactive-mode.ts" l="836-845" /> |
 | `disable-model-invocation` | `false` | Skill frontmatter 字段；设为 `true` 时不进 `<skills>` 清单，仅限手动调用 | <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="347-359" /> |
-| Skill 名称 / 描述长度上限 | `64` / `1024` 字符 | 超长只记警告仍加载；唯独 `description` 缺失或为空时不加载 | <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="10-14" /> |
-| `--session-dir` / `PI_CODING_AGENT_SESSION_DIR` | `~/.pi/agent/sessions/` | 自定义会话 JSONL 的存储根目录 | <Src {...source} p="packages/coding-agent/docs/sessions.md" l="66" /> |
+| Skill 名称 / 描述上限 | `64` / `1024` 字符 | 超长只记警告仍加载；唯独 `description` 缺失或为空时不加载 | <Src {...source} p="packages/coding-agent/src/core/skills.ts" l="10-14" /> |
+| `--session-dir` / `PI_CODING_AGENT_SESSION_DIR` | `~/.pi/agent/sessions/` | 自定义会话 JSONL 存储根目录 | <Src {...source} p="packages/coding-agent/docs/sessions.md" l="66" /> |
 
-### 自己核对
+</div>
+</details>
 
-文中所有带行号的源码引用均固定到提交 `f0f9478a204cfa8bca49945e9c2b04922e29f7ca`，代码摘录逐字复制（仅去掉公共缩进）。核对任意一段源码：
+<details>
+<summary>自己核对源码、复现实验脚本与仍未实测项</summary>
+<div class="d-body">
+
+文中所有带行号的引用均固定在 `f0f9478a204cfa8bca49945e9c2b04922e29f7ca`，核对命令：
 
 ```bash title="取出固定提交里的指定行"
 git show f0f9478a204cfa8bca49945e9c2b04922e29f7ca:packages/coding-agent/src/core/session-manager.ts | sed -n '468,512p'
 ```
 
-[下载实验一、二的完整复现脚本](/experiments/pi-skill-lifecycle.mjs)，放到该提交的 Pi 仓库根目录执行（运行环境 Node 22.23.1；由于 `loadProjectContextFiles` 会一路向上扫到文件系统根，若你的系统临时目录上层放有 `AGENTS.md`，也会一并进入请求，脚本只检查实验自己写入的标记，不受影响）：
+[下载完整复现脚本](/experiments/pi-skill-lifecycle.mjs)，放到该提交的 Pi 仓库根目录执行（Node 22.23.1；脚本只检查实验自己写入的标记，不受上层目录可能存在的 `AGENTS.md` 影响）：
 
 ```sh title="在固定提交的 Pi 仓库根目录运行"
 npm ci --ignore-scripts
@@ -510,14 +313,21 @@ tar -xf earendil-works-pi-ai-1.5.2.tgz -C packages/ai/src/providers/data --strip
 node --import ./packages/coding-agent/src/experimental/source-resolver.ts pi-skill-lifecycle.mjs
 ```
 
-实验三将上文 `probe.mjs` 保存在同一目录后执行 `node --import ./packages/coding-agent/src/experimental/source-resolver.ts probe.mjs` 即可。
+**仍未单独实测的三项：**
+
+- `/tree` 切回旧分支后的首轮 `system` 同步更新（仅核对源码调用链）；
+- 各服务商适配器的 `supportsMidConvoSystemMessages` 支持矩阵；
+- 真实摘要模型连续压缩后的细节留存率。
+
+</div>
+</details>
 
 ### 同系列对照
 
 | Agent | 和 Pi 对照着看什么 |
 |---|---|
-| [Hermes Agent](/notes/hermes-memory-skills/) | 同样保前缀缓存：Hermes 冻结记忆快照 + 后台复盘，Pi 只往末尾追加 `system` 更新 + 不内置记忆库 |
-| [Codex CLI](/notes/codex-memory-skills/) | Codex 用两阶段后台流水线从旧会话提炼全局记忆摘要，Pi 把跨会话沉淀完全交给直接修改磁盘文件 |
-| [Claude Code](/notes/claude-code-memory-skills/) | 同样有 `CLAUDE.md` 与 Skill，对比会话中途写入自动记忆索引后下一轮请求读到哪一份 |
-| [OpenCode](/notes/opencode-memory-skills/) | OpenCode 用专门的 `skill` 工具并缓存正文、压缩前截断旧工具输出，与 Pi 每次现读磁盘文件的做法刚好相反 |
-| [DeepSeek Harness](/notes/dsh-memory-skills/) | 同样基于只追加的事件日志，对比压缩遮盖旧清单后怎样自动重发 Skill 清单 |
+| [Hermes Agent](/notes/hermes-memory-skills/) | 同样保前缀缓存：Hermes 冻结记忆快照 + 后台复盘，Pi 末尾追加 `system` 更新 + 不内置记忆库 |
+| [Codex CLI](/notes/codex-memory-skills/) | 两阶段后台流水线从旧会话提炼全局记忆 vs. Pi 全靠直接改磁盘文件 |
+| [Claude Code](/notes/claude-code-memory-skills/) | 同样有 `CLAUDE.md` 与 Skill，对比中途写自动记忆索引后下一轮读到哪一份 |
+| [OpenCode](/notes/opencode-memory-skills/) | 专用 `skill` 工具 + 缓存正文 + 压缩前截断旧工具输出，与 Pi 现读磁盘的做法刚好相反 |
+| [DeepSeek Harness](/notes/dsh-memory-skills/) | 同样基于只追加事件日志，对比压缩遮盖旧清单后怎样自动重发 Skill 清单 |
