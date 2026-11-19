@@ -2,11 +2,11 @@
 const { lang = 'zh' } = Astro.props;
 const en = lang === 'en';
 const rows = [
-  { label: en ? 'First call' : '首次调用', system: 'RULE_A · DESC_A', messages: ['BODY_A'], note: en ? 'The first invocation expands the file into a user message.' : '第一次显式调用，正文随用户消息进入请求。' },
-  { label: en ? 'Edit on disk' : '改文件后', system: 'RULE_A · DESC_A', messages: ['BODY_A', 'BODY_B'], note: en ? 'The same request contains the old catalog, the earlier invocation and the newly read procedure.' : '同一份请求里，同时有旧目录、前一次调用的旧步骤，以及刚从文件读出的新步骤。' },
-  { label: en ? 'New name' : '调用新名字', system: 'RULE_A · DESC_A', messages: ['BODY_A', 'BODY_B', '/skill:late'], note: en ? 'The new file exists. Its unregistered command reaches the provider as literal text.' : '新文件已经存在。当前目录还找不到这个名字，命令原文直接到了模型端。' },
-  { label: en ? 'Reload' : '重新加载', system: 'RULE_B · DESC_B · NEW_SKILL', messages: ['BODY_A', 'BODY_B', '/skill:late', 'BODY_B'], note: en ? 'The transcript keeps the original system message and a patch. Replaying them yields B. Earlier invocations still contain the body they read.' : '底层请求同时带着旧系统消息和一条更新。按顺序应用后规则为 B。历次调用仍携带当时读出的正文。' },
-  { label: en ? 'Fresh session' : '新开会话', system: 'RULE_B · DESC_B · NEW_SKILL', messages: ['hello'], note: en ? 'The independent session discovers the edited resources. Its only user message is the new greeting.' : '独立会话重新发现磁盘资源，历史里的两份步骤都没有跟过来。' },
+  { label: en ? 'First call' : '首次调用', system: 'RULE_A · DESC_A', messages: ['BODY_A'], note: en ? 'The first /skill:release call reads BODY_A from disk and appends it as user message #1.' : '第 1 次调用 /skill:release，从磁盘读出 BODY_A 作为用户消息发给模型。' },
+  { label: en ? 'Edit on disk' : '改磁盘文件后', system: 'RULE_A · DESC_A', messages: ['BODY_A', 'BODY_B'], note: en ? 'One request now holds the stale RULE_A · DESC_A prompt, the earlier BODY_A turn, and the newly read BODY_B body.' : '同一份请求里，system 仍是旧的 RULE_A · DESC_A，第 1 条用户消息留着旧正文 BODY_A，第 2 条用户消息已是刚从磁盘读出的新正文 BODY_B。' },
+  { label: en ? 'New name' : '调用新名字', system: 'RULE_A · DESC_A', messages: ['BODY_A', 'BODY_B', '/skill:late'], note: en ? 'The late skill file exists on disk, but the in-memory catalog has not rescanned yet, so /skill:late goes through as literal text.' : '磁盘上已有 late 的文件，但内存索引表还没重新扫描，/skill:late 被当成普通聊天文字原样发给了模型。' },
+  { label: en ? 'Reload' : '执行 /reload 后', system: 'RULE_B · DESC_B · NEW_SKILL', messages: ['BODY_A', 'BODY_B', '/skill:late', 'BODY_B'], note: en ? '/reload appends a system update so replaying yields B; earlier user turns are never rewritten and keep what they originally sent.' : '/reload 追加了一条新的 system 更新消息，合并后生效的是 B 版规则与索引表；前几轮发过的用户消息不会改写，各自保留当时的内容。' },
+  { label: en ? 'Fresh session' : '新开会话', system: 'RULE_B · DESC_B · NEW_SKILL', messages: ['hello'], note: en ? 'A brand-new session scans disk fresh and shares none of the earlier session’s message history.' : '新会话重新扫描磁盘拿到最新资源，旧会话的聊天历史不会带过来，只剩刚发出的 hello。' },
 ];
 const id = (i: number) => `pi-request-${lang}-${i}`;
 ---
@@ -17,12 +17,12 @@ const id = (i: number) => `pi-request-${lang}-${i}`;
       {rows.map((row, i) => <label><input type="radio" name={`pi-requests-${lang}`} value={String(i)} aria-controls={id(i)} checked={i===1} /><span>{row.label}</span></label>)}
     </div>
     {rows.map((row, i) => <div class="packet" id={id(i)} data-step={i}>
-      <dl><div><dt>{en ? 'effective system' : '当前有效 system'}</dt><dd><code>{row.system}</code></dd></div>
-          <div><dt>{en ? 'user history' : '历次 user'}</dt><dd>{row.messages.map(m => <code>{m}</code>)}</dd></div></dl>
+      <dl><div><dt>{en ? 'effective system' : '当前生效的 system'}</dt><dd><code>{row.system}</code></dd></div>
+          <div><dt>{en ? 'user history' : '历次用户消息'}</dt><dd>{row.messages.map(m => <code>{m}</code>)}</dd></div></dl>
       <p>{row.note}</p>
     </div>)}
   </fieldset>
-  <figcaption>{en ? 'Figure 1. Selected excerpts from the captured requests. Each chip in the user row represents one message, in send order.' : '图 1　摘录各次请求中与实验有关的文字。下排每个小格对应一条用户消息，按发送顺序排列。'}</figcaption>
+  <figcaption>{en ? 'Figure 3. Selected excerpts from the captured requests. Each chip in the user row represents one message, in send order.' : '图 3　五次请求里实际发给模型的关键标记。下排每个方框对应一条用户消息，按发送顺序排列。'}</figcaption>
 </figure>
 <style>
   fieldset{min-inline-size:0;margin:0;padding:0;border:0}

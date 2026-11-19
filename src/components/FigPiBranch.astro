@@ -1,40 +1,287 @@
 ---
+// 图 2：交互 + 动态演示同一份 JSONL 里的分支切换：移动 leaf 指针，实时观察沿 parentId 倒推回根与压缩/隐藏规则的组装过程。
 const { lang = 'zh' } = Astro.props;
 const en = lang === 'en';
-const description = en
-  ? "Two leaves descend from base. The checkpoint on B retains attempt B. Returning to A follows a different ancestry."
-  : "base 分出 A 和 B。B 的压缩记录指回要保留的 attempt B。切回 A 时走另一条祖先路径。";
+const T = {
+  zh: {
+    desc: 'base 分出两条分支：上支 attempt A 后追加 context_edit(null)，下支 attempt B 后追加压缩摘要 checkpoint 并通过 firstKeptEntryId 指回 attempt B。切换上方叶指针位置，可动态观察回溯路径与模型收到的消息。',
+    tabB: '叶指针在分支 B（压缩后）',
+    tabA: '/tree 切回分支 A（带隐藏编辑）',
+    hint: 'JSONL 始终保留全部 5 行，只移动 leaf',
+    edit: 'context_edit (null)',
+    projA: '当前在分支 A → 模型收到',
+    projAnote: 'attempt A 仍在日志但被隐藏；B 不在路径上',
+    projB: '当前在分支 B → 模型收到',
+    projBnote: 'base 早于保留起点，由摘要 checkpoint 替代',
+    cap: '图 2\u3000同一份 JSONL 会话里的两条分支（可点击切换叶指针位置）。实线是 parentId，虚线是 firstKeptEntryId，金色脉冲演示每次请求前从当前 leaf 倒推回根的路径；灰暗节点仍留在文件里，只是不在当前分支路径上。',
+  },
+  en: {
+    desc: 'Two branches descend from base: attempt A followed by context_edit(null), and attempt B followed by a compaction checkpoint whose firstKeptEntryId points back to attempt B. Toggle the active leaf above to watch the parentId walk and resulting model context.',
+    tabB: 'Leaf on branch B (compacted)',
+    tabA: '/tree back to branch A (with edit)',
+    hint: 'All 5 JSONL lines stay on disk; only leaf moves',
+    edit: 'context_edit (null)',
+    projA: 'Leaf at branch A → model receives',
+    projAnote: 'attempt A hidden by edit; branch B is off-path',
+    projB: 'Leaf at branch B → model receives',
+    projBnote: 'base precedes firstKeptEntryId; summary leads',
+    cap: 'Figure 2. Two branches in one JSONL file (click tabs or branches to move leaf). Solid lines follow parentId, the dashed arc marks firstKeptEntryId, and the animated pulse traces buildSessionContext() walking back from the active leaf while off-path lines remain untouched on disk.',
+  },
+}[en ? 'en' : 'zh'];
+const idB = `pi-br-b-${lang}`;
+const idA = `pi-br-a-${lang}`;
+const grp = `pi-br-grp-${lang}`;
 ---
-<figure class="branch">
-  <svg width="100%" height="168" role="img" aria-label={description}>
-    <g class="edge">
-      <line x1="13%" y1="65" x2="43%" y2="29" />
-      <line x1="13%" y1="65" x2="43%" y2="100" />
-      <line x1="43%" y1="100" x2="82%" y2="100" />
-    </g>
-    <g class="retained">
-      <line x1="82%" y1="108" x2="82%" y2="142" />
-      <line x1="82%" y1="142" x2="43%" y2="142" />
-      <line x1="43%" y1="142" x2="43%" y2="109" />
-    </g>
-    <g class="node">
-      <circle cx="13%" cy="65" r="5" /><circle cx="43%" cy="29" r="5" />
-      <circle cx="43%" cy="100" r="5" /><circle class="checkpoint" cx="82%" cy="100" r="5" />
-    </g>
-    <g class="label" text-anchor="middle">
-      <text x="13%" y="46">base</text><text x="43%" y="15">attempt A</text>
-      <text x="43%" y="85">attempt B</text><text x="82%" y="85">checkpoint</text>
-      <text class="ref" x="62.5%" y="162">firstKeptEntryId</text>
-    </g>
-  </svg>
-  <figcaption>{en ? 'Figure 2. Solid lines follow parent links. The dashed link shows which older entry the checkpoint retains.' : '图 2　实线连接父子条目。虚线标出 B 上的压缩记录从哪一条旧消息开始保留原文。'}</figcaption>
+<figure class="branch" lang={en ? 'en' : 'zh-CN'}>
+  <div class="br-bar">
+    <div class="br-tabs" role="radiogroup" aria-label={en ? 'Active leaf branch' : '当前叶指针所在分支'}>
+      <label class="br-tab">
+        <input type="radio" id={idB} name={grp} value="b" checked />
+        <span>{T.tabB}</span>
+      </label>
+      <label class="br-tab">
+        <input type="radio" id={idA} name={grp} value="a" />
+        <span>{T.tabA}</span>
+      </label>
+    </div>
+    <span class="br-hint">{T.hint}</span>
+  </div>
+
+  <div class="fig-scroll">
+    <svg viewBox="0 0 760 222" role="img" aria-label={T.desc}>
+      <defs>
+        <marker id={`pb-ret-${lang}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)" />
+        </marker>
+        <marker id={`pb-ret-hi-${lang}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)" />
+        </marker>
+      </defs>
+
+      <!-- Branch A base geometry -->
+      <g class="br-a" data-pick={idA}>
+        <g class="edge">
+          <line x1="48" y1="110" x2="170" y2="54" />
+          <line x1="170" y1="54" x2="314" y2="54" />
+        </g>
+        <path class="walk walk-a" pathLength="1" d="M314 54 H170 L48 110" fill="none" />
+        <g class="node">
+          <circle cx="170" cy="54" r="5.5" class="omitted" />
+          <circle cx="314" cy="54" r="5.5" class="tip-a" />
+        </g>
+        <g class="leaf-badge leaf-a" aria-hidden="true">
+          <circle cx="314" cy="54" r="10.5" class="pulse-ring" />
+          <rect x="330" y="44" width="42" height="20" rx="10" class="leaf-pill" />
+          <text x="351" y="58" text-anchor="middle" class="leaf-txt">leaf</text>
+        </g>
+        <g class="label" text-anchor="middle">
+          <text x="170" y="32">attempt A</text>
+          <text x="314" y="32">{T.edit}</text>
+        </g>
+      </g>
+
+      <!-- Branch B base geometry -->
+      <g class="br-b" data-pick={idB}>
+        <g class="edge">
+          <line x1="48" y1="110" x2="170" y2="152" />
+          <line x1="170" y1="152" x2="314" y2="152" />
+        </g>
+        <path class="walk walk-b" pathLength="1" d="M314 152 H170 L48 110" fill="none" />
+        <path class="retained" d="M314 160 V194 H170 V162" marker-end={`url(#pb-ret-${lang})`} fill="none" />
+        <path class="retained-hi" pathLength="1" d="M314 160 V194 H170 V162" marker-end={`url(#pb-ret-hi-${lang})`} fill="none" />
+        <g class="node">
+          <circle cx="170" cy="152" r="5.5" />
+          <circle cx="314" cy="152" r="5.5" class="checkpoint" />
+        </g>
+        <g class="leaf-badge leaf-b" aria-hidden="true">
+          <circle cx="314" cy="152" r="10.5" class="pulse-ring" />
+          <rect x="330" y="142" width="42" height="20" rx="10" class="leaf-pill" />
+          <text x="351" y="156" text-anchor="middle" class="leaf-txt">leaf</text>
+        </g>
+        <g class="label" text-anchor="middle">
+          <text x="170" y="132">attempt B</text>
+          <text x="314" y="132">checkpoint</text>
+          <text class="ref" x="242" y="211">firstKeptEntryId</text>
+        </g>
+      </g>
+
+      <!-- Shared root node -->
+      <g class="root-node">
+        <circle cx="48" cy="110" r="5.5" class="root-circle" />
+        <text x="48" y="90" text-anchor="middle" class="label">base</text>
+      </g>
+
+      <!-- Right context cards -->
+      <g class="card-group card-a" data-pick={idA}>
+        <rect x="412" y="16" width="336" height="82" rx="9" class="card-box" />
+        <rect x="428" y="46" width="54" height="22" rx="4" class="chip chip-base-a" />
+        <text x="428" y="36" class="ch">{T.projA}</text>
+        <text x="455" y="61" class="cm" text-anchor="middle">base</text>
+        <text x="428" y="85" class="cn">{T.projAnote}</text>
+      </g>
+
+      <g class="card-group card-b" data-pick={idB}>
+        <rect x="412" y="118" width="336" height="82" rx="9" class="card-box" />
+        <rect x="428" y="148" width="90" height="22" rx="4" class="chip hi" />
+        <rect x="526" y="148" width="84" height="22" rx="4" class="chip" />
+        <text x="428" y="138" class="ch">{T.projB}</text>
+        <text x="473" y="163" class="cm" text-anchor="middle">checkpoint</text>
+        <text x="568" y="163" class="cm" text-anchor="middle">attempt B</text>
+        <text x="428" y="187" class="cn">{T.projBnote}</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>{T.cap}</figcaption>
 </figure>
+
+<script is:inline>
+  if (!window.__piBranchBound) {
+    window.__piBranchBound = true;
+    document.addEventListener('click', (e) => {
+      const g = e.target.closest?.('[data-pick]');
+      if (!g) return;
+      const input = document.getElementById(g.getAttribute('data-pick'));
+      if (input) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+  }
+</script>
+
 <style>
-  .branch svg { display: block; overflow: visible; }
+  .branch { margin: 1.8em 0; }
+  .br-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 0 0 10px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .br-tabs { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .br-tab {
+    position: relative;
+    cursor: pointer;
+    padding: 4px 11px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--mute);
+    font: 500 12.5px/1.4 var(--sans);
+    transition: color .18s, border-color .18s, background-color .18s;
+  }
+  .br-tab:hover { color: var(--fg); }
+  .br-tab input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .br-tab:has(:checked) {
+    color: var(--fg);
+    border-color: var(--plat);
+    background: var(--plat-soft);
+  }
+  .br-tab:has(:focus-visible) { outline: 1.5px solid var(--plat); outline-offset: 2px; }
+  .br-hint { font: 11.5px/1.4 var(--mono); color: var(--mute); }
+
+  .branch svg { width: 100%; height: auto; display: block; }
+  [data-pick] { cursor: pointer; }
   .edge { stroke: var(--mute); stroke-width: 1.4; }
-  .retained { stroke: var(--mute); stroke-dasharray: 3 3; }
-  .node { fill: var(--bg); stroke: var(--fg); stroke-width: 1.7; }
-  .checkpoint { fill: var(--plat); }
-  .label { fill: var(--fg); font: 13px var(--mono); }
-  .ref { fill: var(--mute); font-size: 11px; }
+  .retained { stroke: var(--mute); stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .node, .root-circle { fill: var(--bg); stroke: var(--fg); stroke-width: 1.7; }
+  .node .omitted { stroke-dasharray: 2.5 2; stroke: var(--mute); }
+  .node .checkpoint { fill: var(--plat); stroke: var(--plat); }
+  .label { fill: var(--fg); font: 12.5px var(--mono); }
+  .ref { fill: var(--mute); font-size: 11.5px; }
+
+  .card-box { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .22s, filter .22s; }
+  .chip { fill: var(--code); stroke: var(--line); stroke-width: 1; }
+  .chip.hi { fill: var(--plat-soft); stroke: var(--plat); }
+  .ch { fill: var(--fg); font: 600 13px var(--sans); }
+  .cm { fill: var(--fg); font: 12px var(--mono); }
+  .cn { fill: var(--mute); font: 11.5px var(--sans); }
+
+  .br-a, .br-b, .card-a, .card-b { transition: opacity .28s ease; }
+
+  /* Active leaf badge & animated walk */
+  .leaf-pill { fill: var(--plat-soft); stroke: var(--plat); stroke-width: 1; }
+  .leaf-txt { fill: var(--fg); font: 500 10.5px var(--mono); }
+  .pulse-ring {
+    fill: none;
+    stroke: var(--plat);
+    stroke-width: 1.4;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: pb-ring 2.6s ease-out infinite;
+  }
+  .walk {
+    stroke: var(--plat);
+    stroke-width: 2.3;
+    stroke-linecap: round;
+    stroke-dasharray: 0.28 1;
+    stroke-dashoffset: 0.32;
+    opacity: 0;
+  }
+  .retained-hi {
+    stroke: var(--plat);
+    stroke-width: 1.8;
+    stroke-dasharray: 0.3 1;
+    stroke-dashoffset: 0.34;
+    opacity: 0;
+  }
+
+  /* State B: leaf on branch B (compacted) */
+  .branch:has([value="b"]:checked) .br-a { opacity: 0.28; }
+  .branch:has([value="b"]:checked) .leaf-a { display: none; }
+  .branch:has([value="b"]:checked) .card-a { opacity: 0.45; }
+  .branch:has([value="b"]:checked) .card-b .card-box {
+    stroke: var(--plat);
+    stroke-width: 1.35;
+    filter: drop-shadow(0 5px 14px var(--plat-soft));
+  }
+  .branch:has([value="b"]:checked) .walk-b { animation: pb-walk 3.8s ease-in-out infinite; }
+  .branch:has([value="b"]:checked) .retained-hi { animation: pb-kept 3.8s ease-in-out infinite; }
+
+  /* State A: leaf moved back to branch A (/tree) */
+  .branch:has([value="a"]:checked) .br-b { opacity: 0.28; }
+  .branch:has([value="a"]:checked) .leaf-b { display: none; }
+  .branch:has([value="a"]:checked) .card-b { opacity: 0.45; }
+  .branch:has([value="a"]:checked) .tip-a { fill: var(--plat); stroke: var(--plat); }
+  .branch:has([value="a"]:checked) .card-a .card-box {
+    stroke: var(--plat);
+    stroke-width: 1.35;
+    filter: drop-shadow(0 5px 14px var(--plat-soft));
+  }
+  .branch:has([value="a"]:checked) .card-a .chip-base-a {
+    fill: var(--plat-soft);
+    stroke: var(--plat);
+  }
+  .branch:has([value="a"]:checked) .walk-a { animation: pb-walk-only 3.2s ease-in-out infinite; }
+
+  @keyframes pb-ring {
+    0% { transform: scale(0.85); opacity: 0.9; }
+    75% { transform: scale(1.45); opacity: 0; }
+    100% { transform: scale(1.45); opacity: 0; }
+  }
+  @keyframes pb-walk {
+    0%, 6% { stroke-dashoffset: 0.32; opacity: 0; }
+    12% { opacity: 1; }
+    46% { stroke-dashoffset: -0.75; opacity: 1; }
+    52%, 100% { stroke-dashoffset: -0.8; opacity: 0; }
+  }
+  @keyframes pb-kept {
+    0%, 50% { stroke-dashoffset: 0.34; opacity: 0; }
+    56% { opacity: 1; }
+    86% { stroke-dashoffset: -0.75; opacity: 1; }
+    92%, 100% { stroke-dashoffset: -0.8; opacity: 0; }
+  }
+  @keyframes pb-walk-only {
+    0%, 10% { stroke-dashoffset: 0.32; opacity: 0; }
+    18% { opacity: 1; }
+    72% { stroke-dashoffset: -0.75; opacity: 1; }
+    80%, 100% { stroke-dashoffset: -0.8; opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-ring, .walk, .retained-hi { animation: none !important; }
+  }
+  @media print {
+    .br-a, .br-b, .card-a, .card-b { opacity: 1 !important; }
+  }
 </style>
