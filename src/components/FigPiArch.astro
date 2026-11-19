@@ -1,0 +1,284 @@
+---
+// 图 1：Pi 的三栏动态数据流（参考 SoL-Pi 风格：按「启动/重载 → 每次调用 → 倒推组装请求」三拍循环演示信号流动）。
+const { lang = 'zh' } = Astro.props;
+const T = {
+  zh: {
+    k0: 'Pi 的整体结构：左侧磁盘文件按两种时机进入中间的 JSONL 会话树，每次请求再从当前叶节点倒推回根拼出上下文',
+    c1a: '启动或 /reload 时读取',
+    c1a1: 'AGENTS.md 规则文件',
+    c1a2: '各级目录叠加 · 无需信任',
+    c1a3: 'SKILL.md 索引表',
+    c1a4: '全局直接加载 · 项目需信任',
+    c1b: '每次调用时现读磁盘',
+    c1b1: 'SKILL.md 正文',
+    c1b2: '/skill:name 或 read 工具',
+    a1: '写入或追加',
+    a2: 'system 消息',
+    a3: '读最新文件',
+    a4: '追加为消息',
+    c2: '会话树 · *.jsonl',
+    c2s: '只追加，不改写；leaf 指向当前节点',
+    r1: 'system',
+    r1s: '初始系统提示词 + 后续局部更新',
+    r2: 'compaction',
+    r2s: '当时的提示词快照 + 历史摘要',
+    r3: 'context_edit',
+    r3s: '在当前分支隐藏或替换旧消息',
+    r4: 'message',
+    r4s: 'user · assistant · toolResult',
+    ag1: '倒推',
+    ag2: '组装',
+    c3: '发给模型的请求',
+    s1: '1. 从 leaf 沿 parentId 走回根',
+    s2: '2. 若路径上有压缩记录：',
+    s2b: '   旧历史换摘要，留近期原文',
+    s3: '3. 按最后一次 context_edit',
+    s3b: '   隐藏或替换目标消息',
+    s4: '4. 带上最新系统提示词',
+    s4b: '   （留在原处或合并到开头）',
+    foot: '完整支持 Skill，故意不做内置记忆库；想跨会话留住经验，要么写进左侧文件，要么续用中间的旧会话。',
+    cap: '图 1\u3000Pi 的存储与上下文组装（悬停任意模块可暂停动画查看细节）。左侧文件无论何时读取，都只往中间的会话树末尾追加记录；右侧每次请求都从当前 leaf 倒推回根，拼出模型看到的单条分支。',
+  },
+  en: {
+    k0: 'Overview of Pi: disk files enter the append-only JSONL tree on two different schedules, and each request is assembled from the active leaf',
+    c1a: 'Read at startup · /reload',
+    c1a1: 'AGENTS.md rules',
+    c1a2: 'stacked dirs · no trust gate',
+    c1a3: 'SKILL.md catalog',
+    c1a4: 'user direct · project trusted',
+    c1b: 'Read on every call',
+    c1b1: 'SKILL.md body',
+    c1b2: '/skill:name or read tool',
+    a1: 'write / append',
+    a2: 'system msg',
+    a3: 'read file',
+    a4: 'append msg',
+    c2: 'Session tree · *.jsonl',
+    c2s: 'append-only; leaf marks active node',
+    r1: 'system',
+    r1s: 'initial prompt + section updates',
+    r2: 'compaction',
+    r2s: 'prompt snapshot + history summary',
+    r3: 'context_edit',
+    r3s: 'hide or replace an entry on branch',
+    r4: 'message',
+    r4s: 'user · assistant · toolResult',
+    ag1: 'walk',
+    ag2: 'leaf',
+    c3: 'Model request',
+    s1: '1. Walk parentId from leaf',
+    s2: '2. At latest compaction:',
+    s2b: '   summary + kept recent turns',
+    s3: '3. Apply latest context_edit',
+    s3b: '   to hide or replace entries',
+    s4: '4. Include latest system prompt',
+    s4b: '   (in place or merged at head)',
+    foot: 'Full Skill system, deliberately no built-in memory store: durability comes from editing disk files on the left or resuming a session branch.',
+    cap: 'Figure 1. Stores and context assembly in Pi (hover to pause). Both disk schedules only append to the tree; each request walks back from the active leaf to build one branch.',
+  },
+};
+const t = T[lang] ?? T.zh;
+---
+<figure class="fig pi-arch" lang={lang === 'en' ? 'en' : 'zh-CN'}>
+  <div class="fig-scroll">
+    <svg viewBox="0 0 820 324" role="img" aria-label={t.k0}>
+      <defs>
+        <marker id={`pi-ah-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--mute)" />
+        </marker>
+        <marker id={`pi-ag-${lang}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--plat)" />
+        </marker>
+      </defs>
+
+      <g class="bx">
+        <rect x="12" y="12" width="204" height="154" rx="11" class="stage-boot" />
+        <rect x="12" y="182" width="204" height="98" rx="11" class="stage-call" />
+        <rect x="308" y="12" width="252" height="268" rx="12" class="stage-tree" />
+        <rect x="616" y="12" width="192" height="268" rx="12" class="req stage-req" />
+      </g>
+
+      <g class="in">
+        <rect x="24" y="44" width="180" height="52" rx="7" />
+        <rect x="24" y="104" width="180" height="50" rx="7" />
+        <rect x="24" y="216" width="180" height="52" rx="7" />
+
+        <rect x="322" y="66" width="224" height="44" rx="7" class="row-sys" />
+        <rect x="322" y="118" width="224" height="44" rx="7" />
+        <rect x="322" y="170" width="224" height="44" rx="7" />
+        <rect x="322" y="222" width="224" height="46" rx="7" class="row-msg" />
+      </g>
+
+      <g class="t">
+        <text x="24" y="33" class="h">{t.c1a}</text>
+        <text x="34" y="64" class="mo">{t.c1a1}</text>
+        <text x="34" y="83" class="m">{t.c1a2}</text>
+        <text x="34" y="124" class="mo">{t.c1a3}</text>
+        <text x="34" y="143" class="m">{t.c1a4}</text>
+
+        <text x="24" y="203" class="h">{t.c1b}</text>
+        <text x="34" y="236" class="mo">{t.c1b1}</text>
+        <text x="34" y="255" class="m">{t.c1b2}</text>
+
+        <text x="322" y="35" class="h">{t.c2}</text>
+        <text x="322" y="54" class="m">{t.c2s}</text>
+        <text x="332" y="85" class="mo">{t.r1}</text>
+        <text x="332" y="102" class="m">{t.r1s}</text>
+        <text x="332" y="137" class="mo">{t.r2}</text>
+        <text x="332" y="154" class="m">{t.r2s}</text>
+        <text x="332" y="189" class="mo">{t.r3}</text>
+        <text x="332" y="206" class="m">{t.r3s}</text>
+        <text x="332" y="241" class="mo">{t.r4}</text>
+        <text x="332" y="258" class="m">{t.r4s}</text>
+
+        <text x="628" y="36" class="h">{t.c3}</text>
+        <text x="628" y="74" class="m">{t.s1}</text>
+        <text x="628" y="114" class="m">{t.s2}</text>
+        <text x="628" y="132" class="m">{t.s2b}</text>
+        <text x="628" y="172" class="m">{t.s3}</text>
+        <text x="628" y="190" class="m">{t.s3b}</text>
+        <text x="628" y="230" class="m">{t.s4}</text>
+        <text x="628" y="248" class="m">{t.s4b}</text>
+      </g>
+
+      <g class="ln">
+        <path d="M216 88 H308" marker-end={`url(#pi-ah-${lang})`} />
+        <path d="M216 244 H308" marker-end={`url(#pi-ah-${lang})`} />
+        <path d="M560 146 H616" marker-end={`url(#pi-ag-${lang})`} class="gd" />
+      </g>
+
+      <g class="signals" aria-hidden="true">
+        <path d="M216 88 H305" pathLength="1" class="sig sig-boot" />
+        <path d="M216 244 H305" pathLength="1" class="sig sig-call" />
+        <path d="M560 146 H612" pathLength="1" class="sig sig-req" />
+        <circle cx="216" cy="88" r="3" class="dot dot-boot" />
+        <circle cx="216" cy="244" r="3" class="dot dot-call" />
+        <circle cx="560" cy="146" r="3.2" class="dot dot-req" />
+      </g>
+
+      <g class="t" text-anchor="middle">
+        <text x="262" y="77" class="s">{t.a1}</text>
+        <text x="262" y="105" class="s">{t.a2}</text>
+        <text x="262" y="233" class="s">{t.a3}</text>
+        <text x="262" y="261" class="s">{t.a4}</text>
+        <text x="588" y="134" class="g">{t.ag1}</text>
+        <text x="588" y="164" class="g">{t.ag2}</text>
+      </g>
+
+      <text x="12" y="309" class="m">{t.foot}</text>
+    </svg>
+  </div>
+  <figcaption>{t.cap}</figcaption>
+</figure>
+<style>
+  .pi-arch svg { width: 100%; height: auto; display: block; }
+  .pi-arch .bx rect { fill: var(--card); stroke: var(--line); stroke-width: 1; transition: stroke .25s, filter .25s; }
+  .pi-arch .bx rect.req { stroke: var(--plat); stroke-width: 1.3; }
+  .pi-arch .in rect { fill: var(--code); stroke: var(--line); stroke-width: 1; transition: stroke .25s, fill .25s; }
+  .pi-arch text { fill: var(--fg); font-size: 13.5px; font-family: var(--sans); }
+  .pi-arch .h { font-weight: 600; font-size: 14.5px; }
+  .pi-arch .mo { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+  .pi-arch .m { fill: var(--mute); font-size: 11.5px; }
+  .pi-arch .s { fill: var(--mute); font-size: 11px; }
+  .pi-arch .g { fill: var(--plat-ink); font-size: 11.5px; font-family: var(--mono); }
+  .pi-arch .ln path { fill: none; stroke: var(--mute); stroke-width: 1.2; }
+  .pi-arch .ln .gd { stroke: var(--plat); stroke-width: 1.5; }
+  .pi-arch figcaption { margin-top: 8px; }
+
+  /* SoL-Pi style choreographed 3-beat signal flow */
+  .pi-arch .sig {
+    fill: none;
+    stroke: var(--plat);
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-dasharray: 0.32 1;
+    stroke-dashoffset: 0.35;
+    opacity: 0;
+  }
+  .pi-arch .dot { fill: var(--plat); opacity: 0; }
+
+  .pi-arch .stage-boot { animation: pi-card-boot 9s ease-in-out infinite; }
+  .pi-arch .sig-boot   { animation: pi-sig-boot 9s ease-in-out infinite; }
+  .pi-arch .dot-boot   { animation: pi-dot-boot 9s ease-in-out infinite; }
+  .pi-arch .row-sys    { animation: pi-row-sys 9s ease-in-out infinite; }
+
+  .pi-arch .stage-call { animation: pi-card-call 9s ease-in-out infinite; }
+  .pi-arch .sig-call   { animation: pi-sig-call 9s ease-in-out infinite; }
+  .pi-arch .dot-call   { animation: pi-dot-call 9s ease-in-out infinite; }
+  .pi-arch .row-msg    { animation: pi-row-msg 9s ease-in-out infinite; }
+
+  .pi-arch .stage-tree { animation: pi-card-tree 9s ease-in-out infinite; }
+  .pi-arch .sig-req    { animation: pi-sig-req 9s ease-in-out infinite; }
+  .pi-arch .dot-req    { animation: pi-dot-req 9s ease-in-out infinite; }
+  .pi-arch .stage-req  { animation: pi-card-req 9s ease-in-out infinite; }
+
+  .pi-arch:hover svg * { animation-play-state: paused; }
+
+  @keyframes pi-card-boot {
+    0%, 2%, 28%, 100% { stroke: var(--line); filter: none; }
+    6%, 18% { stroke: var(--plat); filter: drop-shadow(0 4px 12px var(--plat-soft)); }
+  }
+  @keyframes pi-sig-boot {
+    0%, 7% { stroke-dashoffset: 0.35; opacity: 0; }
+    10% { opacity: 1; }
+    20% { stroke-dashoffset: -0.72; opacity: 1; }
+    23%, 100% { stroke-dashoffset: -0.78; opacity: 0; }
+  }
+  @keyframes pi-dot-boot {
+    0%, 7% { opacity: 0; transform: translateX(0); }
+    10% { opacity: 1; transform: translateX(0); }
+    20% { opacity: 1; transform: translateX(88px); }
+    22%, 100% { opacity: 0; transform: translateX(88px); }
+  }
+  @keyframes pi-row-sys {
+    0%, 16%, 33%, 100% { stroke: var(--line); fill: var(--code); }
+    20%, 28% { stroke: var(--plat); fill: var(--plat-soft); }
+  }
+
+  @keyframes pi-card-call {
+    0%, 34%, 60%, 100% { stroke: var(--line); filter: none; }
+    38%, 50% { stroke: var(--plat); filter: drop-shadow(0 4px 12px var(--plat-soft)); }
+  }
+  @keyframes pi-sig-call {
+    0%, 39% { stroke-dashoffset: 0.35; opacity: 0; }
+    42% { opacity: 1; }
+    52% { stroke-dashoffset: -0.72; opacity: 1; }
+    55%, 100% { stroke-dashoffset: -0.78; opacity: 0; }
+  }
+  @keyframes pi-dot-call {
+    0%, 39% { opacity: 0; transform: translateX(0); }
+    42% { opacity: 1; transform: translateX(0); }
+    52% { opacity: 1; transform: translateX(88px); }
+    54%, 100% { opacity: 0; transform: translateX(88px); }
+  }
+  @keyframes pi-row-msg {
+    0%, 48%, 65%, 100% { stroke: var(--line); fill: var(--code); }
+    52%, 60% { stroke: var(--plat); fill: var(--plat-soft); }
+  }
+
+  @keyframes pi-card-tree {
+    0%, 64%, 82%, 100% { stroke: var(--line); }
+    68%, 76% { stroke: var(--plat); }
+  }
+  @keyframes pi-sig-req {
+    0%, 68% { stroke-dashoffset: 0.35; opacity: 0; }
+    71% { opacity: 1; }
+    81% { stroke-dashoffset: -0.72; opacity: 1; }
+    84%, 100% { stroke-dashoffset: -0.78; opacity: 0; }
+  }
+  @keyframes pi-dot-req {
+    0%, 68% { opacity: 0; transform: translateX(0); }
+    71% { opacity: 1; transform: translateX(0); }
+    81% { opacity: 1; transform: translateX(52px); }
+    83%, 100% { opacity: 0; transform: translateX(52px); }
+  }
+  @keyframes pi-card-req {
+    0%, 76%, 96%, 100% { stroke: var(--plat); filter: none; }
+    80%, 91% { stroke: var(--plat); filter: drop-shadow(0 6px 16px var(--plat-soft)); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pi-arch svg * { animation: none !important; }
+    .pi-arch .signals { display: none; }
+  }
+</style>
