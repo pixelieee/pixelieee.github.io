@@ -74,7 +74,7 @@ volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
 </CodeTr>
 <Src p="agent/system_prompt.py" l="736-799" />
 
-进入 prompt 的记忆文字是**加载时冻结的快照**。会话中途写入会更新磁盘文件和 `MemoryStore` 的实时条目：
+进入 system prompt 的 memory 文本是**加载时冻结的快照**。会话中途写入会更新磁盘文件和 `MemoryStore` 的实时条目：
 
 <CodeTr>
 
