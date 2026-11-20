@@ -548,7 +548,9 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 后台复盘创建的 Skill（以及你手动托管给 curator 的 Skill）会按 `.usage.json` 记录最近一次活动时间：14 天无活动标成陈旧（`stale`，此时仍在目录里可用），30 天无活动转为归档（`archived`）并移入 `skills/.archive/`，默认不真删。问题在于 `restore` 恢复时只把目录移回原位、把状态改回 `active`，**没有重置最近活动时间**；如果你恢复后没通过 `skill_view` 读取或修补它，下一次定时或手动 curator 检查看到它还是 30 天前的旧时间，就会立刻再次归档。
 
 **5. 同一台机器上的 profile、项目和子 Agent 之间，谁和谁共享这些存储？**
-记忆文件和会话历史库（`state.db`）都是**按 profile 共享、不分项目**——切到别的工作目录依然共用同一份记忆，只有切换 profile 才会换文件。Skill 读取时会叠加受信任的项目目录和当前 profile，但通过 `skill_manage` 新建或修改 Skill 时，**永远不会改动项目目录里的 Skill**（哪怕项目已被信任，新建也只写当前 profile 或 `skills.create_dir`，修改查找目标时也会跳过项目层；前台若按用户要求用普通文件工具直接编辑仓库里的 `SKILL.md`，则不受 `skill_manage` 限制）。所有通过 `delegate_task` 派出的子 Agent 会把记录写进同一个 `state.db`，但记忆子系统被硬编码关闭，既不注入记忆也不能调用 `memory` 工具（跨 profile 委派也只带上目标的 `SOUL.md` 身份和 Skill，不带记忆）。
+- **记忆与会话历史按 profile 共享、不分项目**：同一 profile 下切到别的工作目录干活，依然共用同一份 `MEMORY.md` / `USER.md` 和 `state.db`；只有切换 profile 才会换存储。
+- **Skill 按层叠加读取，但 `skill_manage` 永不改动项目目录**：读取时会叠加受信任的项目目录和当前 profile（项目优先）；但通过 `skill_manage` 新建或修改 Skill 时永远跳过项目层（新建只写当前 profile 或 `skills.create_dir`，同名修改会落到 profile 副本；前台若按用户要求用普通文件工具直接改仓库里的 `SKILL.md`，则不受 `skill_manage` 限制）。
+- **子 Agent 彻底不能用记忆功能**：所有通过 `delegate_task` 派出的子 Agent 虽然会把对话写进同一个 `state.db`，但记忆子系统被硬编码关闭——**既不注入记忆，也不能调用 `memory` 工具**（哪怕跨 profile 委派，也只带上目标的 `SOUL.md` 身份和 Skill，依然不带记忆）。
 
 ## 附录
 
