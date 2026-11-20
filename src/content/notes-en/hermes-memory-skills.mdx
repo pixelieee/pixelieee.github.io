@@ -161,7 +161,7 @@ The tool description gives the reason: memory is **injected on every turn**, so 
 
 ## Session history and `session_search`
 
-`state.db` holds the session messages. The model can use `session_search` to look up an earlier conversation. Its keyword search uses SQLite FTS5, **makes no LLM calls**, and returns stored message content, truncated where necessary. The CLI also reads the database when it resumes a session. <Src p="tools/session_search_tool.py" l="2-8" /> <Src p="tools/session_search_tool.py" l="447-462" /> <Src p="hermes_cli/cli_agent_setup_mixin.py" l="620-629" />
+`state.db` holds the session messages. The model can use `session_search` to look up an earlier conversation; its keyword search uses SQLite FTS5, **makes no LLM calls**, and returns stored messages capped per mode (1,200 chars for discovery bookends, 2,000 chars for `read`, 4,000 chars for `scroll`—comment `#114344` notes an uncapped `read` once returned 74K chars and jumped a request from ~50K to ~89K tokens in one step). When you resume an older chat in the CLI via `hermes --resume` or `/resume`, the CLI also loads the session's full history back from this database. <Src p="tools/session_search_tool.py" l="2-8" /> <Src p="tools/session_search_tool.py" l="34-40" /> <Src p="tools/session_search_tool.py" l="447-462" /> <Src p="hermes_cli/cli_agent_setup_mixin.py" l="620-630" />
 
 I found no vector or embedding code anywhere in `hermes_state*`, so there is no comment to cite on why it skips vector search. <Infer lang="en" />What the tool needs to recover is the user's exact words and command output, where exact matching matters more than semantic similarity, and it saves a model call.
 
