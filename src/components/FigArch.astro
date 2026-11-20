@@ -20,7 +20,8 @@ const T = {
   k14: '回合结束，计数达标',
   k15: '归档 / 整合',
   k16: '记忆快照在提示词失效后重读；支持目录变更通知的会话可在下一轮看到新增或移除的 Skill。',
-  k17: '图 1\u3000三类存储与写入路径。实线是写入，虚线是读取，白金色箭头是触发关系。'
+  k17: '图 1\u3000三类存储与写入路径。实线是写入，虚线是读取，白金色箭头是触发关系。',
+  k18: 'MEMORY.md ≤ 2200 · USER.md ≤ 1375（字符）'
  },
  en: {
   k0: 'Overview of Hermes memory and skills: foreground session, background review, three stores and the curator',
@@ -40,7 +41,8 @@ const T = {
   k14: 'turn ends, counter fires',
   k15: 'archive / consolidate',
   k16: 'Memory reloads on prompt invalidation. Supported sessions get skill-change notes on the next turn.',
-  k17: 'Figure 1. Three stores and their write paths. Solid lines write, the dashed line reads, gold arrows mark what triggers what.'
+  k17: 'Figure 1. Three stores and their write paths. Solid lines write, the dashed line reads, gold arrows mark what triggers what.',
+  k18: 'MEMORY.md ≤ 2200 · USER.md ≤ 1375 chars'
  },
 };
 const t = T[lang] ?? T.zh;
@@ -74,7 +76,7 @@ const t = T[lang] ?? T.zh;
     <text x="28" y="266" class="m">{t.k7}</text>
     <text x="28" y="286" class="m">{t.k8}</text>
     <text x="482" y="36" class="h">state.db</text><text x="482" y="55" class="m">{t.k9}</text>
-    <text x="482" y="110" class="h">memories/</text><text x="482" y="129" class="m">MEMORY.md ≤ 2200 · USER.md ≤ 1375</text>
+    <text x="482" y="110" class="h">memories/</text><text x="482" y="129" class="m cap-line">{t.k18}</text>
     <text x="482" y="184" class="h">skills/</text><text x="482" y="203" class="m">SKILL.md · .usage.json · .archive/</text>
     <text x="482" y="274" class="h">curator</text>
     <text x="482" y="294" class="m">{t.k10}</text>
@@ -90,7 +92,7 @@ const t = T[lang] ?? T.zh;
     <path d="M187 168 V196" marker-end={`url(#ag-${lang})`} class="gd"/>
   </g>
   <g class="t s">
-    <text x="414" y="34" class="m" text-anchor="end">{t.k12}</text>
+    <text x="414" y="30" class="m edge-lbl" text-anchor="middle">{t.k12}</text>
     <text x="400" y="162" class="m" text-anchor="end">{t.k13}</text>
     <text x="198" y="186" class="g">{t.k14}</text>
     <text x="616" y="236" class="g">{t.k15}</text>
@@ -106,6 +108,8 @@ const t = T[lang] ?? T.zh;
 .fig text{fill:var(--fg);font-size:14.5px;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
 .fig .h{font-weight:600;font-size:15.5px}
 .fig .m{fill:var(--mute);font-size:13px}
+.fig .cap-line{font-size:12px}
+.fig .edge-lbl{font-size:11.5px}
 .fig .g{fill:var(--plat-ink);font-size:13px}
 .fig .ln path{fill:none;stroke:var(--mute);stroke-width:1.2}
 .fig .ln .gd{stroke:var(--plat)}
