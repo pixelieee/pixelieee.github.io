@@ -549,7 +549,7 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 
 **5. 同一台机器上的 profile、项目和子 Agent 之间，谁和谁共享这些存储？**
 - **记忆与会话历史按 profile 共享、不分项目**：同一 profile 下切到别的工作目录干活，依然共用同一份 `MEMORY.md` / `USER.md` 和 `state.db`；只有切换 profile 才会换存储。
-- **Skill 按层叠加读取，但 `skill_manage` 永不改动项目目录**：读取时会叠加受信任的项目目录和当前 profile（项目优先）；但通过 `skill_manage` 新建或修改 Skill 时永远跳过项目层（新建只写当前 profile 或 `skills.create_dir`，同名修改会落到 profile 副本；前台若按用户要求用普通文件工具直接改仓库里的 `SKILL.md`，则不受 `skill_manage` 限制）。
+- **Skill 按层叠加读取，但 `skill_manage` 永不改动项目目录**：读取时会叠加受信任的项目目录（最近 Git 根下的 `.hermes/skills/`、`.agents/skills/`）和当前 profile 目录（`$HERMES_HOME/skills/`，项目优先）；但通过 `skill_manage` 新建或修改 Skill 时永远跳过项目层（新建只写 `$HERMES_HOME/skills/` 或配置的 `skills.create_dir`，同名修改会落到 profile 副本；前台若按用户要求用普通文件工具直接改仓库里的 `SKILL.md`，则不受 `skill_manage` 限制）。
 - **子 Agent 彻底不能用记忆功能**：所有通过 `delegate_task` 派出的子 Agent 虽然会把对话写进同一个 `state.db`，但记忆子系统被硬编码关闭——**既不注入记忆，也不能调用 `memory` 工具**（哪怕跨 profile 委派，也只带上目标的 `SOUL.md` 身份和 Skill，依然不带记忆）。
 
 ## 附录
