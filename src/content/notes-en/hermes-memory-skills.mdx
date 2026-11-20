@@ -43,7 +43,7 @@ The differences between the three stores shape every mechanism that follows:
 | Capacity | configurable budgets, 2,200 / 1,375 characters by default | independent of the memory files’ character budgets | bodies load on demand; the curator maintains managed skills |
 | Written by | foreground model, background review | the runtime, automatically | foreground model, background review, curator |
 
-The row that matters most is "how it reaches the model". `MEMORY.md` and `USER.md` are sent in full on every turn, so they must stay small. Past session transcripts sit in `state.db` and are never injected into a new conversation automatically—only read when the model calls `session_search` or you explicitly resume an old session—so Hermes can safely keep everything. Skills sit in between: day to day, only a name and a one-line description appear, with the body loaded on demand. Every later rule about "what belongs where" follows from this.
+The row that matters most is "how it reaches the model". `MEMORY.md` and `USER.md` are sent in full on every turn, so they must stay small. Past session transcripts sit in `state.db` and are never injected into a new conversation automatically—only read when the model calls `session_search` or you explicitly resume an old session—so Hermes can safely keep everything. Skills sit in between: only the name and a one-line description stay in the system prompt, while the agent reads the full body on demand. Every later rule about "what belongs where" follows from this.
 
 ## One constraint: don't dirty the prefix cache
 
