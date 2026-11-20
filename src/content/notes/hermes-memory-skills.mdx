@@ -112,7 +112,14 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 ### 格式、容量与安全扫描
 
-两个文件各是一串 `entry`，用独占一行的 `§` 分隔。常量是 `"\n§\n"`，所以不在行首行尾的 `§` 只是普通文字；一个 `entry` 可以跨多行。<Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
+`MEMORY.md` 和 `USER.md` 都是纯文本文件，里面按顺序存着一条条记忆条目（entry），条目之间用**独占一行的 `§`**（源码分隔常量为 `"\n§\n"`）隔开。因为分隔符要求 `§` 必须单独占一整行，所以单条记忆可以自由跨多行，写在句子里的 `§`（比如「见 §3.2」）也只当普通文字，不会被误拆成两条：<Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
+
+```text title="MEMORY.md 在磁盘上的实际格式（两条记忆条目示例）"
+这个仓库使用 pnpm，不要运行 npm install。
+§
+发布前需值班人确认（详见规范 §3.2）。
+单条记忆允许换行写多行。
+```
 
 `MEMORY.md` 记环境与约定，上限 2200 字符；`USER.md` 记用户资料，上限 1375 字符。<Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Infer />限制用字符数而不是 token 数，源码没有解释；字符数与分词器无关、计数便宜，是合理的理由。
 

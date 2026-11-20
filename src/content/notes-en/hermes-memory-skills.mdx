@@ -81,7 +81,14 @@ That explains why saving memory does not immediately change the system prompt. S
 
 ### Format, limits and safety scanning
 
-Each file is a sequence of entries separated by a `§` on a line of its own. The delimiter constant is `"\n§\n"`, so a `§` that isn't alone on its line is just text, and a single entry can span several lines. <Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
+Both `MEMORY.md` and `USER.md` are plain-text files holding a sequence of entries separated by a **`§` on a line of its own** (delimiter constant `"\n§\n"`). Because the separator must occupy an entire line by itself, a single entry can span multiple lines, and any `§` inside ordinary prose (such as "see §3.2") stays plain text instead of splitting the entry: <Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
+
+```text title="What MEMORY.md looks like on disk (two entries)"
+This repo uses pnpm; do not run npm install.
+§
+Releases require on-call sign-off (see §3.2).
+A single entry can span multiple lines.
+```
 
 `MEMORY.md` holds environment facts and conventions, capped at 2200 characters; `USER.md` holds the user profile, capped at 1375. <Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Infer lang="en" />The code doesn't say why the caps count characters rather than tokens. Characters are independent of the tokenizer and cheap to count, which would be a sensible reason.
 
