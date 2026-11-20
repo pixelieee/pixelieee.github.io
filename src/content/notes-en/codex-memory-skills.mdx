@@ -123,10 +123,17 @@ Project skills walk `.agents/skills` from `cwd` to repo root (plus `~/.agents/sk
 
 ## Answering the four opening questions
 
-1. **After correcting a test command in repo A—even after consolidation reports `done`—why can a new chat in repo B still read the old summary?** Switching repos minutes later misses phase 1's 6-hour thread-idle gate; even after both 6-hour clocks pass, `is_valid_v2_summary` checks only line-1 `v1`, four headings, and `< 10,000` bytes—so an unchanged stale summary still passes as `done`.
-2. **Why does an empty extraction delete prior evidence while an extraction error preserves it?** An empty string means the thread has nothing worth keeping, advancing the watermark and retracting its prior `stage1_outputs` row; an error is treated as transient, consuming a retry with 1-hour backoff while leaving existing rows intact.
-3. **After retraction sets SQLite rows to 0, why does `rollout_summaries/` stay on disk for another 6 hours?** Retraction deletes the SQLite row immediately and marks global consolidation `pending`, but syncing `rollout_summaries/` and `memory_summary.md` on disk happens in phase 2, which is gated by a second 6-hour cooldown since the last successful consolidation.
-4. **Why does `codex debug prompt-input` miss a valid summary that App Server reads?** That CLI debug command bypasses App Server and builds its own extension list—registering Skills while omitting `codex_memories_extension`.
+**1. After correcting a test command in repo A—even after consolidation reports `done`—why can a new chat in repo B still read the old summary?**
+First is timing: switching to repo B minutes later means repo A hasn't been idle for 6 hours yet, so extraction hasn't even touched it. Even after both 6-hour waits pass, the completion check **only verifies formatting** (`v1` on line 1, four headings, under 10,000 bytes), never whether new facts were actually added—so an untouched stale summary still passes as `done`.
+
+**2. Why does an empty extraction delete prior evidence while an extraction error preserves it?**
+Codex treats them as opposites: an empty result means "we re-checked this thread and nothing here is worth keeping," so it clears the thread's old memory row; an error is just a transient hiccup, so it backs off for an hour and leaves the existing evidence intact.
+
+**3. After retraction sets SQLite rows to 0, why does `rollout_summaries/` stay on disk for another 6 hours?**
+Retracting the database row and syncing the disk folder belong to two separate phases. Phase 1 deletes the SQLite row immediately and queues a cleanup, but phase 2 is what removes old files from disk and rewrites the summary—and it can't run until its own 6-hour global cooldown expires.
+
+**4. Why does `codex debug prompt-input` miss a valid summary that App Server reads?**
+That debug command bypasses App Server and assembles its own extension list—wiring up Skills while **forgetting to register the memory extension**, so it always reports a false negative for memory.
 
 <details>
 <summary>Expand: three offline App Server reproduction scripts</summary>

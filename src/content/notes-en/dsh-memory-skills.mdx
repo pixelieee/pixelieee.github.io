@@ -131,10 +131,17 @@ One easy write trap: calling `create_entities` again for an existing `release` w
 
 ## Answering the four opening questions
 
-1. **Why can a release note show up in another repo while DSH's built-in session search finds nothing?** Cross-repo recall comes from an external MCP memory server pointed at one shared JSONL graph file; built-in `tool-session-query` restricts sub-agent queries to an **exact `cwd` match**, isolating both sibling repos and subdirectories.
-2. **How does compaction swap out history without deleting log entries, and why do auto vs. manual compaction handle concurrent messages differently?** Compaction appends a `surfaceOp: replace` event that shadows earlier entries on the derived `surface` view while leaving the raw log intact; if new messages arrive mid-summary, auto compaction discards the stale summary to retry next turn, whereas manual compaction keeps the summary and places the new messages after it.
-3. **Why did a 600-byte instruction budget still emit 879 bytes once user rules were present?** The instruction budget (64 KB by default) is enforced **independently per chain**—project chain and user chain each get their own 600-byte allowance before concatenation.
-4. **Why does DSH resend an unchanged skill catalog right after compaction?** Before skipping a catalog update, `tool-skill` checks whether the previously injected catalog is still visible on the current `surface`; once compaction shadows that span, the next turn republishes the catalog automatically.
+**1. Why can a release note show up in another repo while DSH's built-in session search finds nothing?**
+They query completely different stores. Cross-repo recall comes from an external MCP memory server pointed at one shared graph file, whereas DSH's built-in session search only looks inside sessions whose working directory matches yours **character for character**—even a subdirectory is isolated.
+
+**2. How does compaction swap out history without deleting log entries, and why do auto vs. manual compaction handle concurrent messages differently?**
+DSH's log is strictly append-only; compaction just appends a replacement marker that hides the older span from the model's current view and swaps in a summary. If a new message arrives while summarizing, auto compaction throws away the stale summary to retry next turn, while manual compaction keeps your requested summary and places the new message right after it.
+
+**3. Why did a 600-byte instruction budget still emit 879 bytes once user rules were present?**
+Because the budget isn't a single shared pool: project instructions and user instructions each get their **own independent 600-byte allowance** before being concatenated—giving up to 1,200 bytes combined.
+
+**4. Why does DSH resend an unchanged skill catalog right after compaction?**
+Before skipping a resend, DSH checks not only whether the files changed, but also whether the previously sent catalog is **still visible to the model**. Once compaction hides that earlier span, the next turn automatically sends the catalog again.
 
 <details>
 <summary>Expand: reproduction scripts & upstream Vitest commands</summary>

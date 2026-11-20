@@ -153,10 +153,17 @@ That measures **discoverability and false-positive rate**, not whether the real 
 
 ## Answering the four opening questions
 
-1. **Right after `Write` and `Edit` succeed on auto memory, why does the next request still carry the old index in its startup attachment?** The startup `MEMORY.md` block is loaded once at session start; mid-turn edits update disk and appear in tool history without mutating the startup prefix, reloading into the startup slot only in a fresh process (while topic bodies still wait for `Read`).
-2. **When `MEMORY.md` hits 202 lines, how can disk write succeed, `tool_result` report no error, and the next request still warn with an Error?** `Write` reports file-system success, whereas a separate `PostToolUse:Write` `system` message checks the next startup's 200-line / 25 KB load cap; on restart, the truncation warning also quotes line 201 even though it was dropped from the index body.
-3. **Why does a linked worktree inherit auto memory automatically yet lose main-checkout skills as soon as an empty directory exists?** Worktrees of one repo share the same machine-local auto-memory folder, but project skill discovery (since v2.1.277) falls back to the main checkout only when `.claude/skills/` is absent—even an empty local directory switches fallback off.
-4. **Why do a skill's instructions remain in later turns after `allowed-tools` has expired?** Invoking a skill injects its body into conversation messages (and reattaches up to 5,000 tokens after compaction), whereas `allowed-tools` pre-approval is strictly turn-scoped and expires on the next user message.
+**1. Right after `Write` and `Edit` succeed on auto memory, why does the next request still carry the old index in its startup attachment?**
+The startup `MEMORY.md` block is a frozen snapshot captured when the session starts; mid-turn edits write to disk and stay visible in tool history without rewriting that prefix (preserving prompt cache). Only a fresh process reloads the new index into startup, and detailed topic files still stay on disk until the model explicitly calls `Read`.
+
+**2. When `MEMORY.md` hits 202 lines, how can disk write succeed, `tool_result` report no error, and the next request still warn with an Error?**
+They check two different things: `Write` succeeded at saving all 202 lines to disk, while a separate post-write check watches the next startup's 200-line / 25 KB load budget and sends a system warning telling the model to move details into topic files. After restart, the truncation warning also quotes the first dropped line (line 201), making naive text searches misleading.
+
+**3. Why does a linked worktree inherit auto memory automatically yet lose main-checkout skills as soon as an empty directory exists?**
+Their lookup rules diverge: auto memory is tied to the repository, so every worktree on the machine shares it; project skills check the current worktree for `.claude/skills/` first and **only fall back to the main checkout when that folder doesn't exist—even an empty folder turns fallback off**.
+
+**4. Why do a skill's instructions remain in later turns after `allowed-tools` has expired?**
+Because the text and the permission live on separate clocks: the loaded skill body stays in conversation history (and even gets partially reattached after compaction), while `allowed-tools` pre-approval lasts only for the turn that invoked it and expires the moment you send the next message.
 
 <details>
 <summary>Expand: offline reproduction script & three key payload pairs</summary>

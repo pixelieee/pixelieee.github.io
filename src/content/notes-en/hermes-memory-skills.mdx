@@ -427,11 +427,20 @@ The differences have distinct consequences. Compression can bring a memory updat
 
 ## Answering the five opening questions
 
-1. **When does a memory write become visible, and to whom?** The writing call sees live state immediately in its tool result, a new session on the same profile loads it at startup, and a background fork shares the parent's `MemoryStore`; the current session and concurrent sessions keep their frozen prompt snapshot until compression or a session switch triggers `invalidate_system_prompt()`.
-2. **When does background review fire, and why do memory and skills differ?** Both default to a threshold of 10, but memory counts user turns (known at turn start) while skills count model requests (only known after tool iterations finish at turn end); both run after the reply is sent on uninterrupted, non-cron turns.
-3. **What can and can't the background agent change, and where do blocked edits go?** Its default allowlist includes only skill and read-only file tools (no `terminal`/`write_file`/`patch`), `memory` is added only on memory-triggered reviews, and editing an existing skill requires reading its exact path first; unattended `patch`/`remove` memory calls are staged under `/memory pending` for human approval (failing closed to denial if staging fails).
-4. **How does a skill reach the archive, and why can `restore` re-archive it immediately?** Managed skills (`created_by: agent` or `adopt`ed) turn `stale` after 14 idle days and move to `skills/.archive/` after 30 based on `.usage.json`; `restore_skill()` never resets those timestamps, so without a `skill_view` or patch to refresh activity, the next automatic pass archives it again right away.
-5. **Who shares which store across profiles, projects, and sub-agents?** Memory and `state.db` are shared per profile regardless of working directory; skills read across four tiers (trusted project → profile → `create_dir` → `external_dirs`) but writes never touch the project tier; `delegate_task` sub-agents share `state.db` with `skip_memory=True` hard-coded off (even `profile_routes` loads only target `SOUL.md` and skills, not memory).
+**1. Once a fact is written to memory, when does it become visible, and to whom?**
+Right after the write, only that tool call knows it succeeded. Your current chat's system prompt was locked at startup (to keep the prompt cache intact), so it won't reflect the update until context compression, a session switch, or a fresh chat reloads it from disk. A background review shares the same in-memory store and sees it right away; another open session window has to wait until its own prompt rebuilds.
+
+**2. When does background review fire, and why do memory and skills fire at different moments?**
+Both counters default to 10, and both wait until the assistant finishes answering without interruption before running quietly in the background (unattended cron runs are skipped). The timing split is straightforward: memory counts user messages, which is already known the moment a turn starts; skills count model requests, which you can only total once all tool loops finish at the end of the turn.
+
+**3. What can and can't the background agent change, and where do blocked edits go?**
+By default it can only read files and manage skills—no terminal, no arbitrary code edits—and it only gets the memory tool when memory was the trigger (plus it must read an existing skill before patching it). Even with the memory tool, an unattended review can **only add, never edit or delete directly**: any patch or delete is held back in `/memory pending` until you review and approve it.
+
+**4. How does a skill travel from creation to the archive, and why can a restored skill be archived again right away?**
+Skills created by the background agent (or handed over to the curator) are tracked by their last-used timestamp: idle for 14 days marks them stale, and 30 days moves them into the archive folder without deleting them. The catch is that `restore` puts the folder back **without updating its last-used time to today**—so if nobody opens or uses it before the next check, the curator still sees an old timestamp and archives it straight back.
+
+**5. Across profiles, projects, and sub-agents on one machine, who shares which store?**
+Memory files and conversation history are **shared per profile, never per project**—changing folders keeps the same memory, and only switching profiles switches files. Skills layer trusted project folders on top of your profile when reading, but writes never modify project skills. Delegated sub-agents log into the same database with memory completely turned off, neither reading nor writing (even cross-profile delegation carries over only the target's `SOUL.md` identity and skills, not its memory).
 
 ## Appendix
 

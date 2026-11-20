@@ -153,10 +153,17 @@ OpenCode has no post-turn review loop rewriting `SKILL.md`. Cross-session persis
 
 ## Answering the four opening questions
 
-1. **After editing both `AGENTS.md` and `SKILL.md` mid-session, why does the next turn see new rules immediately while `skill` still returns the old body?** OpenCode re-reads `AGENTS.md` from disk on every turn, whereas parsed skills (including their full bodies) are cached in process memory on first scan until the process restarts.
-2. **Why do the tail steps of a read skill vanish after compaction and restart even though SQLite still holds the full text?** Raw tool outputs remain intact in SQLite's `part` table, but before compaction summarizes history it truncates older tool outputs to their first 2,000 UTF-16 characters—dropping `TAIL_CHECKPOINT_PROBE` before the summary is written.
-3. **Why did a duplicate skill name pick different winners across 8 cold starts and mix two sources on resume?** Discovery scans roots concurrently with unbounded `Promise.all`, so whichever file finishes last overwrites the map entry; resuming an older session keeps the old tool result in history while the new process's `system` catalog may list the other root.
-4. **When a skill on disk cannot be used, which gate blocked it?** Check three gates in order: discovery (root paths, external-root toggles, or missing `description` hiding it from formatting), catalog rendering in `system` (`<available_skills>`), and `permission.skill` (`allow`, `ask`, or `deny`).
+**1. After editing both `AGENTS.md` and `SKILL.md` mid-session, why does the next turn see new rules immediately while `skill` still returns the old body?**
+OpenCode does the exact opposite of Pi: it re-reads `AGENTS.md` from disk before every single turn, so rule edits take effect right away, but it caches every parsed skill (full body included) in process memory on first scan until you restart.
+
+**2. Why do the tail steps of a read skill vanish after compaction and restart even though SQLite still holds the full text?**
+The raw tool output stays untouched in SQLite forever. What cuts it off is compaction: before asking the model to write a summary, OpenCode trims older tool outputs to their first 2,000 characters, so the tail steps never make it into the summary that the restarted session continues from.
+
+**3. Why did a duplicate skill name pick different winners across 8 cold starts and mix two sources on resume?**
+OpenCode scans skill folders concurrently without locking an order, so whichever file finishes reading last wins the name. When you resume an earlier session after restarting, the old chat history still carries the previous winner's body while the new process may have picked the other folder for its catalog.
+
+**4. When a skill on disk cannot be used, which gate blocked it?**
+Check three gates in order: first, was it discovered at all (right directory, external paths enabled); second, did it appear in the system prompt's skill list (a missing `description` parses fine yet hides it from the list); third, is `permission.skill` set to `deny` or stuck waiting on `ask`?
 
 <details>
 <summary>Expand: reproduction scripts (checkpoint / collision race) & SQLite verification query</summary>
