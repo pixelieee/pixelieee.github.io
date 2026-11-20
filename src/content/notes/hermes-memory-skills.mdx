@@ -121,7 +121,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 单条记忆允许换行写多行。
 ```
 
-`MEMORY.md` 记环境与约定，上限 2200 字符；`USER.md` 记用户资料，上限 1375 字符。<Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Infer />限制用字符数而不是 token 数，源码没有解释；字符数与分词器无关、计数便宜，是合理的理由。
+`MEMORY.md` 记环境与约定，上限 2200 字符（官方配置注释约 800 token）；`USER.md` 记用户资料，上限 1375 字符（约 500 token）。<Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Src p="cli-config.yaml.example" l="1034-1035" /> 之所以把两份文件合计压在约 1300 token 这么小的上限里，工具描述里的直接理由是记忆**每轮都会全量注入 system prompt**，必须保持高信噪比。<Src p="tools/memory_tool.py" l="376-377" /> <Infer />更深一层，用硬预算把记忆卡小，也是在结构上倒逼模型把长步骤和任务级经验分流进按需加载的 Skill、把细节留在会话历史里，避免 `MEMORY.md` 越滚越大。
 
 两条保护措施体现了同一种态度：**出了问题要让人看得见，而不是悄悄处理掉。**
 

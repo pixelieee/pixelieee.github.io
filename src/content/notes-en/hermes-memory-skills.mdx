@@ -90,7 +90,7 @@ Releases require on-call sign-off (see §3.2).
 A single entry can span multiple lines.
 ```
 
-`MEMORY.md` holds environment facts and conventions, capped at 2200 characters; `USER.md` holds the user profile, capped at 1375. <Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Infer lang="en" />The code doesn't say why the caps count characters rather than tokens. Characters are independent of the tokenizer and cheap to count, which would be a sensible reason.
+`MEMORY.md` holds environment facts and conventions, capped at 2,200 characters (~800 tokens per the config comments); `USER.md` holds the user profile, capped at 1,375 characters (~500 tokens). <Src p="tools/memory_tool_store.py" l="186" /> <Src p="agent/agent_init.py" l="1336-1337" /> <Src p="cli-config.yaml.example" l="1034-1035" /> The tool schema states why both caps stay so tight (~1,300 tokens combined): memory is **injected in full on every turn**, so entries must stay compact and high-signal. <Src p="tools/memory_tool.py" l="376-377" /> <Infer lang="en" />A hard small cap also structurally forces the model to route detailed procedures into on-demand skills and leave ephemeral details in session history rather than letting `MEMORY.md` balloon.
 
 Two safeguards share one attitude: **when something goes wrong, make it visible rather than quietly fixing it.**
 
