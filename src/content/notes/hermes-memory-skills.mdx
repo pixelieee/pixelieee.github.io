@@ -23,13 +23,14 @@ import Journey from '../../components/Journey.astro';
 
 **一句话结论：** Hermes 把经验拆进「每轮注入的极小记忆文件、按需检索的会话历史库、按需加载的 Skill」三类存储，靠前台写入、后台复盘与 curator 归档串起演进，而整套设计最核心的约束只有一条：**不要弄脏 system prompt 的前缀缓存。**
 
-读完这篇，你应该能回答五个问题：
+读完这篇，你应该能回答六个问题：
 
 1. 一条事实写进记忆之后，**什么时候**、**被谁**看到？
 2. 后台复盘**什么时候**触发，为什么记忆和 Skill 的触发时机不一样？
 3. 后台 Agent **能改什么、不能改什么**，改不了的去了哪里？
 4. Skill 怎样从创建走到归档，**restore 之后为什么可能马上又被归档**？
 5. 同一台机器上的 profile、项目和子 Agent 之间，**谁和谁共享**这些存储？
+6. 前台会话**什么时候自己总结记忆和 Skill**，驱动它的原版 prompt 是什么、是常驻还是动态注入？
 
 ## 全景
 
@@ -184,10 +185,65 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 这就是 Skill 能比记忆「大」的原因：它的常驻成本只有目录里的一行。
 
-### 前台什么时候写
+### 前台什么时候写（以及常驻的原始 prompt）
 
-- **创建**：`skill_manage` 可用时，prompt 里有一句指引，要求模型在摸索出非平凡的流程后用 `skill_manage` 记下来；困难或反复试错的任务结束时，还会提示模型主动提议保存。<Src p="agent/prompt_builder.py" l="257-264" /> <Src p="agent/prompt_builder.py" l="1362-1375" />
-- **修补**：加载的 Skill 漏了步骤或命令有误时，指引要求模型**在结束前**用 `skill_manage(action='patch')` 修订，不等用户开口。
+前台会话**没有定时器，也不会在对话中途往用户消息里动态塞提醒**（后文会看到，早期动态插提醒污染了 43% 的用户消息，才在提交 `45058b4105` 里被拆掉改成后台复盘）。前台模型全靠**会话启动时一次性写进 system prompt 与工具声明（`tools[]`）里的常驻指引**，在对话过程中自己判断时机直接调用 `memory` 或 `skill_manage`（用户也可以随时用 `/learn` 或直接要求保存）。
+
+具体落在 system prompt 的三处常驻区块（加上 `memory` 与 `skill_manage` 工具自身的 schema 描述）：
+
+- **`stable` 档 · 记忆与分流指引**（<Src p="agent/prompt_builder.py" l="192-230" />，排在最前、每轮不变以保前缀缓存）；
+- **`stable` 档 · `SKILLS_GUIDANCE`**（<Src p="agent/prompt_builder.py" l="257-264" />，其中源码注释 L242–252 还记录了此前写 `"After completing a complex task (5+ tool calls)..."` 在 Anthropic 订阅 OAuth 凭据上触发服务端内容过滤报 400，才被精简成现在这句）；
+- **`volatile` 档 · `## Skills` 清单段**（<Src p="agent/prompt_builder.py" l="1362-1375" />，紧贴在 `<available_skills>` 上方，要求模型在加载的 Skill 漏步骤或命令有误时**结束前直接 `patch`**，在困难或反复试错的任务后主动提议保存）。
+
+这三段常驻指引在固定提交 `bf0203a` 里的原文如下：
+
+<CodeTr>
+
+```text title="system prompt 常驻原文 · agent/prompt_builder.py（199–230 / 258–264 / 1373–1375）"
+[1. stable 档 · build_memory_guidance]
+You have persistent memory, carried across sessions and loaded into each new
+session's context; the memory tool's schema defines what belongs there.
+Skills come first: when you learn something while doing a task — a procedure,
+a pitfall, and the user's preferences and corrections for that kind of work —
+record it in the skill you used or built for the task (skill_manage), where it
+loads only when relevant.
+Memory is the narrow exception for facts that apply to EVERY session regardless
+of task (who the user is, environment facts, standing conventions with no task
+home); it has a hard character budget, so when it fills, replace or consolidate
+stale entries rather than skipping the save. Write entries as declarative facts,
+not instructions to yourself: 'User prefers concise responses' ✓ — 'Always
+respond concisely' ✗ (imperative phrasing gets re-read as a directive in later
+sessions and can override the user's current request). A fact stale within a
+week belongs in session history; procedures and workflows belong in skills.
+
+[2. stable 档 · SKILLS_GUIDANCE]
+When you work out a non-trivial workflow, record it with skill_manage for future reuse.
+
+[3. volatile 档 · ## Skills 清单上方]
+If a skill has issues, fix it with skill_manage(action='patch').
+After difficult/iterative tasks, offer to save as a skill. If a skill you loaded
+was missing steps, had wrong commands, or needed pitfalls you discovered, update
+it before finishing.
+```
+
+<div slot="tr">
+
+```text title="system prompt 常驻译文 · agent/prompt_builder.py（199–230 / 258–264 / 1373–1375）"
+[1. stable 档 · build_memory_guidance]
+你拥有跨会话保存的持久记忆，会在每次新会话启动时载入上下文；什么该写进记忆由 memory 工具的 schema 定义。
+Skill 优先：做某项任务时学到的东西——具体步骤、踩过的坑，以及用户对这类工作的偏好与纠正——记在你为该任务使用或新建的 Skill 里（skill_manage），只在相关时才加载。
+记忆只留给极少数「不管做什么任务、每次会话都成立」的事实（用户是谁、环境事实、不归属某类任务的长期约定）；它有硬字符上限，写满时应替换或合并陈旧条目，而不是跳过保存。条目要写成陈述句，不要写成给自己的命令：「用户偏好简短回答」✓ —「永远简短回答」✗（祈使句在后续会话里会被当成指令重读，可能覆盖用户当下的要求）。一周内就会过时的事实留在会话历史里；步骤和工作流进 Skill。
+
+[2. stable 档 · SKILLS_GUIDANCE]
+当你摸索出一套非平凡的工作流时，用 skill_manage 记下来以便日后复用。
+
+[3. volatile 档 · ## Skills 清单上方]
+如果某个 Skill 有问题，用 skill_manage(action='patch') 修补它。
+经历困难或反复试错的任务后，主动提议保存为 Skill。如果你加载的 Skill 漏了步骤、命令有误，或需要补上你新发现的坑，在任务结束前更新它。
+```
+
+</div>
+</CodeTr>
 
 这些写入默认直接生效。开启 `skills.write_approval` 后，前台和后台写入都先暂存待批。前台用 `skill_manage` 创建的 Skill（包括 `/learn`）记录为 `created_by: learn`，默认由用户管理；后台复盘创建的记录为 `created_by: agent`，进入 curator 的管理范围。 <Src p="website/docs/user-guide/features/skills.md" l="668-684" /> <Src p="tools/skill_manager_tool.py" l="755-762" /> <Src p="tools/skill_usage.py" l="522-533" />
 
@@ -529,7 +585,7 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 
 （补充核对：`profile_routes` 子 Agent 带的 `load_soul_identity=True` 只控制加载目标 profile 的 `SOUL.md`，不经过记忆加载路径，因此不会绕过 `skip_memory=True`。<Src p="agent/system_prompt.py" l="550-556" />）
 
-## 回看开篇的五个问题
+## 回看开篇的六个问题
 
 **1. 一条事实写进记忆之后，什么时候、被谁看到？**
 刚写完时，当前会话里的模型只能从这次 `memory` 工具的返回结果里知道写成功了；system prompt 在启动时已经锁死（为了复用前缀缓存），不会跟着更新，要等到触发上下文压缩、切换或恢复会话，或者新开一个对话时，才会从磁盘重读新内容。后台复盘和当前会话共用同一份内存里的 `MemoryStore`，能立刻看到；同时开着的另一个会话窗口也一样，除非它自己发生压缩或切换会话，否则会一直沿用启动时的旧快照。
@@ -551,6 +607,9 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 - **记忆与会话历史按 profile 共享、不分项目**：同一 profile 下切到别的工作目录干活，依然共用同一份 `MEMORY.md` / `USER.md` 和 `state.db`；只有切换 profile 才会换存储。
 - **Skill 按层叠加读取，但 `skill_manage` 永不改动项目目录**：读取时会叠加受信任的项目目录（最近 Git 根下的 `.hermes/skills/`、`.agents/skills/`）和当前 profile 目录（`$HERMES_HOME/skills/`，项目优先）；但通过 `skill_manage` 新建或修改 Skill 时永远跳过项目层（新建只写 `$HERMES_HOME/skills/` 或配置的 `skills.create_dir`，同名修改会落到 profile 副本；前台若按用户要求用普通文件工具直接改仓库里的 `SKILL.md`，则不受 `skill_manage` 限制）。
 - **子 Agent 彻底不能用记忆功能**：所有通过 `delegate_task` 派出的子 Agent 虽然会把对话写进同一个 `state.db`，但记忆子系统被硬编码关闭——**既不注入记忆，也不能调用 `memory` 工具**（哪怕跨 profile 委派，也只带上目标的 `SOUL.md` 身份和 Skill，依然不带记忆）。
+
+**6. 前台会话什么时候自己总结记忆和 Skill，驱动它的原版 prompt 是什么、是常驻还是动态注入？**
+前台**没有定时器，也不在对话中途往用户消息里动态插提醒**（早期插提醒的写法污染了 43% 的用户消息，已在提交 `45058b4105` 中改为回合后后台复盘）。前台全靠模型自己随时决定并调用 `memory` / `skill_manage`（或由用户主动用 `/learn` / 口头要求保存），驱动它的指引在会话启动时一次性写进 **system prompt**（`stable` 档的 `build_memory_guidance` 与 `SKILLS_GUIDANCE`，加上 `volatile` 档 `## Skills` 清单段上方）以及 `tools[]` 工具描述里，**全程常驻、每轮不变**，既能让前台随时记录，又不破坏前缀缓存（三段原文见上文「前台什么时候写」）。 <Src p="agent/prompt_builder.py" l="192-230" /> <Src p="agent/prompt_builder.py" l="257-264" /> <Src p="agent/prompt_builder.py" l="1362-1375" />
 
 ## 附录
 

@@ -20,13 +20,14 @@ import Journey from '../../components/Journey.astro';
 
 **The short version:** Hermes splits what it learns into three stores—tiny per-turn memory files, a searchable session history database, and on-demand skills—driven by foreground writes, background reviews, and curator archiving, all governed by one overriding constraint: **don't dirty the system prompt's prefix cache.**
 
-By the end you should be able to answer five questions:
+By the end you should be able to answer six questions:
 
 1. Once a fact is written to memory, **when** does it become visible, and **to whom**?
 2. **When** does the background review fire, and why do memory and skills fire at different moments?
 3. What **can and can't** the background agent change, and where do the changes it can't make go?
 4. How does a skill travel from creation to the archive, and **why can a restored skill be archived again right away**?
 5. Across profiles, projects and sub-agents on one machine, **who shares** which store?
+6. **When does the foreground session summarize memory and skills itself**, what exact prompts drive it, and are they permanently resident or dynamically injected?
 
 ## The big picture
 
@@ -153,10 +154,42 @@ A skill's entry point is `SKILL.md`, whose header carries a `name` and a `descri
 
 That's why a skill can be much "bigger" than memory: its standing cost is a single line in the index.
 
-### When the foreground model writes one
+### When the foreground model writes (and the exact standing prompts)
 
-- **Create**: when `skill_manage` is available, the prompt tells the model to record a non-trivial workflow with `skill_manage` once it has worked one out, and to offer to save a skill after a difficult or trial-and-error task. <Src p="agent/prompt_builder.py" l="257-264" /> <Src p="agent/prompt_builder.py" l="1362-1375" />
-- **Patch**: when a loaded skill is missing a step or has a wrong command, the guidance tells the model to fix it with `skill_manage(action='patch')` **before finishing**, without waiting to be asked.
+The foreground session has **no timer and never injects mid-conversation reminders into user messages** (as shown below, inline reminders polluted 43% of user messages and were replaced with background review in commit `45058b4105`). Instead, the foreground model decides on its own when to call `memory` or `skill_manage` (or responds to `/learn` / explicit user requests), guided entirely by **standing instructions baked into the system prompt and `tools[]` schemas at session start**:
+
+- **`stable` tier · `build_memory_guidance`** (<Src p="agent/prompt_builder.py" l="192-230" />, kept in the immutable prefix for cache reuse);
+- **`stable` tier · `SKILLS_GUIDANCE`** (<Src p="agent/prompt_builder.py" l="257-264" />; comments at L242–252 note that the older phrasing `"After completing a complex task (5+ tool calls)..."` triggered a server-side HTTP 400 filter on Anthropic OAuth subscription credentials, forcing this minimal wording);
+- **`volatile` tier · `## Skills` header** (<Src p="agent/prompt_builder.py" l="1362-1375" />, directly above `<available_skills>`, telling the model to `patch` faulty skills before finishing and to offer saving after difficult tasks).
+
+Verbatim standing text at commit `bf0203a`:
+
+```text title="Standing system-prompt text · agent/prompt_builder.py (199–230 / 258–264 / 1373–1375)"
+[1. stable tier · build_memory_guidance]
+You have persistent memory, carried across sessions and loaded into each new
+session's context; the memory tool's schema defines what belongs there.
+Skills come first: when you learn something while doing a task — a procedure,
+a pitfall, and the user's preferences and corrections for that kind of work —
+record it in the skill you used or built for the task (skill_manage), where it
+loads only when relevant.
+Memory is the narrow exception for facts that apply to EVERY session regardless
+of task (who the user is, environment facts, standing conventions with no task
+home); it has a hard character budget, so when it fills, replace or consolidate
+stale entries rather than skipping the save. Write entries as declarative facts,
+not instructions to yourself: 'User prefers concise responses' ✓ — 'Always
+respond concisely' ✗ (imperative phrasing gets re-read as a directive in later
+sessions and can override the user's current request). A fact stale within a
+week belongs in session history; procedures and workflows belong in skills.
+
+[2. stable tier · SKILLS_GUIDANCE]
+When you work out a non-trivial workflow, record it with skill_manage for future reuse.
+
+[3. volatile tier · above <available_skills>]
+If a skill has issues, fix it with skill_manage(action='patch').
+After difficult/iterative tasks, offer to save as a skill. If a skill you loaded
+was missing steps, had wrong commands, or needed pitfalls you discovered, update
+it before finishing.
+```
 
 Writes take effect immediately by default. With `skills.write_approval` on, both foreground and background writes are staged for approval. A skill created by a foreground `skill_manage` call, including `/learn`, gets `created_by: learn` and remains under the user's control. One created by the background review gets `created_by: agent`, making it eligible for curator maintenance. <Src p="website/docs/user-guide/features/skills.md" l="668-684" /> <Src p="tools/skill_manager_tool.py" l="755-762" /> <Src p="tools/skill_usage.py" l="522-533" />
 
@@ -425,7 +458,7 @@ The differences have distinct consequences. Compression can bring a memory updat
 
 (Verified against source: `load_soul_identity=True` on a `profile_routes` sub-agent loads only the target profile's `SOUL.md` and does not bypass `skip_memory=True`. <Src p="agent/system_prompt.py" l="550-556" />)
 
-## Answering the five opening questions
+## Answering the six opening questions
 
 **1. Once a fact is written to memory, when does it become visible, and to whom?**
 Right after the write, the model in the current session knows it succeeded only from the `memory` tool's return value; the system prompt stays frozen from startup (to preserve prefix caching) and reloads from disk only after context compression, a session switch/resume, or a fresh session. A background review shares the parent's in-memory `MemoryStore` and sees the update immediately; any concurrent session window follows the exact same rule and keeps its startup snapshot until it compresses or switches sessions itself.
@@ -447,6 +480,9 @@ Skills created by background review (or explicitly handed to the curator) are tr
 - **Memory and history are shared per profile, never per project**: changing working directories under the same profile keeps the same `MEMORY.md`, `USER.md`, and `state.db`; only switching profiles switches stores.
 - **Skills layer on read, but `skill_manage` never touches project skills**: reads layer trusted project directories (`.hermes/skills/` and `.agents/skills/` under the nearest Git root) above your profile directory (`$HERMES_HOME/skills/`), yet `skill_manage` always skips the project tier on write (creates go to `$HERMES_HOME/skills/` or `skills.create_dir`, and same-named edits land on the profile copy; generic file tools used on user request sit outside `skill_manage`).
 - **Sub-agents cannot use memory at all**: every sub-agent spawned via `delegate_task` writes its transcript to the same `state.db`, but the memory subsystem is hard-coded off—**no memory is injected and the `memory` tool is blocked** (even cross-profile delegation carries over only the target's `SOUL.md` identity and skills, not its memory).
+
+**6. When does the foreground session summarize memory and skills itself, what exact prompts drive it, and are they permanently resident or dynamically injected?**
+The foreground session has **no timer and never injects mid-session nudges into user messages** (inline nudges polluted 43% of user messages and were replaced with background review in commit `45058b4105`). The model decides on its own when to call `memory` or `skill_manage` (or responds to `/learn` / explicit user requests), driven by instructions baked once at startup into the **system prompt** (`build_memory_guidance` and `SKILLS_GUIDANCE` in the `stable` tier, plus the `## Skills` header in the `volatile` tier) and the `tools[]` schemas—**permanently resident and unchanged across turns** so the prefix cache stays warm (verbatim text is quoted in "When the foreground model writes" above). <Src p="agent/prompt_builder.py" l="192-230" /> <Src p="agent/prompt_builder.py" l="257-264" /> <Src p="agent/prompt_builder.py" l="1362-1375" />
 
 ## Appendix
 
