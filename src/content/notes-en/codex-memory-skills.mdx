@@ -121,6 +121,13 @@ Project skills walk `.agents/skills` from `cwd` to repo root (plus `~/.agents/sk
 3. **`done` guarantees format, not content**: a lazy consolidator that leaves a valid stale summary untouched still passes `is_valid_v2_summary`.
 4. **Verify `CODEX_HOME`, `CODEX_SQLITE_HOME` and V1/V2 together**: any mismatch points two launches at different stores. <Src {...source} p="codex-rs/config/src/config_toml.rs" l="373-377" /> <Src {...source} p="codex-rs/state/src/runtime.rs" l="355-377" />
 
+## Answering the four opening questions
+
+1. **After correcting a test command in repo A—even after consolidation reports `done`—why can a new chat in repo B still read the old summary?** Switching repos minutes later misses phase 1's 6-hour thread-idle gate; even after both 6-hour clocks pass, `is_valid_v2_summary` checks only line-1 `v1`, four headings, and `< 10,000` bytes—so an unchanged stale summary still passes as `done`.
+2. **Why does an empty extraction delete prior evidence while an extraction error preserves it?** An empty string means the thread has nothing worth keeping, advancing the watermark and retracting its prior `stage1_outputs` row; an error is treated as transient, consuming a retry with 1-hour backoff while leaving existing rows intact.
+3. **After retraction sets SQLite rows to 0, why does `rollout_summaries/` stay on disk for another 6 hours?** Retraction deletes the SQLite row immediately and marks global consolidation `pending`, but syncing `rollout_summaries/` and `memory_summary.md` on disk happens in phase 2, which is gated by a second 6-hour cooldown since the last successful consolidation.
+4. **Why does `codex debug prompt-input` miss a valid summary that App Server reads?** That CLI debug command bypasses App Server and builds its own extension list—registering Skills while omitting `codex_memories_extension`.
+
 <details>
 <summary>Expand: three offline App Server reproduction scripts</summary>
 <div class="d-body">

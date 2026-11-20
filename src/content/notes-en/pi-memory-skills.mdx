@@ -255,6 +255,13 @@ My engineering judgment based on the mechanisms above:
 </div>
 </details>
 
+## Answering the four opening questions
+
+1. **Without a built-in memory store, where do standing rules, procedures, and trial-and-error live?** Standing rules go into `AGENTS.md` / `CLAUDE.md` (loaded into the system prompt at startup), reusable procedures go into `SKILL.md` (indexed at startup, read on demand via `read`), and temporary trial-and-error stays in the JSONL session tree until compaction summarizes it.
+2. **Why can messages saved in JSONL never reach the model, and where does another branch's compaction go when switching back?** Before each request, Pi walks `parentId` from the current leaf to the root and stops at the latest compaction point on that path (`firstKeptEntryId`); skipped older entries, sibling branches, and compactions written on another branch remain in the file but drop out of the rebuilt context.
+3. **After editing both `AGENTS.md` and `SKILL.md` mid-session without `/reload`, why do old rules, old body, and new body all appear in one request?** `AGENTS.md` and the skill index stay cached from startup until `/reload`, whereas `/skill:name` and `read` hit disk fresh—so the old body persists in earlier messages while the new call injects the updated body alongside the still-cached `AGENTS.md`.
+4. **Which extension hooks let you add long-term memory to Pi?** Use `before_agent_start` to inject prompts or memory messages, `context` to filter or rewrite messages before sending, `session_before_compact` / `session_before_tree` to customize summaries, and `appendEntry` to persist non-model extension state inside the JSONL log.
+
 <details>
 <summary>Check it yourself: source commands, reproduction script & open questions</summary>
 <div class="d-body">

@@ -151,6 +151,13 @@ OpenCode has no post-turn review loop rewriting `SKILL.md`. Cross-session persis
 | Where `<available_skills>` lives | guide describes the catalog as part of the `skill` tool description <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="103-124" /> | rendered inside the **`system` message**; the tool description merely points there <Src {...source} p="packages/opencode/src/session/system.ts" l="107-118" /> <Src {...source} p="packages/opencode/src/tool/skill.txt" l="1-5" /> |
 | Missing `description` | guide requires a description <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="35-44" /> | parser still accepts the file (visible in `debug skill`), and catalog formatting simply hides it <Src {...source} p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="310-337" /> |
 
+## Answering the four opening questions
+
+1. **After editing both `AGENTS.md` and `SKILL.md` mid-session, why does the next turn see new rules immediately while `skill` still returns the old body?** OpenCode re-reads `AGENTS.md` from disk on every turn, whereas parsed skills (including their full bodies) are cached in process memory on first scan until the process restarts.
+2. **Why do the tail steps of a read skill vanish after compaction and restart even though SQLite still holds the full text?** Raw tool outputs remain intact in SQLite's `part` table, but before compaction summarizes history it truncates older tool outputs to their first 2,000 UTF-16 characters—dropping `TAIL_CHECKPOINT_PROBE` before the summary is written.
+3. **Why did a duplicate skill name pick different winners across 8 cold starts and mix two sources on resume?** Discovery scans roots concurrently with unbounded `Promise.all`, so whichever file finishes last overwrites the map entry; resuming an older session keeps the old tool result in history while the new process's `system` catalog may list the other root.
+4. **When a skill on disk cannot be used, which gate blocked it?** Check three gates in order: discovery (root paths, external-root toggles, or missing `description` hiding it from formatting), catalog rendering in `system` (`<available_skills>`), and `permission.skill` (`allow`, `ask`, or `deny`).
+
 <details>
 <summary>Expand: reproduction scripts (checkpoint / collision race) & SQLite verification query</summary>
 <div class="d-body">

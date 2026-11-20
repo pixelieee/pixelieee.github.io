@@ -151,6 +151,13 @@ That measures **discoverability and false-positive rate**, not whether the real 
 3. **Front-load critical checks in long skills**: post-compaction reattachment caps each skill at its first 5,000 tokens.
 4. **Treat `.claude/skills/` in linked worktrees as all-or-nothing**: even an empty directory disables fallback to the main checkout.
 
+## Answering the four opening questions
+
+1. **Right after `Write` and `Edit` succeed on auto memory, why does the next request still carry the old index in its startup attachment?** The startup `MEMORY.md` block is loaded once at session start; mid-turn edits update disk and appear in tool history without mutating the startup prefix, reloading into the startup slot only in a fresh process (while topic bodies still wait for `Read`).
+2. **When `MEMORY.md` hits 202 lines, how can disk write succeed, `tool_result` report no error, and the next request still warn with an Error?** `Write` reports file-system success, whereas a separate `PostToolUse:Write` `system` message checks the next startup's 200-line / 25 KB load cap; on restart, the truncation warning also quotes line 201 even though it was dropped from the index body.
+3. **Why does a linked worktree inherit auto memory automatically yet lose main-checkout skills as soon as an empty directory exists?** Worktrees of one repo share the same machine-local auto-memory folder, but project skill discovery (since v2.1.277) falls back to the main checkout only when `.claude/skills/` is absent—even an empty local directory switches fallback off.
+4. **Why do a skill's instructions remain in later turns after `allowed-tools` has expired?** Invoking a skill injects its body into conversation messages (and reattaches up to 5,000 tokens after compaction), whereas `allowed-tools` pre-approval is strictly turn-scoped and expires on the next user message.
+
 <details>
 <summary>Expand: offline reproduction script & three key payload pairs</summary>
 <div class="d-body">

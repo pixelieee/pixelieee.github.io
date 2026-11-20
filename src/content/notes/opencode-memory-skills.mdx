@@ -153,6 +153,13 @@ OpenCode 没有回合结束后的自动复盘器，不会因为某个 Skill 跑�
 | `<available_skills>` 放哪 | 指南把可用技能清单描述为 `skill` 工具说明的一部分 <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="103-124" /> | 实际插在 **`system` 消息**里，`skill` 工具说明只提示模型去那里找名字 <Src {...source} p="packages/opencode/src/session/system.ts" l="107-118" /> <Src {...source} p="packages/opencode/src/tool/skill.txt" l="1-5" /> |
 | 缺少 `description` 怎样处理 | 指南要求填写 `description` <Src {...source} p="packages/web/src/content/docs/skills.mdx" l="35-44" /> | 解析器不会拒收无说明的文件（`debug skill` 仍能看到），只是格式化清单时将它隐藏 <Src {...source} p="packages/opencode/src/skill/index.ts" l="123-139" /> <Src {...source} p="packages/opencode/src/skill/index.ts" l="310-337" /> |
 
+## 回看开篇的四个问题
+
+1. **中途同改 `AGENTS.md` 和 `SKILL.md`，为何下一轮立刻见新规则，调 `skill` 却还返回旧正文？** OpenCode 每轮发请求前都会重新读取磁盘上的 `AGENTS.md`，但所有 Skill 的解析结果（含正文）都在进程首次扫描后缓存在内存里，直到重启进程才会重新读盘。
+2. **完整读取的 Skill 经过压缩和重启后，为何尾部步骤消失，SQLite 里却还能查到原文？** 原始工具输出完整留在 SQLite 的 `part` 表里永不删改；但压缩前构造摘要输入时会把旧工具输出裁到前 2,000 个 UTF-16 字符，尾部的 `TAIL_CHECKPOINT_PROBE` 在写摘要前就被截掉了，新进程沿摘要续聊自然看不见。
+3. **两个目录放同名 Skill，为何 8 次冷启动随机命中不同文件，重启后还会混进两个来源？** 扫描函数用 `Promise.all` 无界并发遍历多个目录，后完成的写入覆盖先完成的，赢家取决于 I/O 落盘顺序；重连旧会话时，历史消息保留着上次调用的旧路径正文，而新进程的 `system` 清单可能已经换成了另一个赢家。
+4. **Skill 存在磁盘上却用不了，到底卡在哪一道门？** 顺着三道门查：先看有没有被发现（目录层级、默认禁用外置路径或 `description` 缺失导致不进清单），再看有没有进入 `system` 的 `<available_skills>`，最后看 `permission.skill` 是 `allow`、`ask` 还是 `deny`。
+
 <details>
 <summary>展开看：实验复现脚本（checkpoint / 同名竞态）与 SQLite 原文查验命令</summary>
 <div class="d-body">

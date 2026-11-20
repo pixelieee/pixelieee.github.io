@@ -123,6 +123,13 @@ pub fn is_valid_v2_summary(summary: &str) -> bool {
 3. **`done` 不等于「新事实一定进了总摘要」**：写端只验格式不验内容，整理模型如果偷懒未改文件，只要旧摘要合法一样报 `done`。
 4. **注意 `CODEX_HOME`、`CODEX_SQLITE_HOME` 与 V1/V2 版本**：三者任何一个没对齐，两次启动看到的就不是同一份记忆库。<Src {...source} p="codex-rs/config/src/config_toml.rs" l="373-377" /> <Src {...source} p="codex-rs/state/src/runtime.rs" l="355-377" />
 
+## 回看开篇的四个问题
+
+1. **在仓库 A 纠正了测试命令、整理任务甚至报了 `done`，为什么在仓库 B 开新对话时仍只读到旧摘要？** 新对话几分钟内切仓库根本没过阶段一的「旧线程空闲满 6 小时」门槛；就算过了两道 6 小时窗口走到整理收尾，写端验收函数 `is_valid_v2_summary` 也只查 `v1` 首行、四个标题和字节上限，整理模型没改文件照样能凭合法的旧摘要拿到 `done`。
+2. **为什么提取器返回空结果会删掉旧证据，而报错失败反而保留旧证据？** 空字符串代表「这条会话经复核无值得保留的长期事实」，因此推进水位并主动撤回该线程原有的提取行；模型报错则是临时故障，只扣重试次数并退避 1 小时，保留原有提取行不被误删。
+3. **为什么记录撤回后数据库已变 0 行，磁盘上的 `rollout_summaries/` 却还要等 6 小时才消失？** 阶段一撤回只立刻删掉 SQLite 里的 `stage1_outputs` 行并把全局整理标成 `pending`，而把数据库变更同步到磁盘目录和 `memory_summary.md` 属于阶段二，必须等距上次成功整理满 6 小时冷却后才能拿到租约执行。
+4. **为什么 `codex debug prompt-input` 查不到写好的摘要，正式 App Server 对话却能读到？** 这个调试子命令绕过了 App Server，自建扩展表时注册了 Skills 却漏装了 `codex_memories_extension`，用它排查记忆必定得到假阴性。
+
 <details>
 <summary>展开看：三套 App Server 离线复现脚本（生命周期 / Skill 刷新 / debug 反例）</summary>
 <div class="d-body">

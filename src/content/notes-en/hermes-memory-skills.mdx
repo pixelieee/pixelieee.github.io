@@ -252,7 +252,7 @@ if _should_review_skills:
     agent._iters_since_skill = 0
 ```
 
-The difference is when Hermes makes the decision. **After a foreground `skill_manage` call, subsequent model requests in the same turn start counting again.** At the default threshold, ten more requests can still trigger a skill review when that turn ends. If a memory review was already due at the start of the turn, a later `memory` call resets its counter without reversing that decision. <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
+The difference comes down to when each counter is known: the user-turn count is already settled when a message arrives, so memory review is decided at turn start, whereas the model-request count depends on how many tool iterations the turn actually runs, so skill review must wait until turn end. **After a foreground `skill_manage` call, subsequent model requests in the same turn start counting again.** At the default threshold, ten more requests can still trigger a skill review when that turn ends. If a memory review was already due at the start of the turn, a later `memory` call resets its counter without reversing that decision. <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
 
 Whether a review actually launches also requires a final answer, an uninterrupted turn, and no request from the host to skip it. The review runs **after the answer has been delivered**; the comment says this keeps it from competing with the user's task. Unattended contexts such as cron skip it entirely, because one fork costs about 30K tokens. <Src p="agent/turn_finalizer.py" l="778-792" /> The master switch is `auxiliary.background_review.enabled`. <Src p="agent/background_review.py" l="185-250" />
 
@@ -420,9 +420,18 @@ The differences have distinct consequences. Compression can bring a memory updat
 
 ## Open questions
 
-1. **Can a `profile_routes` sub-agent reach the target profile's memory by some other path?** It is set to `skip_memory=True` but also carries `load_soul_identity=True`; I didn't trace prompt construction far enough to be sure.
-2. **Is there any warning when an edit lands on the profile copy of a same-named skill?** I didn't find one in `_find_skill`, but it may live elsewhere.
-3. **How common is memory saturation in practice?** The reasoning above follows the code paths; I haven't run a long end-to-end experiment, and I don't know whether upstream has other mechanisms, such as reminding the user when `/memory pending` piles up.
+1. **Is there any warning when an edit lands on the profile copy of a same-named skill?** I didn't find one in `_find_skill`, but it may live elsewhere.
+2. **How common is memory saturation in practice?** The reasoning above follows the code paths; I haven't run a long end-to-end experiment, and I don't know whether upstream has other mechanisms, such as reminding the user when `/memory pending` piles up.
+
+(Verified against source: `load_soul_identity=True` on a `profile_routes` sub-agent loads only the target profile's `SOUL.md` and does not bypass `skip_memory=True`. <Src p="agent/system_prompt.py" l="550-556" />)
+
+## Answering the five opening questions
+
+1. **When does a memory write become visible, and to whom?** The writing call sees live state immediately in its tool result, a new session on the same profile loads it at startup, and a background fork shares the parent's `MemoryStore`; the current session and concurrent sessions keep their frozen prompt snapshot until compression or a session switch triggers `invalidate_system_prompt()`.
+2. **When does background review fire, and why do memory and skills differ?** Both default to a threshold of 10, but memory counts user turns (known at turn start) while skills count model requests (only known after tool iterations finish at turn end); both run after the reply is sent on uninterrupted, non-cron turns.
+3. **What can and can't the background agent change, and where do blocked edits go?** Its default allowlist includes only skill and read-only file tools (no `terminal`/`write_file`/`patch`), `memory` is added only on memory-triggered reviews, and editing an existing skill requires reading its exact path first; unattended `patch`/`remove` memory calls are staged under `/memory pending` for human approval (failing closed to denial if staging fails).
+4. **How does a skill reach the archive, and why can `restore` re-archive it immediately?** Managed skills (`created_by: agent` or `adopt`ed) turn `stale` after 14 idle days and move to `skills/.archive/` after 30 based on `.usage.json`; `restore_skill()` never resets those timestamps, so without a `skill_view` or patch to refresh activity, the next automatic pass archives it again right away.
+5. **Who shares which store across profiles, projects, and sub-agents?** Memory and `state.db` are shared per profile regardless of working directory; skills read across four tiers (trusted project → profile → `create_dir` → `external_dirs`) but writes never touch the project tier; `delegate_task` sub-agents share `state.db` with `skip_memory=True` hard-coded off (even `profile_routes` loads only target `SOUL.md` and skills, not memory).
 
 ## Appendix
 

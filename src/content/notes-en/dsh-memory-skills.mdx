@@ -129,6 +129,13 @@ One easy write trap: calling `create_entities` again for an existing `release` w
 3. **Finding a graph edge does not fetch neighbor properties**: `search_nodes` returns only the neighbor's name and relation; reading its observations takes an explicit `open_nodes` hop.
 4. **Missing rules can be a budget cut, not a path bug**: hitting the 64 KB per-chain limit silently omits root `AGENTS.md` or truncates nested files.
 
+## Answering the four opening questions
+
+1. **Why can a release note show up in another repo while DSH's built-in session search finds nothing?** Cross-repo recall comes from an external MCP memory server pointed at one shared JSONL graph file; built-in `tool-session-query` restricts sub-agent queries to an **exact `cwd` match**, isolating both sibling repos and subdirectories.
+2. **How does compaction swap out history without deleting log entries, and why do auto vs. manual compaction handle concurrent messages differently?** Compaction appends a `surfaceOp: replace` event that shadows earlier entries on the derived `surface` view while leaving the raw log intact; if new messages arrive mid-summary, auto compaction discards the stale summary to retry next turn, whereas manual compaction keeps the summary and places the new messages after it.
+3. **Why did a 600-byte instruction budget still emit 879 bytes once user rules were present?** The instruction budget (64 KB by default) is enforced **independently per chain**—project chain and user chain each get their own 600-byte allowance before concatenation.
+4. **Why does DSH resend an unchanged skill catalog right after compaction?** Before skipping a catalog update, `tool-skill` checks whether the previously injected catalog is still visible on the current `surface`; once compaction shadows that span, the next turn republishes the catalog automatically.
+
 <details>
 <summary>Expand: reproduction scripts & upstream Vitest commands</summary>
 <div class="d-body">

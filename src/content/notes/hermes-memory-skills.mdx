@@ -324,7 +324,7 @@ if _should_review_skills:
 </div>
 </CodeTr>
 
-这里的不对称在于判断时机。**`skill_manage` 被调用后，后续模型请求在同一回合内继续计数**。例如默认阈值是 10，调用后又走满 10 次请求，收尾时仍可触发 Skill 复盘。记忆复盘如果已在回合开头达到阈值，本轮之后调用 `memory` 清零计数也不会撤销这个决定。 <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
+这里的不对称在于判断时机：用户消息一进回合就已经确定轮数，所以记忆复盘在回合开头决定；而本回合一共会跑多少次模型请求要到收尾才数得清，所以 Skill 复盘只能在回合结尾检查。**`skill_manage` 被调用后，后续模型请求在同一回合内继续计数**。例如默认阈值是 10，调用后又走满 10 次请求，收尾时仍可触发 Skill 复盘。记忆复盘如果已在回合开头达到阈值，本轮之后调用 `memory` 清零计数也不会撤销这个决定。 <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
 
 最终是否启动还要满足：有最终答复、回合没被中断、宿主没有要求跳过。复盘在**答复送出之后**才运行，注释的说法是不与用户的任务竞争；对 cron 这类没人在场的场景直接跳过，因为一次 fork 大约要花 3 万 token。<Src p="agent/turn_finalizer.py" l="778-792" /> 总开关是 `auxiliary.background_review.enabled`。<Src p="agent/background_review.py" l="185-250" />
 
@@ -524,9 +524,18 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 
 ## 仍未弄清的问题
 
-1. **`profile_routes` 子 Agent 会不会通过别的路径拿到目标 profile 的记忆？** 它被设为 `skip_memory=True`，同时又带 `load_soul_identity=True`；我没有追进 prompt 构建流程确认。
-2. **同名 Skill 被改到 profile 副本时，有没有任何提示？** 我在 `_find_skill` 里没有找到，但可能在别处。
-3. **记忆饱和在实际使用中是否常见？** 上面的推演基于代码路径，我没有做长时间的端到端实验，也不清楚上游是否有别的机制，例如在 `/memory pending` 积压时提醒用户。
+1. **同名 Skill 被改到 profile 副本时，有没有任何提示？** 我在 `_find_skill` 里没有找到，但可能在别处。
+2. **记忆饱和在实际使用中是否常见？** 上面的推演基于代码路径，我没有做长时间的端到端实验，也不清楚上游是否有别的机制，例如在 `/memory pending` 积压时提醒用户。
+
+（补充核对：`profile_routes` 子 Agent 带的 `load_soul_identity=True` 只控制加载目标 profile 的 `SOUL.md`，不经过记忆加载路径，因此不会绕过 `skip_memory=True`。<Src p="agent/system_prompt.py" l="550-556" />）
+
+## 回看开篇的五个问题
+
+1. **写入记忆后，什么时候、被谁看到？** 发起写入的调用靠返回值立刻知道，同 profile 的新会话启动即见，后台 fork 共用同一个 `MemoryStore`；当前会话和并发会话的 system prompt 用的是冻结快照，要等压缩或会话切换触发 `invalidate_system_prompt()` 才会重读。
+2. **后台复盘何时触发，为何记忆和 Skill 时机不同？** 两者默认阈值都是 10，但记忆数「用户轮」（进回合即知，回合开头定）、Skill 数「模型请求」（跑完工具迭代才数得清，回合结尾查）；都在答复送出且回合未中断、非无人 cron 场景下运行。
+3. **后台 Agent 能改什么、不能改什么，改不了去哪？** 默认白名单只有 Skill 工具和只读文件工具（无 `terminal`/`write_file`/`patch`），只有记忆触发才额外给 `memory`，改已有 Skill 必须先读同路径；无人值守时记忆只放行 `add`，`patch`/`remove` 会暂存到 `/memory pending` 待人工批准（暂存失败才直接拒绝）。
+4. **Skill 如何走到归档，restore 后为何可能立刻再归档？** 后台创建的 `created_by: agent` 或手动 `adopt` 的受管 Skill 按 `.usage.json` 活动时间 14 天标 `stale`、30 天移入 `skills/.archive/`；`restore_skill()` 不重置活动时间戳，若恢复后没被 `skill_view` 或修补刷新，下次自动检查会立刻再次归档。
+5. **profile、项目与子 Agent 之间谁和谁共享？** 记忆和 `state.db` 按 profile 共享、不分项目；Skill 按「受信任项目 → 当前 profile → `create_dir` → `external_dirs`」四层读取，但写入永远不改项目层；`delegate_task` 子 Agent 共用 `state.db` 但硬编码 `skip_memory=True`（即便是 `profile_routes` 也只读目标 `SOUL.md` 与 Skill，不读目标记忆）。
 
 ## 附录
 

@@ -295,6 +295,13 @@ try {
 </div>
 </details>
 
+## 回看开篇的四个问题
+
+1. **没有内置记忆库时，长期规则、操作步骤、临时试错怎么存？** 长期规则写进 `AGENTS.md` / `CLAUDE.md` 启动拼进系统提示，可复用步骤写成 `SKILL.md` 启动只列索引、用时 `read` 正文，临时试错留在 JSONL 会话树里随压缩折成摘要。
+2. **为什么 JSONL 里写着的消息模型可能一次都看不到？切回旧分支时，另一条分支的压缩摘要去哪了？** Pi 发请求前从当前节点沿 `parentId` 倒推回根，遇到该分支上最新的压缩点就跳到 `firstKeptEntryId`；被跳过的旧消息、非当前路径的分支，以及另一条分支上生成的压缩摘要虽然仍留在文件里，都不会出现在本次请求中。
+3. **中途同改 `AGENTS.md` 和 `SKILL.md` 且未 `/reload`，为何同一次请求会同时带着旧规则、旧正文和新正文？** 因为 `AGENTS.md` 与 Skill 索引在会话启动时已缓存，改盘不重读；而 `/skill:name` 和 `read` 每次都直接现读磁盘，旧消息留在对话历史里，新展开又带进新正文，三者便同框出现在同一请求。
+4. **想给 Pi 加上长期记忆，该从哪几个扩展接口切入？** `before_agent_start` 负责动态注入系统提示或记忆消息，`context` 负责发请求前裁剪/重写消息列表，`session_before_compact` / `session_before_tree` 负责接管压缩与切分支摘要，`appendEntry` 负责往 JSONL 里写不进模型的扩展状态。
+
 <details>
 <summary>自己核对源码、复现实验脚本与仍未实测项</summary>
 <div class="d-body">
