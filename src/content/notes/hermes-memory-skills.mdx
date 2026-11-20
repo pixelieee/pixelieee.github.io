@@ -194,7 +194,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 `state.db` 保存会话消息。模型需要主动找回旧对话时，可以用 `session_search`，其中关键词查询使用 SQLite FTS5，**不调用 LLM**。返回内容取自库里的消息，单条长消息会按模式截短（检索头尾预览 1,200 字符、`read` 模式 2,000 字符、`scroll` 展开 4,000 字符；注释 `#114344` 记过未限长前一次 `read` 吐出 74K 字符、一步把请求从 ~50K 推到 ~89K token 的事故）。除了给模型检索，你在终端执行 `hermes --resume` 或 `/resume` 恢复历史对话时，CLI 也是从这个数据库把旧会话消息完整加载回来。 <Src p="tools/session_search_tool.py" l="2-8" /> <Src p="tools/session_search_tool.py" l="34-40" /> <Src p="tools/session_search_tool.py" l="447-462" /> <Src p="hermes_cli/cli_agent_setup_mixin.py" l="620-630" />
 
-我在 `hermes_state*` 里没有找到任何向量或 embedding 相关的代码，所以「为什么不用向量检索」没有注释可引。<Infer />这个工具要找回的是用户原话和命令输出，精确匹配比语义相似更重要，也省掉一次模型调用。
+Hermes 的整套内置会话存储与检索层（根目录下的 `hermes_state*.py` 模块，含 `hermes_state_fts.py`、`hermes_state_search.py` 与 `tools/session_search_tool.py`）里，**没有任何向量索引或 embedding 检索代码**——也就是说，内置的 `session_search` 纯粹是本地 SQLite 词法检索，零模型调用、离线可用，但也不做语义向量匹配（如需语义/向量记忆，需额外接入 `memory.provider` 外部记忆插件）。<Infer />源码没有注释解释内置搜索为何不用向量；这个工具要找回的是用户原话、文件名和命令输出，精确词法匹配往往比语义相似更直接，也省掉了维护 embedding 模型和额外调用的开销。
 
 几处细节：
 
