@@ -104,7 +104,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 - **记忆排在最后**：让前面的 stable 部分成为可复用的最长前缀。
 - **同模型复盘继承父会话的缓存前缀和工具列表**。注释引用的是一次 Sonnet 4.5 的端到端测量，成本约降 26%。 <Src p="agent/background_review.py" l="1005-1018" />
 - **后台只在派发时限制工具**，发给模型的工具列表保持字节一致。<Src p="agent/background_review.py" l="1088-1092" />
-- **记忆在提示词失效时重读**，例如上下文压缩之后。 <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" />
+- **记忆在提示词失效时重读**：在固定提交 `bf0203a` 里，除新会话启动初始化外，只有**上下文压缩之后**、**CLI 切换/新建/恢复/分支会话（`/new`、`/resume`、`/branch`）**以及**回退历史并要求重建提示词**这几类入口会调用 `invalidate_system_prompt()` 从磁盘重读记忆。<Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="22-37" /> <Src p="hermes_cli/cli_session_mixin.py" l="629-630" /> <Src p="hermes_cli/cli_session_mixin.py" l="759-768" />
 
 这条线能解释为什么写入记忆不会马上改变 system prompt。Skill 增删还有另一条传递路径：Hermes 可以把目录变化附在下一轮用户消息中，之前的前缀仍可复用。 <Src p="agent/skills_index_delta.py" l="1-13" />
 

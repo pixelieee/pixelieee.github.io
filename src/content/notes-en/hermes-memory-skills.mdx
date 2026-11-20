@@ -73,7 +73,7 @@ The same goal shows up in the code at least five times, each with a comment expl
 - **Memory comes last**, so the stable part ahead of it forms the longest reusable prefix.
 - **Same-model reviews inherit the parent's cached prefix and tool list.** The source cites an end-to-end cost reduction of about 26% in a measurement on Sonnet 4.5. <Src p="agent/background_review.py" l="1005-1018" />
 - **The background agent restricts tools only at dispatch time**, so the tool list sent to the model stays byte-identical. <Src p="agent/background_review.py" l="1088-1092" />
-- **Memory is reloaded when the prompt is invalidated**, for example after context compression. <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" />
+- **Memory is reloaded only when the prompt is invalidated**: at commit `bf0203a`, aside from fresh session startup, `invalidate_system_prompt()` reloads memory from disk only after **context compression**, on **CLI session switch / new / resume / branch** (`/new`, `/resume`, `/branch`), or when **rewinding history with prompt invalidation**. <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="22-37" /> <Src p="hermes_cli/cli_session_mixin.py" l="629-630" /> <Src p="hermes_cli/cli_session_mixin.py" l="759-768" />
 
 That explains why saving memory does not immediately change the system prompt. Skill changes have another route: Hermes can attach changes in the index to the next user message and still reuse the earlier prefix. <Src p="agent/skills_index_delta.py" l="1-13" />
 
