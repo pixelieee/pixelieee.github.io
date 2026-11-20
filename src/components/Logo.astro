@@ -1,7 +1,23 @@
 ---
 const { size = 38 } = Astro.props;
 ---
-<img src="/pixel-portrait.svg" width={size} height={size} alt="" class="logo" />
+<img
+  src="/brand/avatar-38.png"
+  srcset="
+    /brand/avatar-38.png 38w,
+    /brand/avatar-48.png 48w,
+    /brand/avatar-57.png 57w,
+    /brand/avatar-67.png 67w,
+    /brand/avatar-76.png 76w,
+    /brand/avatar-114.png 114w,
+    /brand/avatar-152.png 152w
+  "
+  sizes={`${size}px`}
+  width={size}
+  height={size}
+  alt=""
+  class="logo"
+/>
 
 <style>
   .logo {
