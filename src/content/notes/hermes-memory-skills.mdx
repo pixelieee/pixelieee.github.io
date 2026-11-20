@@ -324,7 +324,7 @@ if _should_review_skills:
 </div>
 </CodeTr>
 
-这里的不对称在于判断时机：用户消息一进回合就已经确定轮数，所以记忆复盘在回合开头决定；而本回合一共会跑多少次模型请求要到收尾才数得清，所以 Skill 复盘只能在回合结尾检查。**`skill_manage` 被调用后，后续模型请求在同一回合内继续计数**。例如默认阈值是 10，调用后又走满 10 次请求，收尾时仍可触发 Skill 复盘。记忆复盘如果已在回合开头达到阈值，本轮之后调用 `memory` 清零计数也不会撤销这个决定。 <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
+这里的不对称不只是因为「用户消息在开头就能数清、工具迭代次数要到结尾才数得清」，翻看仓库的早期提交记录还能看到它的直接历史成因：在提交 [`45058b4105`](https://github.com/NousResearch/hermes-agent/commit/45058b410597ff5ff99c2e744e7e626a6e426fe6)（`#2235`，2026-03-20）之前，Hermes 并没有后台复盘，而是把记忆和 Skill 的提醒词全都在回合开头直接拼接到 `user_message` 末尾；提交说明记录在 15 个会话里有 43% 的用户消息被拼进了这类提醒，甚至出现模型先花工具调用去回应提醒、耽误用户正事的情况。重构成回合后后台 fork 时，作者把 Skill 触发顺手搬到了回合收尾，却把回合开头原来的记忆提醒拼接原地替换成了 `_should_review_memory = True`。于是留下了这个不对称：**`skill_manage` 被调用后，后续模型请求在同一回合内继续计数**（例如默认阈值 10，调用后又走满 10 次请求，收尾时仍可触发 Skill 复盘）；而记忆复盘一旦在回合开头达到阈值，本轮之后模型自己调用 `memory` 清零计数也不会撤销这个决定。 <Src p="agent/tool_executor.py" l="746-758" /> <Src p="agent/turn_iteration_prep.py" l="165-167" /> <Src p="agent/turn_finalizer.py" l="763-770" />
 
 最终是否启动还要满足：有最终答复、回合没被中断、宿主没有要求跳过。复盘在**答复送出之后**才运行，注释的说法是不与用户的任务竞争；对 cron 这类没人在场的场景直接跳过，因为一次 fork 大约要花 3 万 token。<Src p="agent/turn_finalizer.py" l="778-792" /> 总开关是 `auxiliary.background_review.enabled`。<Src p="agent/background_review.py" l="185-250" />
 
