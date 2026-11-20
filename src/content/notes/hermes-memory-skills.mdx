@@ -112,7 +112,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 ### 格式、容量与安全扫描
 
-`MEMORY.md` 和 `USER.md` 都是纯文本文件，里面按顺序存着一条条记忆条目（entry），条目之间用**独占一行的 `§`**（源码分隔常量为 `"\n§\n"`）隔开。因为分隔符要求 `§` 必须单独占一整行，所以单条记忆可以自由跨多行，写在句子里的 `§`（比如「见 §3.2」）也只当普通文字，不会被误拆成两条：<Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
+`MEMORY.md` 和 `USER.md` 都是纯文本文件，里面按顺序存着一条条**记忆条目（entry）**，条目之间用**独占一行的 `§`**（源码分隔常量为 `"\n§\n"`）隔开。因为分隔符要求 `§` 必须单独占一整行，所以单条记忆可以自由跨多行，写在句子里的 `§`（比如「见 §3.2」）也只当普通文字，不会被误拆成两条：<Src p="tools/memory_tool_store.py" l="25" /> <Src p="tools/memory_tool_store.py" l="665-667" />
 
 ```text title="MEMORY.md 在磁盘上的实际格式（两条记忆条目示例）"
 这个仓库使用 pnpm，不要运行 npm install。
