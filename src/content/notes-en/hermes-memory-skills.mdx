@@ -149,13 +149,13 @@ A few edge cases:
 
 ### What belongs in memory, and what belongs in a skill
 
-This is the most important rule in the whole design, and it is stated three times: in the tool description, in the system prompt guidance, and in the background review prompt. <Src p="tools/memory_tool.py" l="375-398" /> <Src p="agent/prompt_builder.py" l="192-230" /> <Src p="agent/background_review.py" l="370-388" />
+This is the most important routing rule in the whole design, repeated in three prompt locations: the `memory` tool description, the standing system-prompt guidance, and the background review prompt. <Src p="tools/memory_tool.py" l="375-398" /> <Src p="agent/prompt_builder.py" l="192-230" /> <Src p="agent/background_review.py" l="370-388" /> The table below summarizes the exact criteria, examples, and phrasing instructions those three prompts give to the model:
 
-| | Goes to memory | Goes to a skill | Goes to neither |
+| | Goes to memory (`MEMORY.md` / `USER.md`) | Goes to a skill (`SKILL.md`) | Goes to neither (skip) |
 |---|---|---|---|
-| Test | true no matter what the task is | useful only for a certain kind of task | goes stale quickly, or can be looked up again any time |
-| Examples | who the user is, stable environment facts, standing conventions | concrete steps, pitfalls, the user's preferences and corrections for **that kind of task** | task progress, completion logs, temporary to-dos |
-| Phrasing | a statement: "The user prefers short answers" | executable steps | stays in session history; find it with `session_search` |
+| Routing test | true across every session regardless of task | useful only for a specific kind of task | goes stale quickly, or can be looked up again any time |
+| Examples named in prompts | who the user is, stable environment facts, standing conventions | concrete steps, pitfalls, user preferences and corrections for **that kind of task** | task progress, completion logs, temporary to-dos |
+| How to write / handle | declarative facts (source example: `"User prefers concise responses"` ✓, not imperatives like `"Always respond concisely"` ✗, so it won't override a later request) | executable steps and pitfall rules | write to neither store; leave in session history and find via `session_search` |
 
 The tool description gives the reason: memory is **injected on every turn**, so it has to stay small, while skills load only when relevant. That explains a choice that looks backwards at first: the user's corrections on TypeScript tasks go into a skill, not into `USER.md`. A fact shouldn't be written to both places either; the comment says that would make both files hit their caps sooner.
 
