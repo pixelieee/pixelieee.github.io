@@ -97,9 +97,29 @@ Two safeguards share one attitude: **when something goes wrong, make it visible 
 - If a file has been hand-edited past its cap, loading **doesn't truncate it**. It logs a warning and refuses further additions until the file is back under the limit. <Src p="tools/memory_tool_store.py" l="246-252" />
 - Every entry passes a local rule-based threat scan both **on write** and **on load** (`tools/threat_patterns.py`, `scope="strict"`—no LLM call, using regex and invisible-Unicode checks for prompt injection, credential/context exfiltration, SSH backdoors, config/rule tampering, and hardcoded secrets). Writes that trip a rule are refused outright; entries introduced via hand edits or external writers appear in the system-prompt snapshot as `[BLOCKED: …]` while **the file itself stays untouched**. The comment's reasoning: memory enters the system prompt, so a poisoned entry would keep acting across sessions; silently dropping it would hide the attack and leave the user no way to find and delete it. <Src p="tools/threat_patterns.py" l="1-94" /> <Src p="tools/memory_tool_store.py" l="28-31" /> <Src p="tools/memory_tool_store.py" l="221-253" />
 
-### The `memory` tool: one call, one atomic batch
+### The `memory` tool: three actions and atomic batches
 
-The tool accepts all changes to a file in one `operations` array and applies them atomically, with **the character cap checked only against the final result**. A single call can delete old entries to make room for new ones. An individual over-budget `add` returns the current entries so the model can consolidate them. If the resulting batch still exceeds the limit, no changes are written and the error reports the reason and usage. <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
+The `memory` tool selects the file via `target` (`memory` for `MEMORY.md`, `user` for `USER.md`) and supports three actions: <Src p="tools/memory_tool.py" l="399-436" />
+
+| Action | Required fields | Behavior |
+|---|---|---|
+| `add` | `content` | appends a new entry |
+| `patch` | `old_text`, `content` | finds the entry containing `old_text` and replaces **only that matched span** with `content`, keeping the rest of the entry intact |
+| `remove` | `old_text` | deletes the entire entry containing `old_text` |
+
+(The older whole-entry `replace` action is explicitly rejected. <Src p="tools/memory_tool.py" l="261-262" />)
+
+Use bare fields for a single edit; when making multiple changes to one file—especially deleting or trimming old entries to free space for a new one—pass them together in one `operations` array. The batch executes atomically and **the character cap is checked only against the final result**. An individual over-budget `add` returns the current entries so the model can consolidate them; if the consolidated batch still exceeds the limit, nothing is written and the error reports only usage and reason. <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
+
+```json title="Atomic operations batch: free room and add in one call"
+{
+  "target": "memory",
+  "operations": [
+    { "action": "remove", "old_text": "This repo uses npm" },
+    { "action": "add", "content": "This repo uses pnpm; run tests with pnpm test." }
+  ]
+}
+```
 
 For a single change, the one-shot form works:
 

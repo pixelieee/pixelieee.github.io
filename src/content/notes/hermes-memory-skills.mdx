@@ -128,9 +128,29 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 - 文件被手工改到超限时，加载**不截断**，只告警，并禁止继续添加，直到回到上限以内。<Src p="tools/memory_tool_store.py" l="246-252" />
 - 每条 `entry` 在**写入时**和**加载时**都会过一遍本地威胁扫描（`tools/threat_patterns.py`，`scope="strict"`，不调模型，靠正则与不可见 Unicode 规则拦截提示词注入、凭据/上下文外泄、SSH 后门、篡改 `AGENTS.md`/配置及硬编码密钥）。写入时命中直接拒绝；如果是手工改盘或外部写入带进来的可疑条目，加载时在 system prompt 快照里会替换成 `[BLOCKED: …]`，**磁盘原文件不动**。注释的理由是：记忆会进入 system prompt，一条被投毒的条目会跨会话持续生效；静默丢弃则会把攻击藏起来，用户无从发现和删除。<Src p="tools/threat_patterns.py" l="1-94" /> <Src p="tools/memory_tool_store.py" l="28-31" /> <Src p="tools/memory_tool_store.py" l="221-253" />
 
-### `memory` 工具：一次调用，一个原子批次
+### `memory` 工具：三种操作与原子批次
 
-工具要求对同一文件的多项改动放进一次调用的 `operations` 数组，原子执行，**字符上限只检查最终结果**。一次调用可以先删掉旧条目，再加新条目。单次 `add` 超限会返回现有条目，便于模型合并；合并批次仍超限时，整批不写入，错误只报告用量和原因。 <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
+`memory` 工具通过 `target` 指定目标文件（`memory` 对应 `MEMORY.md`，`user` 对应 `USER.md`），只支持三种操作（`action`）：<Src p="tools/memory_tool.py" l="399-436" />
+
+| 操作 | 必填参数 | 行为 |
+|---|---|---|
+| `add` | `content` | 追加一条新条目 |
+| `patch` | `old_text`、`content` | 定位到包含 `old_text` 的条目，**只把命中的那一段**替换成 `content`，条目其余内容保留 |
+| `remove` | `old_text` | 删除包含 `old_text` 的整条条目 |
+
+（旧版整条覆盖式的 `replace` 已被显式拒绝。<Src p="tools/memory_tool.py" l="261-262" />）
+
+只改一处时直接传上面的字段即可；如果要对同一文件做多项改动（尤其是文件写满后要先删旧、再加新），工具要求把它们放进一次调用的 `operations` 数组，原子执行，且**字符上限只检查整批执行完的最终结果**。单次 `add` 超限会返回现有条目，便于模型在下一轮打包合并；如果合并批次仍超限，整批不写入，错误只报告用量和原因。 <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
+
+```json title="批量 operations：一次调用先删旧再加新，只按最终结果检查字符上限"
+{
+  "target": "memory",
+  "operations": [
+    { "action": "remove", "old_text": "这个仓库用 npm" },
+    { "action": "add", "content": "这个仓库用 pnpm，测试命令为 pnpm test。" }
+  ]
+}
+```
 
 只有一处改动时可以用单次写法：
 
