@@ -156,7 +156,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 - `add` 去掉首尾空白后与已有条目完全相同就跳过；措辞不同则算新条目。<Src p="tools/memory_tool_store.py" l="369-388" />
 - `patch` 和 `remove` 用 `old_text` 定位。命中多个**不同**条目返回 `ambiguous`；完全相同的重复条目不算歧义。`replace` 被明确拒绝。<Src p="tools/memory_tool_store.py" l="419-461" /> <Src p="tools/memory_tool.py" l="261-262" />
 - 写入流程是加锁、重读文件、校验、写临时文件、原子替换。因为每次都先重读，两个同时运行的会话不会互相覆盖对方的写入。<Src p="tools/memory_tool_store.py" l="338-367" /> <Src p="tools/memory_tool_store.py" l="675-683" />
-- 成功返回**故意不回显条目列表**。注释说回显会诱导模型「再找点东西改」，重复发出同样的操作。<Src p="tools/memory_tool_store.py" l="623-636" />
+- 写入成功的返回值**故意不附上现有条目列表**。注释说把全部条目返回回去会诱导模型「再找点东西改」，重复发出同样的操作。<Src p="tools/memory_tool_store.py" l="623-636" />
 
 ### 什么该进记忆，什么该进 Skill
 
