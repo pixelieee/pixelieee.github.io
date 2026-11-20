@@ -1,20 +1,16 @@
 ---
-const { size = 38 } = Astro.props;
+import { Image } from 'astro:assets';
+import portrait from '../../public/portraits/mature-simple/white/portrait.png';
+
+const { size = 48 } = Astro.props;
 ---
-<img
-  src="/brand/avatar-38.png"
-  srcset="
-    /brand/avatar-38.png 38w,
-    /brand/avatar-48.png 48w,
-    /brand/avatar-57.png 57w,
-    /brand/avatar-67.png 67w,
-    /brand/avatar-76.png 76w,
-    /brand/avatar-114.png 114w,
-    /brand/avatar-152.png 152w
-  "
-  sizes={`${size}px`}
+<Image
+  src={portrait}
   width={size}
   height={size}
+  densities={[1, 1.25, 1.5, 1.75, 2, 3, 4]}
+  format="png"
+  loading="eager"
   alt=""
   class="logo"
 />

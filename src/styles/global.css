@@ -28,7 +28,7 @@ h1,h2,h3{font-family:var(--serif);font-weight:600;line-height:1.35;letter-spacin
 
 /* ───────── header / footer ───────── */
 header.site{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:saturate(1.2) blur(10px);-webkit-backdrop-filter:saturate(1.2) blur(10px);border-bottom:1px solid var(--line)}
-header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none}
 .brand b{font:500 14px/1 var(--mono);letter-spacing:.01em;position:relative}
 .brand .tittle{position:relative;display:inline-block}
