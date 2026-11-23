@@ -103,7 +103,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 - **记忆冻结**：会话中途写入不改 prompt，上面已经看到。
 - **记忆排在最后**：让前面的 stable 部分成为可复用的最长前缀。
 - **同模型复盘继承父会话的缓存前缀和工具列表**。注释引用的是一次 Sonnet 4.5 的端到端测量，成本约降 26%。 <Src p="agent/background_review.py" l="1005-1018" />
-- **后台只在派发时限制工具**，发给模型的工具列表保持字节一致。<Src p="agent/background_review.py" l="1088-1092" />
+- **后台只在派发时限制工具**，发给模型的工具列表与父会话保持一致。<Src p="agent/background_review.py" l="1088-1092" />
 - **记忆在提示词失效时重读**：在固定提交 `bf0203a` 里，除新会话启动初始化外，只有**上下文压缩之后**、**CLI 切换/新建/恢复/分支会话（`/new`、`/resume`、`/branch`）**以及**回退历史并要求重建提示词**这几类入口会调用 `invalidate_system_prompt()` 从磁盘重读记忆。<Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="22-37" /> <Src p="hermes_cli/cli_session_mixin.py" l="629-630" /> <Src p="hermes_cli/cli_session_mixin.py" l="759-768" />
 
 这条线能解释为什么写入记忆不会马上改变 system prompt。Skill 增删则走了另一条不破坏缓存的路径：每轮对比冻结清单与磁盘上的当前 Skill，把新增或移除的通知附在下一轮用户消息末尾（内置记忆 `MEMORY.md` / `USER.md` 不走这条通道），前面的 system prompt 前缀仍可复用。 <Src p="agent/skills_index_delta.py" l="1-13" /> <Src p="agent/turn_context.py" l="864-868" />
@@ -623,7 +623,7 @@ pass 2:  {'archived': 1, ...} -> ('archived', False, True)
 - **Skill 复盘（默认每 10 次模型请求）**：一条用户消息里，模型可能来回调多次工具，每次发给模型的请求都算 1 次。刚收到消息时还不知道这轮一共会调几次，只能等整轮回复结束前再检查总数够不够 10；如果中途模型自己调用了 `skill_manage`，计数会当场清零、从 0 重新数。
 
 **3. 后台 Agent 能改什么、不能改什么，改不了的去了哪里？**
-发给模型的 `tools[]` 工具声明列表保持与父会话逐字节一致（为了保住前缀缓存），真正的限制发生在**工具派发阶段的白名单拦截**：
+发给模型的 `tools[]` 工具声明列表与父会话保持一致（为了保住前缀缓存），真正的限制发生在**工具派发阶段的白名单拦截**：
 - **对 Skill**：派发白名单默认只放行只读文件工具（`read_file`、`search_files`）和 Skill 工具（`skills_list`、`skill_view`、`skill_manage`）。如果要修改已有的 Skill，后台复盘必须先在本次运行里用 `skill_view` 或 `read_file` 把对应文件实际读一遍，否则直接拒绝（防止只凭聊天记录里的印象盲改）。
 - **对记忆**：后台复盘的提示词原本只要求它做 `add`（新增），但 `memory` 工具描述里自带「写满时立即整理（consolidate now）」的提示；为了防止自动运行的后台 fork 顺着这条提示删掉没人审阅过的旧条目（源码注释关联 `#105921` <Src p="agent/background_review.py" l="1094-1098" />），Hermes 设了两道闸门：第一，仅由 Skill 计数触发的复盘，派发白名单直接不含 `memory`，只有开启了记忆且触发了记忆复盘（单触发、双触发或用户手动执行 `/refine`）才放行 `memory`；第二，即便放行了 `memory`，自动触发的后台复盘（区别于手动 `/refine`）也**只能直接执行 `add`**，提交的 `patch` 和 `remove` 会被拦截并暂存到 `/memory pending`——之所以「暂存」而不是「直接拒绝」，是因为后台 fork 的总结不会返回给主对话，直接拒绝会让这次整理请求彻底丢失、用户无从得知 <Src p="tools/memory_tool.py" l="179-186" />。等你执行 `/memory approve <id>` 后，由 **CLI 本地命令直接重放写入磁盘**（不再调用前台或后台模型；如果不执行命令，待批记录就一直留在磁盘上不会生效）。
 
