@@ -106,7 +106,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 - **后台只在派发时限制工具**，发给模型的工具列表保持字节一致。<Src p="agent/background_review.py" l="1088-1092" />
 - **记忆在提示词失效时重读**：在固定提交 `bf0203a` 里，除新会话启动初始化外，只有**上下文压缩之后**、**CLI 切换/新建/恢复/分支会话（`/new`、`/resume`、`/branch`）**以及**回退历史并要求重建提示词**这几类入口会调用 `invalidate_system_prompt()` 从磁盘重读记忆。<Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="22-37" /> <Src p="hermes_cli/cli_session_mixin.py" l="629-630" /> <Src p="hermes_cli/cli_session_mixin.py" l="759-768" />
 
-这条线能解释为什么写入记忆不会马上改变 system prompt。Skill 增删还有另一条传递路径：Hermes 可以把目录变化附在下一轮用户消息中，之前的前缀仍可复用。 <Src p="agent/skills_index_delta.py" l="1-13" />
+这条线能解释为什么写入记忆不会马上改变 system prompt。Skill 增删则走了另一条不破坏缓存的路径：每轮对比冻结清单与磁盘上的当前 Skill，把新增或移除的通知附在下一轮用户消息末尾（内置记忆 `MEMORY.md` / `USER.md` 不走这条通道），前面的 system prompt 前缀仍可复用。 <Src p="agent/skills_index_delta.py" l="1-13" /> <Src p="agent/turn_context.py" l="864-868" />
 
 ## 记忆文件：小、冻结、可审计
 
@@ -522,7 +522,7 @@ fork 自己写的复盘总结不会进入父会话的对话记录。用户仍可
 
 `invalidate_system_prompt()` 会重新加载记忆文件。上下文压缩和 CLI 的会话切换都能走到这一步，因此不必总等一个全新的会话。 <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="35-38" />
 
-Skill 的可见性不同。为了不改写冻结的 system prompt 前缀，Hermes 在 `agent/turn_context.py` 里专门留了一条「挂在当轮用户消息末尾」的增量通知通道，一共承接四类消息：Gateway 通知、插件通知、终端/界面切换提示，以及 **Skill 清单增删通知**（内置的 `MEMORY.md` / `USER.md` 并不走这条通道）。每轮开始，常规会话（CLI、TUI、Desktop、Gateway）会拿冻结的 Skill 清单与当前磁盘做差，把新增或移除的名称附在本轮用户消息后面——即便是另一个进程装的新 Skill，当前模型也能在下一轮得知。前提是原提示词里已有非空的 Skill 清单；只有 MoA 和 `codex_app_server` 两种特殊模式会跳过此机制。 <Src p="agent/skills_index_delta.py" l="100-131" /> <Src p="agent/turn_context.py" l="1186" /> <Src p="agent/turn_context.py" l="864-868" /> <Src p="website/docs/user-guide/features/skills.md" l="38" />
+Skill 的可见性不同。为了不改写冻结的 system prompt 前缀，Hermes 在 `agent/turn_context.py` 里留了一条挂在当轮用户消息末尾的增量通知通道，一共承接四类消息：Gateway 通知、插件通知、终端/界面切换提示，以及 **Skill 清单增删通知**（内置的 `MEMORY.md` / `USER.md` 不走这条通道）。<Src p="agent/turn_context.py" l="858-868" /> 每轮开始，常规会话（CLI、TUI、Desktop、Gateway）都会对比启动时冻结的 Skill 清单与当前磁盘上的 Skill，把新增或移除的名称附在本轮用户消息末尾——即便是另一个进程装的新 Skill，当前模型也能在下一轮得知。前提是原提示词里已有非空的 Skill 清单；只有 MoA 和 `codex_app_server` 两种特殊模式会跳过此机制。 <Src p="agent/skills_index_delta.py" l="100-131" /> <Src p="agent/turn_context.py" l="1186" /> <Src p="website/docs/user-guide/features/skills.md" l="38" />
 
 ## 作用域：profile、项目与委派
 

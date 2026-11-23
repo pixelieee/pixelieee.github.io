@@ -39,7 +39,7 @@ The differences between the three stores shape every mechanism that follows:
 |---|---|---|---|
 | Location | `memories/MEMORY.md`, `USER.md` | the `messages` table in `state.db` | `skills/<name>/SKILL.md` |
 | Holds | stable facts that hold across tasks | every message, including tool calls and results | reusable know-how for a kind of task |
-| How it reaches the model | full load-time snapshot (deduped & threat-masked) in the system prompt | restored with a session or retrieved on demand through `session_search` | an index in the prompt, with additions or removals announced on supported turns; bodies loaded on demand |
+| How it reaches the model | full load-time snapshot (deduped & threat-masked) in the system prompt | restored with a session or retrieved on demand through `session_search` | index in the system prompt, mid-session additions/removals appended to the next user message, bodies loaded on demand |
 | Capacity | configurable budgets, 2,200 / 1,375 characters by default | independent of the memory files’ character budgets | bodies load on demand; the curator maintains managed skills |
 | Written by | foreground model, background review | the runtime, automatically | foreground model, background review, curator |
 
@@ -75,7 +75,7 @@ The same goal shows up in the code at least five times, each with a comment expl
 - **The background agent restricts tools only at dispatch time**, so the tool list sent to the model stays byte-identical. <Src p="agent/background_review.py" l="1088-1092" />
 - **Memory is reloaded only when the prompt is invalidated**: at commit `bf0203a`, aside from fresh session startup, `invalidate_system_prompt()` reloads memory from disk only after **context compression**, on **CLI session switch / new / resume / branch** (`/new`, `/resume`, `/branch`), or when **rewinding history with prompt invalidation**. <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="22-37" /> <Src p="hermes_cli/cli_session_mixin.py" l="629-630" /> <Src p="hermes_cli/cli_session_mixin.py" l="759-768" />
 
-That explains why saving memory does not immediately change the system prompt. Skill changes have another route: Hermes can attach changes in the index to the next user message and still reuse the earlier prefix. <Src p="agent/skills_index_delta.py" l="1-13" />
+That explains why saving memory does not immediately change the system prompt. Skill additions and removals take another cache-safe route: each turn compares the frozen index against disk and appends a notice to the end of the next user message (built-in `MEMORY.md` / `USER.md` do not use this channel), keeping the earlier prefix reusable. <Src p="agent/skills_index_delta.py" l="1-13" /> <Src p="agent/turn_context.py" l="864-868" />
 
 ## Memory files: small, frozen, auditable
 
