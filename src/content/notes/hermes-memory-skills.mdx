@@ -98,7 +98,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 </CodeTr>
 <Src p="tools/memory_tool_store.py" l="618-621" />
 
-同一个目标在代码里至少出现了五次，每次都有注释写明理由：
+「保住前缀缓存」这个目标在代码里至少出现了五次，每次都有注释写明理由：
 
 - **记忆冻结**：会话中途写入不改 prompt，上面已经看到。
 - **记忆排在最后**：让前面的 stable 部分成为可复用的最长前缀。

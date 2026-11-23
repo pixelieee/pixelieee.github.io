@@ -67,7 +67,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 ```
 <Src p="tools/memory_tool_store.py" l="618-621" />
 
-The same goal shows up in the code at least five times, each with a comment explaining why:
+That same goal—preserving the prefix cache—shows up in the code at least five times, each with a comment explaining why:
 
 - **Memory is frozen**: mid-session writes don't change the prompt, as shown above.
 - **Memory comes last**, so the stable part ahead of it forms the longest reusable prefix.
