@@ -42,7 +42,7 @@ import Journey from '../../components/Journey.astro';
 |---|---|---|---|
 | 位置 | `memories/MEMORY.md`、`USER.md` | `state.db` 的 `messages` 表 | `skills/<name>/SKILL.md` |
 | 存什么 | 跨任务都成立的稳定事实 | 每一条消息，含工具调用与结果 | 某类任务的可复用做法 |
-| 怎样进入模型 | 加载时全量取快照（仅去重与安全遮盖），注入 system prompt | 恢复会话时读取历史，模型可用 `session_search` 主动检索 | 目录进 prompt，新出现或移除的 Skill 可在下一轮通知，正文按需读 |
+| 怎样进入模型 | 加载时全量取快照（仅去重与安全遮盖），注入 system prompt | 恢复会话时读取历史，模型可用 `session_search` 主动检索 | 清单进 system prompt，中途增删会在下一轮用户消息末尾通知，正文按需读 |
 | 容量 | 默认 2200 / 1375 字符，可配置 | 不受记忆文件的字符预算限制 | 正文按需加载，由 curator 定期维护受管 Skill |
 | 谁来写 | 前台模型、后台复盘 | 运行时自动写入 | 前台模型、后台复盘、curator |
 
@@ -517,12 +517,12 @@ fork 自己写的复盘总结不会进入父会话的对话记录。用户仍可
 | 发起写入的那次调用 | 工具返回值立刻反映实时状态 | `skill_view` 读到的就是最新文件 |
 | 同一会话的 system prompt | 提示词失效并重建时从磁盘重读 | 重建可更新目录，正文由 `skill_view` 读取 |
 | 同一 profile 的新会话 | 启动时读入 | 启动时出现在目录里，正文按需读 |
-| 同时运行的另一个会话 | 它的记忆快照等自己重建才更新 | 支持变更通知的会话，下一轮即可得知新出现或移除的 Skill |
+| 同时运行的另一个会话 | 它的记忆快照等自己重建才更新 | 常规会话在下一轮用户消息末尾附带增删通知即可得知（MoA / `codex_app_server` 除外） |
 | 后台复盘的 fork | 与父会话共用同一个存储对象 | 读写同一个目录 |
 
 `invalidate_system_prompt()` 会重新加载记忆文件。上下文压缩和 CLI 的会话切换都能走到这一步，因此不必总等一个全新的会话。 <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="35-38" />
 
-Skill 的可见性不同。每轮开始，Hermes 比较冻结的 Skill 目录与当前目录，把新增、移除的名称作为提示附在本轮用户消息后面。即便是另一个进程装的新 Skill，当前模型也有机会在下一轮得知。前提是原提示词里有可比较的目录；MoA 和 `codex_app_server` 模式跳过此机制。 <Src p="agent/skills_index_delta.py" l="100-131" /> <Src p="agent/turn_context.py" l="1186" /> <Src p="agent/turn_context.py" l="864-868" /> <Src p="website/docs/user-guide/features/skills.md" l="38" />
+Skill 的可见性不同。为了不改写冻结的 system prompt 前缀，Hermes 在 `agent/turn_context.py` 里专门留了一条「挂在当轮用户消息末尾」的增量通知通道，一共承接四类消息：Gateway 通知、插件通知、终端/界面切换提示，以及 **Skill 清单增删通知**（内置的 `MEMORY.md` / `USER.md` 并不走这条通道）。每轮开始，常规会话（CLI、TUI、Desktop、Gateway）会拿冻结的 Skill 清单与当前磁盘做差，把新增或移除的名称附在本轮用户消息后面——即便是另一个进程装的新 Skill，当前模型也能在下一轮得知。前提是原提示词里已有非空的 Skill 清单；只有 MoA 和 `codex_app_server` 两种特殊模式会跳过此机制。 <Src p="agent/skills_index_delta.py" l="100-131" /> <Src p="agent/turn_context.py" l="1186" /> <Src p="agent/turn_context.py" l="864-868" /> <Src p="website/docs/user-guide/features/skills.md" l="38" />
 
 ## 作用域：profile、项目与委派
 

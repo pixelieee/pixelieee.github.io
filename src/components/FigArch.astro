@@ -19,7 +19,7 @@ const T = {
   k13: '写',
   k14: '回合结束，计数达标',
   k15: '归档 / 整合',
-  k16: '记忆快照在提示词失效后重读；支持目录变更通知的会话可在下一轮看到新增或移除的 Skill。',
+  k16: '记忆快照在提示词失效后重读；常规会话会在下一轮用户消息末尾附带 Skill 增删通知（不改 system prompt）。',
   k17: '图 1\u3000三类存储与写入路径。实线是写入，虚线是读取，白金色箭头是触发关系。',
   k18: 'MEMORY.md ≤ 2200 · USER.md ≤ 1375（字符）'
  },
@@ -40,7 +40,7 @@ const T = {
   k13: 'write',
   k14: 'turn ends, counter fires',
   k15: 'archive / consolidate',
-  k16: 'Memory reloads on prompt invalidation. Supported sessions get skill-change notes on the next turn.',
+  k16: 'Memory reloads on prompt invalidation. Standard sessions append skill add/remove notices to the next user message (prompt unchanged).',
   k17: 'Figure 1. Three stores and their write paths. Solid lines write, the dashed line reads, gold arrows mark what triggers what.',
   k18: 'MEMORY.md ≤ 2200 · USER.md ≤ 1375 chars'
  },

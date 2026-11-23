@@ -390,12 +390,12 @@ As a table:
 | The call that made the write | the tool result reflects live state immediately | `skill_view` reads the latest file |
 | The same session's system prompt | reloaded when the prompt is invalidated and rebuilt | the index can update on rebuild; `skill_view` reads the body |
 | A new session on the same profile | read at startup | listed in the index at startup; bodies read on demand |
-| Another session running concurrently | its own memory snapshot updates on rebuild | supported sessions can learn of added or removed skills on their next turn |
+| Another session running concurrently | its own memory snapshot updates on rebuild | standard sessions learn of added or removed skills via a next-turn user-message note (skipped in MoA / `codex_app_server`) |
 | The background review fork | shares the parent's store object | reads and writes the same directory |
 
 `invalidate_system_prompt()` reloads the memory files. Context compression and CLI session switching both call it, so a brand-new session is not always necessary. <Src p="agent/system_prompt.py" l="814-832" /> <Src p="agent/conversation_compression.py" l="3096" /> <Src p="hermes_cli/cli_session_switch.py" l="35-38" />
 
-Skills follow a different path. At the start of a turn Hermes compares the frozen skill index with the current one and appends a note about added or removed names to that turn's user message. This can announce a skill installed by another process. The stored prompt needs a nonempty skill index for comparison; MoA and `codex_app_server` skip these notes. <Src p="agent/skills_index_delta.py" l="100-131" /> <Src p="agent/turn_context.py" l="1186" /> <Src p="agent/turn_context.py" l="864-868" /> <Src p="website/docs/user-guide/features/skills.md" l="38" />
+Skills follow a different path. To avoid mutating the frozen system-prompt prefix, `agent/turn_context.py` routes four cache-safe per-turn notices onto the end of the user message: gateway notes, plugin notices, surface-switch notes, and **skill-index deltas** (built-in `MEMORY.md` / `USER.md` updates do not use this channel). At the start of a turn, standard sessions (CLI, TUI, Desktop, Gateway) diff the frozen skill index against disk and append added or removed names to that turn's user message, announcing even skills installed by another process. The stored prompt needs a nonempty skill index for comparison; only MoA and `codex_app_server` skip these notes. <Src p="agent/skills_index_delta.py" l="100-131" /> <Src p="agent/turn_context.py" l="1186" /> <Src p="agent/turn_context.py" l="864-868" /> <Src p="website/docs/user-guide/features/skills.md" l="38" />
 
 ## Scope: profiles, projects and delegation
 
