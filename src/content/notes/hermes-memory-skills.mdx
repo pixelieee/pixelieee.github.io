@@ -21,7 +21,7 @@ import FigReview from '../../components/FigReview.astro';
 import FigCurator from '../../components/FigCurator.astro';
 import Journey from '../../components/Journey.astro';
 
-**一句话结论：** Hermes 把经验拆进「每轮注入的极小记忆文件、按需检索的会话历史库、按需加载的 Skill」三类存储，靠前台写入、后台复盘与 curator 归档串起演进，而整套设计最核心的约束只有一条：**不要弄脏 system prompt 的前缀缓存。**
+**一句话结论：** Hermes 把经验拆进「每轮注入的极小记忆文件、按需检索的会话历史库、按需加载的 Skill」三类存储，靠前台自主写入、回合后后台复盘和 curator 定期归档来持续更新与清理，而整套设计最核心的约束只有一条：**不要弄脏 system prompt 的前缀缓存。**
 
 读完这篇，你应该能回答六个问题：
 

@@ -18,7 +18,7 @@ import FigReview from '../../components/FigReview.astro';
 import FigCurator from '../../components/FigCurator.astro';
 import Journey from '../../components/Journey.astro';
 
-**The short version:** Hermes splits what it learns into three stores—tiny per-turn memory files, a searchable session history database, and on-demand skills—driven by foreground writes, background reviews, and curator archiving, all governed by one overriding constraint: **don't dirty the system prompt's prefix cache.**
+**The short version:** Hermes splits what it learns into three stores—tiny per-turn memory files, a searchable session history database, and on-demand skills—kept up to date and pruned through foreground writes, post-turn background reviews, and scheduled curator archiving, all governed by one overriding constraint: **don't dirty the system prompt's prefix cache.**
 
 By the end you should be able to answer six questions:
 
