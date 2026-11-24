@@ -109,7 +109,7 @@ The `memory` tool selects the file via `target` (`memory` for `MEMORY.md`, `user
 
 (The older whole-entry `replace` action is explicitly rejected. <Src p="tools/memory_tool.py" l="261-262" />)
 
-Use bare fields for a single edit; when making multiple changes to one file—especially deleting or trimming old entries to free space for a new one—pass them together in one `operations` array. The batch executes atomically and **the character cap is checked only against the final result**. An individual over-budget `add` returns the current entries so the model can consolidate them; if the consolidated batch still exceeds the limit, nothing is written and the error reports only usage and reason. <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
+Use bare fields for a single edit; when making multiple changes to one file—especially deleting or trimming old entries to free space for a new one—pass them together in one `operations` array. The batch executes atomically and **the character cap is checked only against the final result**. The two overflow errors also return different payloads: when a standalone `add` exceeds the cap, the error includes all existing entries so the model can immediately issue one consolidated `operations` batch on the next step; if an `operations` batch still exceeds the cap, nothing is written to disk and the error reports only the current character usage and reason without repeating the full entry list. <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
 
 ```json title="Atomic operations batch: free room and add in one call"
 {

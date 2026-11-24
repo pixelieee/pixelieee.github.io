@@ -140,7 +140,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 （旧版整条覆盖式的 `replace` 已被显式拒绝。<Src p="tools/memory_tool.py" l="261-262" />）
 
-只改一处时直接传上面的字段即可；如果要对同一文件做多项改动（尤其是文件写满后要先删旧、再加新），工具要求把它们放进一次调用的 `operations` 数组，原子执行，且**字符上限只检查整批执行完的最终结果**。单次 `add` 超限会返回现有条目，便于模型在下一轮打包合并；如果合并批次仍超限，整批不写入，错误只报告用量和原因。 <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
+只改一处时直接传上面的字段即可；如果要对同一文件做多项改动（尤其是文件写满后要先删旧、再加新），工具要求把它们放进一次调用的 `operations` 数组，原子执行，且**字符上限只检查整批执行完的最终结果**。两种超限报错的返回内容也不同：单独调 `add` 超过上限时，报错会顺带把文件里现有的全部条目返回给模型，方便模型下一轮直接对照着打包发一次 `operations` 合并写入；而如果一次 `operations` 批量调用执行完依然超限，整批改动都不会写入磁盘，报错只返回当前字符用量和超限原因，不再重复附上全部条目。 <Src p="tools/memory_tool_store.py" l="322-336" /> <Src p="tools/memory_tool_store.py" l="578-598" />
 
 ```json title="批量 operations：一次调用先删旧再加新，只按最终结果检查字符上限"
 {
