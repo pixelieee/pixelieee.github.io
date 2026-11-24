@@ -144,7 +144,7 @@ A few edge cases:
 
 - `add` strips leading and trailing whitespace and skips the entry if it is identical to an existing one; different wording counts as a new entry. <Src p="tools/memory_tool_store.py" l="369-388" />
 - `patch` and `remove` locate their target with `old_text`. Matching several **different** entries returns `ambiguous`; exact duplicates don't count as ambiguous. `replace` is explicitly rejected. <Src p="tools/memory_tool_store.py" l="419-461" /> <Src p="tools/memory_tool.py" l="261-262" />
-- A write takes a lock, re-reads the file, validates, writes a temp file and atomically swaps it in. Because every write re-reads first, two sessions running at once never overwrite each other's changes. <Src p="tools/memory_tool_store.py" l="338-367" /> <Src p="tools/memory_tool_store.py" l="675-683" />
+- A write takes an exclusive file lock, re-reads the latest file from disk inside the lock, validates, writes a temp file, and atomically swaps it in. Because the lock serializes writers and each writer re-reads disk instead of overwriting from its stale in-memory list, two concurrent sessions don't clobber each other's writes. <Src p="tools/memory_tool_store.py" l="338-367" /> <Src p="tools/memory_tool_store.py" l="675-683" />
 - A successful response **deliberately omits the entry list**. The comment says echoing the entries tempts the model to "find more to fix" and re-issue the same operations. <Src p="tools/memory_tool_store.py" l="623-636" />
 
 ### What belongs in memory, and what belongs in a skill
