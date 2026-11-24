@@ -118,7 +118,8 @@ article header .meta{padding-bottom:26px;border-bottom:1px solid var(--line)}
 .prose th,.prose td{border-bottom:1px solid var(--line);padding:9px 12px 9px 0;text-align:left;vertical-align:top}
 .prose th{font:500 11.5px var(--mono);letter-spacing:.04em;color:var(--mute);border-bottom-color:var(--fg-2)}
 .prose td:first-child{white-space:nowrap;color:var(--fg-2)}
-.prose td code{white-space:normal;overflow-wrap:anywhere}
+.prose td code{white-space:normal;overflow-wrap:break-word}
+.prose td:first-child code{white-space:nowrap}
 
 .prose blockquote{margin:1.6em 0;padding:2px 0 2px 18px;border-left:2px solid var(--plat);color:var(--mute);font-size:15.5px}
 .prose blockquote p{margin:.4em 0}
