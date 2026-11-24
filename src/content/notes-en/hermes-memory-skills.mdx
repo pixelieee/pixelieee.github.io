@@ -40,7 +40,7 @@ The differences between the three stores shape every mechanism that follows:
 | Location | `memories/MEMORY.md`, `USER.md` | the `messages` table in `state.db` | `skills/<name>/SKILL.md` |
 | Holds | stable facts that hold across tasks | every message, including tool calls and results | reusable know-how for a kind of task |
 | How it reaches the model | full load-time snapshot (deduped & threat-masked) in the system prompt | restored with a session or retrieved on demand through `session_search` | index in the system prompt, mid-session additions/removals appended to the next user message, bodies loaded on demand |
-| Capacity | configurable budgets, 2,200 / 1,375 characters by default | independent of the memory files’ character budgets | bodies load on demand; the curator maintains managed skills |
+| Size limit | configurable, 2,200 / 1,375 chars (~800 / 500 tokens) by default | stored in full; retrieval caps per-message length by mode (1,200 / 2,000 / 4,000 chars) | no fixed char cap; bodies load on demand, curator archives idle managed skills |
 | Written by | foreground model, background review | the runtime, automatically | foreground model, background review, curator |
 
 The row that matters most is "how it reaches the model". `MEMORY.md` and `USER.md` are sent in full on every turn, so they must stay small. Past session transcripts sit in `state.db` and are never injected into a new conversation automatically—only read when the model calls `session_search` or you explicitly resume an old session—so Hermes can safely keep everything. Skills sit in between: only the name and a one-line description stay in the system prompt, while the agent reads the full body on demand. Every later rule about "what belongs where" follows from this.
