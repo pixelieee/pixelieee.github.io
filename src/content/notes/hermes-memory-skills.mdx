@@ -126,7 +126,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 两条保护措施体现了同一种态度：**出了问题要让人看得见，而不是悄悄处理掉。**
 
 - 文件被手工改到超限时，加载**不截断**，只告警，并禁止继续添加，直到回到上限以内。<Src p="tools/memory_tool_store.py" l="246-252" />
-- 每条 `entry` 在**写入时**和**加载时**都会过一遍本地威胁扫描（`tools/threat_patterns.py`，`scope="strict"`，不调模型，靠正则与不可见 Unicode 字符（如零宽空格、文本方向控制符）检测拦截提示词注入、凭据/上下文外泄、SSH 后门、篡改 `AGENTS.md`/配置及硬编码密钥）。写入时命中直接拒绝；如果是用户手动修改或外部写入带进来的可疑条目，加载时在 system prompt 快照里会替换成 `[BLOCKED: …]`，**磁盘原文件不动**。注释的理由是：记忆会进入 system prompt，一条被投毒的条目会跨会话持续生效；静默丢弃则会把攻击藏起来，用户无从发现和删除。<Src p="tools/threat_patterns.py" l="1-145" /> <Src p="tools/memory_tool_store.py" l="28-31" /> <Src p="tools/memory_tool_store.py" l="221-253" />
+- 每条 `entry` 在**写入时**和**加载时**都会过一遍本地威胁扫描（`tools/threat_patterns.py`，`scope="strict"`，不调模型）：先拦截文本中隐藏的不可见 Unicode 字符（如零宽空格、文本方向控制符），再用正则匹配提示词注入、凭据/上下文外泄、SSH 后门、篡改 `AGENTS.md`/配置及硬编码密钥。写入时命中直接拒绝；如果是用户手动修改或外部写入带进来的可疑条目，加载时在 system prompt 快照里会替换成 `[BLOCKED: …]`，**磁盘原文件不动**。注释的理由是：记忆会进入 system prompt，一条被投毒的条目会跨会话持续生效；静默丢弃则会把攻击藏起来，用户无从发现和删除。<Src p="tools/threat_patterns.py" l="1-145" /> <Src p="tools/memory_tool_store.py" l="28-31" /> <Src p="tools/memory_tool_store.py" l="221-253" />
 
 ### `memory` 工具：三种操作与原子批次
 
